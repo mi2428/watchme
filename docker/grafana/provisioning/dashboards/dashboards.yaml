@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: Watchme
+    orgId: 1
+    folder: Watchme
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

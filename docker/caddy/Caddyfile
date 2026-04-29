@@ -1,0 +1,34 @@
+{
+	auto_https off
+}
+
+:9000 {
+	encode zstd gzip
+
+	redir / /grafana/ 302
+
+	redir /grafana /grafana/ 302
+	handle /grafana/* {
+		reverse_proxy grafana:3000
+	}
+
+	redir /prometheus /prometheus/ 302
+	handle_path /prometheus/* {
+		reverse_proxy prometheus:9090
+	}
+
+	redir /pushgateway /pushgateway/ 302
+	handle_path /pushgateway/* {
+		reverse_proxy pushgateway:9091
+	}
+
+	redir /tempo /tempo/ 302
+	handle_path /tempo/* {
+		reverse_proxy tempo:3200
+	}
+
+	redir /otel /otel/ 302
+	handle_path /otel/* {
+		reverse_proxy otel-collector:8888
+	}
+}

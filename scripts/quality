@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+command -v make >/dev/null 2>&1 || {
+    printf 'quality: make is required\n' >&2
+    exit 1
+}
+
+exec make --no-print-directory -C "${repo_root}" quality "$@"

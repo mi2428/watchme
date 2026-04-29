@@ -1,0 +1,105 @@
+name: "${COMPOSE_PROJECT_NAME:-watchme}"
+
+services:
+  caddy:
+    image: caddy:latest
+    pull_policy: "${WATCHME_PULL_POLICY:-always}"
+    environment:
+      CADDY_HTTP_PORT: "${CADDY_HTTP_PORT:-9000}"
+    ports:
+      - "${CADDY_HTTP_PORT:-9000}:9000"
+    volumes:
+      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - grafana
+      - otel-collector
+      - prometheus
+      - pushgateway
+      - tempo
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    pull_policy: "${WATCHME_PULL_POLICY:-always}"
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./docker/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC, useful for future modules
+      - "4318:4318"   # OTLP HTTP traces from watchme
+      - "9464:9464"   # Collector Prometheus exporter
+      - "8888:8888"   # Collector self metrics
+    depends_on:
+      - tempo
+    restart: unless-stopped
+
+  pushgateway:
+    image: prom/pushgateway:latest
+    pull_policy: "${WATCHME_PULL_POLICY:-always}"
+    ports:
+      - "9091:9091"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    pull_policy: "${WATCHME_PULL_POLICY:-always}"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}"
+      - --web.enable-lifecycle
+      - "--web.external-url=${PROMETHEUS_EXTERNAL_URL:-/prometheus/}"
+      - --web.route-prefix=/
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
+      - pushgateway
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:2.7.2
+    pull_policy: "${WATCHME_PULL_POLICY:-always}"
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    pull_policy: "${WATCHME_PULL_POLICY:-always}"
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_SERVER_ROOT_URL: "${GRAFANA_ROOT_URL:-/grafana/}"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_DEFAULT_THEME: "${GRAFANA_DEFAULT_THEME:-system}"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - tempo
+    restart: unless-stopped
+
+volumes:
+  caddy-data:
+  caddy-config:
+  grafana-data:
+  prometheus-data:
+  tempo-data:

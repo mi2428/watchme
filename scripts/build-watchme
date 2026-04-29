@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+usage() { cat <<'USAGE'
+usage: scripts/build-watchme [-c debug|release]
+
+Builds watchme through the repository Makefile.
+
+Options:
+  -c, --configuration VALUE  SwiftPM configuration. Defaults to debug.
+  -h, --help                 Show this help.
+
+Environment:
+  CONFIG                     Fallback build configuration.
+  WATCHME_BUILD_CONFIG       Preferred fallback build configuration.
+USAGE
+}
+
+die() {
+    printf 'build-watchme: %s\n' "$*" >&2
+    printf 'try: scripts/build-watchme --help\n' >&2
+    exit 2
+}
+
+config="${WATCHME_BUILD_CONFIG:-${CONFIG:-debug}}"
+
+while (($#)); do
+    case "$1" in
+        -c | --configuration)
+            (($# >= 2)) || die "missing value for $1"
+            config="$2"; shift 2 ;;
+        -c=* | --configuration=* | CONFIG=*)
+            config="${1#*=}"; shift ;;
+        -h | --help)
+            usage; exit 0 ;;
+        --)
+            shift; (($# == 0)) || die "unsupported trailing arguments: $*" ;;
+        -*)
+            die "unsupported option: $1" ;;
+        *)
+            die "unsupported argument: $1" ;;
+    esac
+done
+
+case "${config}" in debug | release) ;; *) die "unsupported configuration: ${config}" ;; esac
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+command -v make >/dev/null 2>&1 || die 'make is required'
+exec make --no-print-directory -C "${repo_root}" build "CONFIG=${config}"
