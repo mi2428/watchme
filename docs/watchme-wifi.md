@@ -3,6 +3,28 @@
 This document describes the current `watchme wifi` implementation.
 It is meant to be checked against the source when instrumentation changes.
 
+### Table of contents
+
+- [Scope](#scope)
+- [Runtime entry points](#runtime-entry-points)
+- [Collection points](#collection-points)
+- [Snapshot model](#snapshot-model)
+- [Metrics](#metrics)
+- [Trace lifecycle](#trace-lifecycle)
+  - [Trace triggers](#trace-triggers)
+- [Emitted spans](#emitted-spans)
+  - [Root span](#root-span)
+  - [Active validation spans](#active-validation-spans)
+  - [Packet-window phase span](#packet-window-phase-span)
+  - [DHCPv4 packet spans](#dhcpv4-packet-spans)
+  - [ICMPv6 packet spans](#icmpv6-packet-spans)
+- [Passive packet store behavior](#passive-packet-store-behavior)
+- [BPF details](#bpf-details)
+- [Active probe details](#active-probe-details)
+- [Event classification](#event-classification)
+- [Currently unused span helper](#currently-unused-span-helper)
+- [Operational checks](#operational-checks)
+
 ## Scope
 
 `watchme wifi` turns macOS Wi-Fi state into two O11y signal families:
