@@ -36,8 +36,17 @@ final class WiFiConfigTests: XCTestCase {
         for alias in ["agent", "run", "watch"] {
             let config = try WiFiConfig.parse([alias, "--log-level", "warn"])
             XCTAssertFalse(config.once)
+            XCTAssertFalse(config.authorizeLocation)
             XCTAssertEqual(config.logLevel, .warn)
         }
+    }
+
+    func testParseLocationAuthorizationMode() throws {
+        let config = try WiFiConfig.parse(["authorize-location", "--timeout", "12"])
+
+        XCTAssertTrue(config.authorizeLocation)
+        XCTAssertFalse(config.once)
+        XCTAssertEqual(config.timeout, 12)
     }
 
     func testParseRejectsInvalidArguments() {

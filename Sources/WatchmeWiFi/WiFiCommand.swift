@@ -16,6 +16,10 @@ public struct WiFiCommand: WatchmeSubcommand {
     public func run() -> Int32 {
         logger.minimumLevel = config.logLevel
 
+        if config.authorizeLocation {
+            return requestWiFiLocationAuthorization(timeout: config.timeout)
+        }
+
         let telemetry = TelemetryClient(
             serviceName: "watchme-macos",
             tracesEndpoint: config.collectorURL,
@@ -37,6 +41,7 @@ public struct WiFiCommand: WatchmeSubcommand {
 
 struct WiFiConfig {
     var once = false
+    var authorizeLocation = false
     var collectorURL = URL(string: "http://127.0.0.1:4318/v1/traces")!
     var pushgatewayURL = URL(string: "http://127.0.0.1:9091")!
     var metricsInterval: TimeInterval = 5
@@ -77,6 +82,9 @@ private struct WiFiConfigParser {
             return
         }
         switch arguments[index] {
+        case "authorize-location", "location-authorize":
+            config.authorizeLocation = true
+            index += 1
         case "once":
             config.once = true
             index += 1
@@ -188,6 +196,7 @@ func printWiFiUsage() {
         Usage:
           watchme wifi [agent] [options]
           watchme wifi once [options]
+          watchme wifi authorize-location [options]
           watchme wifi --once [options]
 
         Options:
@@ -202,6 +211,10 @@ func printWiFiUsage() {
           --bpf-span-max-age seconds  Packet span lookback window. Default: 180
           --log-level level           debug, info, warn, or error. Default: debug
           --once                      Push one metric snapshot and send one active trace, then exit.
+
+        Location authorization:
+          Build an app bundle, then run:
+            open .build/watchme-app/Watchme.app --args wifi authorize-location
         """
     )
 }
