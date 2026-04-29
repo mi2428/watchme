@@ -1,5 +1,9 @@
 # WatchMe Wi-Fi observability
 
+@Metadata {
+    @PageKind(article)
+}
+
 This document describes the current `watchme wifi` implementation.
 It is meant to be checked against the source when instrumentation changes.
 

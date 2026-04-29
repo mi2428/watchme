@@ -7,6 +7,9 @@ SWIFTFORMAT ?= swiftformat
 SWIFTLINT   ?= swiftlint
 
 CONFIG          ?= debug
+DOC_OUTPUT      ?= .build/docc
+DOC_TARGET      ?= WatchmeWiFi
+PREVIEW         ?= 0
 HELP_NAME_WIDTH := 15
 SWIFT_PATHS     := Package.swift Sources Tests
 
@@ -32,6 +35,14 @@ lint: ## Run Swift formatting and lint checks
 .PHONY: test
 test: ## Run unit tests
 	@$(SWIFT) test
+
+.PHONY: doc
+doc: ## Generate DocC documentation; set PREVIEW=1 to serve a local preview
+	@if [[ "$(PREVIEW)" == "1" ]]; then \
+		$(SWIFT) package --disable-sandbox preview-documentation --target $(DOC_TARGET); \
+	else \
+		$(SWIFT) package --allow-writing-to-directory $(DOC_OUTPUT) generate-documentation --target $(DOC_TARGET) --output-path $(DOC_OUTPUT); \
+	fi
 
 .PHONY: quality
 quality: fmt lint test ## Format, lint, and test
@@ -63,6 +74,9 @@ help: ## Show this help message
 		}' $(MAKEFILE_LIST)
 	@printf "\n\033[1mVariables:\033[0m\n"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "CONFIG" "SwiftPM build configuration, defaults to $(CONFIG)"
+	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "DOC_OUTPUT" "DocC output directory, defaults to $(DOC_OUTPUT)"
+	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "DOC_TARGET" "DocC target, defaults to $(DOC_TARGET)"
+	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "PREVIEW" "Set to 1 to preview DocC documentation, defaults to $(PREVIEW)"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "SWIFT" "Swift executable, defaults to $(SWIFT)"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "SWIFTFORMAT" "SwiftFormat executable, defaults to $(SWIFTFORMAT)"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "SWIFTLINT" "SwiftLint executable, defaults to $(SWIFTLINT)"
