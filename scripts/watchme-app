@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+usage() { cat <<'USAGE'
+usage: scripts/watchme-app [watchme-args...]
+
+Runs watchme through Watchme.app so macOS TCC uses the app's Location grant.
+Build the bundle first with: make app
+USAGE
+}
+
+die() { printf 'watchme-app: %s\n' "$*" >&2; exit 2; }
+
+case "${1:-}" in -h | --help) usage; exit 0 ;; esac
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+bundle="${WATCHME_APP_BUNDLE:-${repo_root}/.build/watchme-app/Watchme.app}"
+[[ -d "${bundle}" ]] || die "missing app bundle: ${bundle}; run make app"
+
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/watchme-app.XXXXXX")"
+mkfifo "${tmpdir}/stdout" "${tmpdir}/stderr"
+trap 'rm -rf -- "${tmpdir}"' EXIT
+trap 'pkill -TERM -f "${bundle}/Contents/MacOS/watchme" 2>/dev/null || true; exit 130' INT TERM
+
+cat "${tmpdir}/stdout" &
+out_pid=$!
+cat "${tmpdir}/stderr" >&2 &
+err_pid=$!
+
+open -W -n -o "${tmpdir}/stdout" --stderr "${tmpdir}/stderr" "${bundle}" --args "$@"
+rc=$?
+wait "${out_pid}" || true
+wait "${err_pid}" || true
+exit "${rc}"

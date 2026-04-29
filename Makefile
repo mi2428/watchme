@@ -16,6 +16,10 @@ SWIFT_PATHS     := Package.swift Sources Tests
 build: ## Build the watchme executable
 	@$(SWIFT) build -c $(CONFIG)
 
+.PHONY: app
+app: ## Build Watchme.app for Location authorization
+	@scripts/build-app -c $(CONFIG)
+
 .PHONY: fmt
 fmt: ## Format and modernize Swift sources
 	@$(SWIFTFORMAT) $(SWIFT_PATHS) --config .swiftformat
@@ -64,6 +68,7 @@ help: ## Show this help message
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "SWIFTLINT" "SwiftLint executable, defaults to $(SWIFTLINT)"
 	@printf "\n\033[1mExamples:\033[0m\n"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "make build" "Build the debug executable"
+	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "make app" "Build Watchme.app"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "make fmt" "Format Swift sources"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "make lint" "Check formatting and SwiftLint"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "make test" "Run unit tests"

@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+usage() { cat <<'USAGE'
+usage: scripts/build-app [-c debug|release] [-o Watchme.app]
+
+Builds a macOS .app bundle whose executable is watchme.
+USAGE
+}
+
+die() { printf 'build-app: %s\n' "$*" >&2; exit 2; }
+
+config="${WATCHME_BUILD_CONFIG:-${CONFIG:-debug}}"
+bundle="${WATCHME_APP_BUNDLE:-.build/watchme-app/Watchme.app}"
+
+while (($#)); do case "$1" in
+    -c | --configuration) (($# >= 2)) || die "missing value for $1"; config="$2"; shift 2 ;;
+    -c=* | --configuration=* | CONFIG=*) config="${1#*=}"; shift ;;
+    -o | --output) (($# >= 2)) || die "missing value for $1"; bundle="$2"; shift 2 ;;
+    -o=* | --output=* | APP_BUNDLE=* | WATCHME_APP_BUNDLE=*) bundle="${1#*=}"; shift ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "unsupported argument: $1" ;;
+esac done
+
+case "${config}" in debug | release) ;; *) die "unsupported configuration: ${config}" ;; esac
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+[[ "${bundle}" = /* ]] || bundle="${repo_root}/${bundle}"
+
+command -v make >/dev/null 2>&1 || die 'make is required'
+make --no-print-directory -C "${repo_root}" build "CONFIG=${config}"
+bin_dir="$(cd -- "${repo_root}" && swift build -c "${config}" --show-bin-path)"
+
+rm -rf -- "${bundle}"
+install -d -- "${bundle}/Contents/MacOS"
+install -m 755 -- "${bin_dir}/watchme" "${bundle}/Contents/MacOS/watchme"
+install -m 644 -- "${repo_root}/Sources/watchme/Info.plist" "${bundle}/Contents/Info.plist"
+printf 'APPL????' >"${bundle}/Contents/PkgInfo"
+
+command -v codesign >/dev/null 2>&1 && codesign --force --sign - "${bundle}" >/dev/null
+printf 'bundle=%s\n' "${bundle}"
+printf 'authorize=%q %q --args wifi authorize-location\n' open "${bundle}"
+printf 'run=%q wifi once\n' "${repo_root}/scripts/watchme-app"
