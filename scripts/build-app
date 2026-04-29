@@ -3,7 +3,7 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 usage() { cat <<'USAGE'
-usage: scripts/build-app [-c debug|release] [-o Watchme.app]
+usage: scripts/build-app [-c debug|release] [-o WatchMe.app]
 
 Builds a macOS .app bundle whose executable is watchme.
 USAGE
@@ -12,7 +12,7 @@ USAGE
 die() { printf 'build-app: %s\n' "$*" >&2; exit 2; }
 
 config="${WATCHME_BUILD_CONFIG:-${CONFIG:-debug}}"
-bundle="${WATCHME_APP_BUNDLE:-.build/watchme-app/Watchme.app}"
+bundle="${WATCHME_APP_BUNDLE:-.build/watchme-app/WatchMe.app}"
 
 while (($#)); do case "$1" in
     -c | --configuration) (($# >= 2)) || die "missing value for $1"; config="$2"; shift 2 ;;

@@ -191,7 +191,7 @@ private struct WiFiConfigParser {
 func printWiFiUsage() {
     print(
         """
-        watchme wifi - macOS Wi-Fi O11y agent
+        WatchMe Wi-Fi - macOS Wi-Fi O11y agent
 
         Usage:
           watchme wifi [agent] [options]
@@ -214,7 +214,7 @@ func printWiFiUsage() {
 
         Location authorization:
           Build an app bundle, then run:
-            open .build/watchme-app/Watchme.app --args wifi authorize-location
+            open .build/watchme-app/WatchMe.app --args wifi authorize-location
         """
     )
 }

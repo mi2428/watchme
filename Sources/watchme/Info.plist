@@ -5,18 +5,18 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>watchme</string>
+    <string>WatchMe</string>
     <key>CFBundleExecutable</key>
     <string>watchme</string>
     <key>CFBundleIdentifier</key>
     <string>io.watchme.cli</string>
     <key>CFBundleName</key>
-    <string>watchme</string>
+    <string>WatchMe</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>NSLocationUsageDescription</key>
-    <string>watchme uses location authorization to read the current Wi-Fi SSID and BSSID for observability labels.</string>
+    <string>WatchMe uses location authorization to read the current Wi-Fi SSID and BSSID for observability labels.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>watchme uses location authorization to read the current Wi-Fi SSID and BSSID for observability labels.</string>
+    <string>WatchMe uses location authorization to read the current Wi-Fi SSID and BSSID for observability labels.</string>
 </dict>
 </plist>

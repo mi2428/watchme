@@ -5,7 +5,7 @@ IFS=$'\n\t'
 usage() { cat <<'USAGE'
 usage: scripts/build-watchme [-c debug|release]
 
-Builds watchme through the repository Makefile.
+Builds WatchMe through the repository Makefile.
 
 Options:
   -c, --configuration VALUE  SwiftPM configuration. Defaults to debug.

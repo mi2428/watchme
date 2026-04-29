@@ -13,11 +13,11 @@ SWIFT_PATHS     := Package.swift Sources Tests
 ##@ Development
 
 .PHONY: build
-build: ## Build the watchme executable
+build: ## Build the WatchMe executable
 	@$(SWIFT) build -c $(CONFIG)
 
 .PHONY: app
-app: ## Build Watchme.app for Location authorization
+app: ## Build WatchMe.app for Location authorization
 	@scripts/build-app -c $(CONFIG)
 
 .PHONY: fmt

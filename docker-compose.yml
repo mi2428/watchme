@@ -28,7 +28,7 @@ services:
       - ./docker/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
     ports:
       - "4317:4317"   # OTLP gRPC, useful for future modules
-      - "4318:4318"   # OTLP HTTP traces from watchme
+      - "4318:4318"   # OTLP HTTP traces from WatchMe
       - "9464:9464"   # Collector Prometheus exporter
       - "8888:8888"   # Collector self metrics
     depends_on:
