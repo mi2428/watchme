@@ -17,31 +17,17 @@ Environment:
 USAGE
 }
 
-die() {
-    printf 'build-watchme: %s\n' "$*" >&2
-    printf 'try: scripts/build-watchme --help\n' >&2
-    exit 2
-}
+die() { printf 'build-watchme: %s\ntry: scripts/build-watchme --help\n' "$*" >&2; exit 2; }
 
 config="${WATCHME_BUILD_CONFIG:-${CONFIG:-debug}}"
 
-while (($#)); do
-    case "$1" in
-        -c | --configuration)
-            (($# >= 2)) || die "missing value for $1"
-            config="$2"; shift 2 ;;
-        -c=* | --configuration=* | CONFIG=*)
-            config="${1#*=}"; shift ;;
-        -h | --help)
-            usage; exit 0 ;;
-        --)
-            shift; (($# == 0)) || die "unsupported trailing arguments: $*" ;;
-        -*)
-            die "unsupported option: $1" ;;
-        *)
-            die "unsupported argument: $1" ;;
-    esac
-done
+while (($#)); do case "$1" in
+    -c | --configuration) (($# >= 2)) || die "missing value for $1"; config="$2"; shift 2 ;;
+    -c=* | --configuration=* | CONFIG=*) config="${1#*=}"; shift ;;
+    -h | --help) usage; exit 0 ;;
+    --) shift; (($# == 0)) || die "unsupported trailing arguments: $*" ;;
+    *) die "unsupported argument: $1" ;;
+esac done
 
 case "${config}" in debug | release) ;; *) die "unsupported configuration: ${config}" ;; esac
 
