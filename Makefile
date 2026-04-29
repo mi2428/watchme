@@ -7,7 +7,7 @@ SWIFTFORMAT ?= swiftformat
 SWIFTLINT   ?= swiftlint
 
 CONFIG          ?= debug
-HELP_NAME_WIDTH := 18
+HELP_NAME_WIDTH := 15
 SWIFT_PATHS     := Package.swift Sources Tests
 
 ##@ Development
@@ -66,9 +66,3 @@ help: ## Show this help message
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "SWIFT" "Swift executable, defaults to $(SWIFT)"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "SWIFTFORMAT" "SwiftFormat executable, defaults to $(SWIFTFORMAT)"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "SWIFTLINT" "SwiftLint executable, defaults to $(SWIFTLINT)"
-	@printf "\n\033[1mExamples:\033[0m\n"
-	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "make build" "Build the debug executable"
-	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "make app" "Build Watchme.app"
-	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "make fmt" "Format Swift sources"
-	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "make lint" "Check formatting and SwiftLint"
-	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "make test" "Run unit tests"
