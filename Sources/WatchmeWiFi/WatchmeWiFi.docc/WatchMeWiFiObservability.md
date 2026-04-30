@@ -124,16 +124,16 @@ The options below apply to `watchme wifi` and `watchme wifi once`.
 - **`--metrics.interval`:** Wi-Fi metric collection interval in seconds.
 - **`--traces.interval`:** Active trace interval in seconds.
 - **`--traces.cooldown`:** Minimum seconds between non-forced event traces.
+- **`--probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/ARP/RS/RA/NDP packets.
+- **`--probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds.
+- **`--probe.gateway.count`:** Gateway ICMP attempts per burst.
+- **`--probe.gateway.interval`:** Delay between gateway ICMP burst attempts in seconds.
 - **`--probe.internet.target`:** Internet probe host; repeat to probe multiple hosts.
 - **`--probe.internet.family`:** `ipv4`, `ipv6`, or `dual`; default is `dual`.
 - **`--probe.internet.timeout`:** Internet active probe timeout in seconds.
 - **`--probe.internet.dns`:** Boolean switch for internet DNS probes.
 - **`--probe.internet.icmp`:** Boolean switch for internet ICMP echo probes.
 - **`--probe.internet.http`:** Boolean switch for internet plain HTTP HEAD probes.
-- **`--probe.gateway.count`:** Gateway ICMP attempts per burst.
-- **`--probe.gateway.interval`:** Delay between gateway ICMP burst attempts in seconds.
-- **`--probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/ARP/RS/RA/NDP packets.
-- **`--probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds.
 - **`--log.level`:** Structured log minimum level.
 
 ## Collection points

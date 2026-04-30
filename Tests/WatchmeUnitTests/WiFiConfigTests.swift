@@ -65,6 +65,9 @@ final class WiFiConfigTests: XCTestCase {
         XCTAssertFalse(usage.contains("--metrics.push.prefix"))
         XCTAssertFalse(usage.contains("--metrics.url"))
         XCTAssertFalse(usage.contains("--traces.url"))
+
+        XCTAssertLessThan(usageIndex("--probe.bpf.enabled", in: usage), usageIndex("--probe.gateway.count", in: usage))
+        XCTAssertLessThan(usageIndex("--probe.gateway.count", in: usage), usageIndex("--probe.internet.target", in: usage))
     }
 
     func testParseLocationAuthorizationMode() throws {
@@ -100,4 +103,12 @@ final class WiFiConfigTests: XCTestCase {
         XCTAssertThrowsError(try WiFiConfig.parse(["authorize-only", "--log.level", "debug"]))
         XCTAssertThrowsError(try WiFiConfig.parse(["--unknown"]))
     }
+}
+
+private func usageIndex(_ option: String, in usage: String) -> String.Index {
+    guard let index = usage.range(of: option)?.lowerBound else {
+        XCTFail("Missing usage option: \(option)")
+        return usage.endIndex
+    }
+    return index
 }
