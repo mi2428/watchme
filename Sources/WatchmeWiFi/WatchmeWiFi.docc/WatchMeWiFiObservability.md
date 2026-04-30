@@ -218,14 +218,14 @@ Those can be defined in Prometheus or Grafana if an operator wants a site-specif
 | `watchme_wifi_probe_http_duration_seconds` | `interface`, `essid`, `bssid`, `target`, `scheme`, `phase` | Wi-Fi-bound active HTTP probe | Duration for `connect`, `http_head`, and `total` phases. |
 | `watchme_wifi_probe_http_status_code` | `interface`, `essid`, `bssid`, `target`, `scheme` | Wi-Fi-bound active HTTP probe | HTTP status code from the latest probe when one was received. |
 | `watchme_wifi_probe_http_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `target`, `scheme` | Wi-Fi-bound active HTTP probe | Unix timestamp of the latest HTTP probe completion. |
-| `watchme_wifi_probe_dns_success` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport` | Wi-Fi-bound active DNS probe | `1` when the latest DNS probe returned rcode `0` with at least one answer, otherwise `0`. |
-| `watchme_wifi_probe_dns_duration_seconds` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport` | Wi-Fi-bound active DNS probe | Duration of the latest DNS query/response. |
-| `watchme_wifi_probe_dns_rcode` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport` | Wi-Fi-bound active DNS probe | DNS response code from the latest DNS probe when a response was parsed. |
-| `watchme_wifi_probe_dns_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport` | Wi-Fi-bound active DNS probe | Unix timestamp of the latest DNS probe completion. |
-| `watchme_wifi_probe_gateway_tcp_reachable` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome` | Wi-Fi-bound active gateway TCP probe | `1` when the gateway host was reached, including TCP refusal, otherwise `0`. |
-| `watchme_wifi_probe_gateway_tcp_connect_success` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome` | Wi-Fi-bound active gateway TCP probe | `1` when TCP connect reached `.ready`, otherwise `0`. |
-| `watchme_wifi_probe_gateway_tcp_duration_seconds` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome` | Wi-Fi-bound active gateway TCP probe | Duration of the latest gateway TCP probe. |
-| `watchme_wifi_probe_gateway_tcp_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome` | Wi-Fi-bound active gateway TCP probe | Unix timestamp of the latest gateway TCP probe completion. |
+| `watchme_wifi_probe_dns_success` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport`, `timing_source` | Wi-Fi-bound active DNS probe | `1` when the latest DNS probe returned rcode `0` with at least one answer, otherwise `0`. |
+| `watchme_wifi_probe_dns_duration_seconds` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport`, `timing_source` | Wi-Fi-bound active DNS probe | Duration of the latest DNS query/response, using BPF packet timestamps when correlation succeeds and Network.framework callback time otherwise. |
+| `watchme_wifi_probe_dns_rcode` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport`, `timing_source` | Wi-Fi-bound active DNS probe | DNS response code from the latest DNS probe when a response was parsed. |
+| `watchme_wifi_probe_dns_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport`, `timing_source` | Wi-Fi-bound active DNS probe | Unix timestamp of the latest DNS probe completion, using the BPF response packet timestamp when correlation succeeds. |
+| `watchme_wifi_probe_gateway_tcp_reachable` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome`, `timing_source` | Wi-Fi-bound active gateway TCP probe | `1` when the gateway host was reached, including TCP refusal, otherwise `0`. |
+| `watchme_wifi_probe_gateway_tcp_connect_success` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome`, `timing_source` | Wi-Fi-bound active gateway TCP probe | `1` when TCP connect reached `.ready`, otherwise `0`. |
+| `watchme_wifi_probe_gateway_tcp_duration_seconds` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome`, `timing_source` | Wi-Fi-bound active gateway TCP probe | Duration of the latest gateway TCP probe, using BPF SYN-to-response packet timestamps when correlation succeeds and Network.framework callback time otherwise. |
+| `watchme_wifi_probe_gateway_tcp_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome`, `timing_source` | Wi-Fi-bound active gateway TCP probe | Unix timestamp of the latest gateway TCP probe completion, using the BPF response packet timestamp when correlation succeeds. |
 
 ## Trace lifecycle
 
@@ -290,8 +290,8 @@ Every trace currently includes active validation because all `emitTrace` call si
 | `target.probe` | `phase.active_validation` | Duration of one target's HTTP HEAD probe. | OK when HTTP status is `200..<500`; error otherwise. | `span.source=active_probe`, `active_probe.interface`, `active_probe.required_interface`, `probe.target`, `url.full`, `target.probe.child_span_count`, optional `http.response.status_code`, optional `error`, default route tags, Wi-Fi service route tags. |
 | `probe.network.connect` | `target.probe` | Probe start until `NWConnection` reaches `.ready`. | OK | `span.source=network_framework`, `network.framework.phase=dns_tcp_tls_connect`, `net.peer.name`, `net.peer.port`, `probe.target`, `url.scheme`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`; emitted only when the connection reaches ready. |
 | `probe.http.head` | `target.probe` | `NWConnection.ready` until response bytes or failure; if the connection never becomes ready, falls back to probe start. | OK when HTTP status is `200..<500`; error otherwise. | `span.source=network_framework_active_probe`, `http.request.method=HEAD`, optional `http.response.status_code`, optional `error`, `net.peer.name`, `net.peer.port`, `probe.target`, `url.scheme`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
-| `probe.dns.resolve` | `phase.active_validation` | UDP DNS query send/receive duration for each active target host and up to two Wi-Fi service DNS resolvers. | OK when rcode is `0` and at least one answer is present. | `span.source=network_framework_dns_probe`, `probe.target`, `dns.resolver`, `dns.transport`, optional `dns.rcode`, optional `dns.answer_count`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
-| `probe.gateway.tcp_connect` | `phase.active_validation` | TCP connect duration to the Wi-Fi service router on port 53. | OK when the gateway host is reachable; TCP refusal is reachable but not connect success. | `span.source=network_framework_gateway_probe`, `network.wifi_gateway`, `network.gateway_probe.port`, `network.gateway_probe.outcome`, `network.gateway_probe.reachable`, `network.gateway_probe.connect_success`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.dns.resolve` | `phase.active_validation` | UDP DNS query-to-response duration for each active target host and up to two Wi-Fi service DNS resolvers. BPF packet timestamps are used when the query and response can be correlated; Network.framework callback timing is the fallback. | OK when rcode is `0` and at least one answer is present. | `span.source=network_framework_dns_probe`, `probe.target`, `probe.timing_source`, `probe.timestamp_source`, `dns.resolver`, `dns.transport`, optional `dns.rcode`, optional `dns.answer_count`, optional `packet.event=dns_query_to_response`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.gateway.tcp_connect` | `phase.active_validation` | TCP SYN-to-SYN/ACK or SYN-to-RST duration to the Wi-Fi service router on port 53. BPF packet timestamps are used when the packets can be correlated; Network.framework callback timing is the fallback. | OK when the gateway host is reachable; TCP refusal is reachable but not connect success. | `span.source=network_framework_gateway_probe`, `probe.timing_source`, `probe.timestamp_source`, `network.wifi_gateway`, `network.gateway_probe.port`, `network.gateway_probe.outcome`, `network.gateway_probe.reachable`, `network.gateway_probe.connect_success`, optional `packet.event=tcp_syn_to_response`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
 
 Default route tags on `target.probe`:
 
@@ -386,6 +386,8 @@ The Wi-Fi BPF monitor only parses:
 
 - Ethernet type `0x0800` IPv4 UDP DHCP packets on ports 67/68.
 - Ethernet type `0x86DD` IPv6 ICMPv6 control packets of type 133, 134, 135, or 136.
+- UDP DNS packets on port 53 that match a currently registered active DNS probe transaction ID, resolver, and target host.
+- TCP SYN/SYN-ACK/RST packets that match a currently registered active gateway probe destination and port.
 
 ## Active probe details
 
@@ -404,10 +406,17 @@ The `connect` phase covers Network.framework readiness and therefore combines DN
 DNS active probes use the Wi-Fi service's DNS resolvers instead of the global default route.
 For each active target host, WatchMe sends a raw UDP A query over `NWConnection` with `requiredInterface` set to Wi-Fi.
 Only the first two Wi-Fi service DNS resolvers are probed to keep a bounded active trace cost.
+Before sending the query, WatchMe registers the DNS transaction ID, target host, resolver, and interface with `PassivePacketStore`.
+The BPF monitor only stores DNS packets that match that active registration, so normal user DNS traffic is not retained for active probe timing.
+When both the query and response are observed, `probe.dns.resolve` and the DNS duration metric use BPF packet timestamps from the BPF header.
+If packet correlation fails or BPF is disabled, the same span and metric fall back to Network.framework callback wall-clock timing.
 
 Gateway active probes use the Wi-Fi service's IPv4 router, not `State:/Network/Global/IPv4`.
 The probe opens a TCP connection to gateway port 53 over the Wi-Fi interface.
 TCP refusal is treated as host reachable because the gateway replied, but `connect_success` remains `0`.
+Before opening the connection, WatchMe registers the gateway IP, port, and interface with `PassivePacketStore`.
+When BPF observes the outbound SYN and the corresponding inbound SYN/ACK or RST, `probe.gateway.tcp_connect` and the gateway duration metric use BPF packet timestamps.
+If packet correlation fails or BPF is disabled, the same span and metric fall back to Network.framework callback wall-clock timing.
 
 ## Event classification
 
