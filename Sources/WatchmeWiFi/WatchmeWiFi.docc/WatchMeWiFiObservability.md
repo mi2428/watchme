@@ -27,7 +27,7 @@ It is meant to be checked against the source when instrumentation changes.
 - [BPF details](#bpf-details)
 - [Active probe details](#active-probe-details)
 - [Event classification](#event-classification)
-- [Currently unused span helper](#currently-unused-span-helper)
+- [URLSessionTaskMetrics helper](#urlsessiontaskmetrics-helper)
 - [Operational checks](#operational-checks)
 
 ## Scope
@@ -82,8 +82,11 @@ The options below apply to `watchme wifi` and `watchme wifi once`.
 | Wi-Fi events | `Sources/WatchmeWiFi/EventMonitors.swift` | `CWEventDelegate` | Power, SSID, BSSID, link, link quality, country code, and mode changes. |
 | Network events | `Sources/WatchmeWiFi/EventMonitors.swift` | `SCDynamicStore` notifications | Global and per-interface IPv4/IPv6/DNS/DHCP/link changes. |
 | Passive packet timing | `Sources/WatchmeBPF`, `Sources/WatchmeWiFi/BPFMonitor.swift` | `/dev/bpfN`, `ioctl`, `poll`, `read` | DHCPv4 and ICMPv6 control packets during address acquisition. |
-| Active probe | `Sources/WatchmeWiFi/ActiveProbe.swift` | `Network.framework` `NWPathMonitor` and `NWConnection` | HTTP HEAD reachability over the Wi-Fi interface. |
-| Default route tags | `Sources/WatchmeWiFi/WiFiAgent.swift` | `SCDynamicStoreCopyValue` | Current primary interface, service, and gateway. |
+| Active HTTP probe | `Sources/WatchmeWiFi/ActiveProbe.swift` | `Network.framework` `NWPathMonitor` and `NWConnection` | HTTP HEAD reachability over the Wi-Fi interface. |
+| Active DNS probe | `Sources/WatchmeWiFi/ActiveDNSProbe.swift` | `Network.framework` UDP `NWConnection` | DNS A query latency through Wi-Fi-bound resolver traffic. |
+| Active gateway probe | `Sources/WatchmeWiFi/ActiveGatewayProbe.swift` | `Network.framework` TCP `NWConnection` | First-hop gateway TCP reachability through the Wi-Fi interface. |
+| Wi-Fi service route tags | `Sources/WatchmeWiFi/WiFiServiceNetworkState.swift` | `SCDynamicStoreCopyValue`, `SCDynamicStoreCopyKeyList` | DNS resolvers and router for the network service bound to the Wi-Fi interface. |
+| Default route tags | `Sources/WatchmeWiFi/WiFiAgent.swift` | `SCDynamicStoreCopyValue` | Current global primary interface, service, and gateway. |
 | Location grant | `Sources/WatchmeWiFi/LocationAuthorization.swift` | `CoreLocation.CLLocationManager` | User authorization needed for CoreWLAN SSID/BSSID. |
 
 ## Snapshot model
@@ -152,7 +155,8 @@ Metrics are pushed:
 - at agent startup, then again at startup trace start;
 - every `--metrics.interval` seconds in agent mode;
 - after CoreWLAN or SystemConfiguration events before event traces;
-- at every trace start.
+- at every trace start;
+- after active validation, so the latest HTTP, DNS, and gateway probe samples are available to Prometheus.
 
 Most metrics are gauges.
 CoreWLAN event and snapshot change metrics are counters.
@@ -175,6 +179,18 @@ Those can be defined in Prometheus or Grafana if an operator wants a site-specif
 | `watchme_wifi_metrics_push_timestamp_seconds` | `interface`, `essid`, `bssid` | `Date().timeIntervalSince1970` | Unix timestamp of metric generation. |
 | `watchme_wifi_corewlan_event_total` | `interface`, `essid`, `bssid`, `event` | `CWEventDelegate` callback receipt | Count of CoreWLAN event callbacks observed in this process. |
 | `watchme_wifi_snapshot_change_total` | `interface`, `essid`, `bssid`, `field` | Consecutive `WiFiSnapshot` comparison | Count of raw snapshot field changes observed in this process. |
+| `watchme_wifi_probe_http_success` | `interface`, `essid`, `bssid`, `target`, `scheme` | Wi-Fi-bound active HTTP probe | `1` when the latest HTTP probe returned status `200..<500`, otherwise `0`. |
+| `watchme_wifi_probe_http_duration_seconds` | `interface`, `essid`, `bssid`, `target`, `scheme`, `phase` | Wi-Fi-bound active HTTP probe | Duration for `connect`, `http_head`, and `total` phases. |
+| `watchme_wifi_probe_http_status_code` | `interface`, `essid`, `bssid`, `target`, `scheme` | Wi-Fi-bound active HTTP probe | HTTP status code from the latest probe when one was received. |
+| `watchme_wifi_probe_http_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `target`, `scheme` | Wi-Fi-bound active HTTP probe | Unix timestamp of the latest HTTP probe completion. |
+| `watchme_wifi_probe_dns_success` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport` | Wi-Fi-bound active DNS probe | `1` when the latest DNS probe returned rcode `0` with at least one answer, otherwise `0`. |
+| `watchme_wifi_probe_dns_duration_seconds` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport` | Wi-Fi-bound active DNS probe | Duration of the latest DNS query/response. |
+| `watchme_wifi_probe_dns_rcode` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport` | Wi-Fi-bound active DNS probe | DNS response code from the latest DNS probe when a response was parsed. |
+| `watchme_wifi_probe_dns_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `target`, `resolver`, `transport` | Wi-Fi-bound active DNS probe | Unix timestamp of the latest DNS probe completion. |
+| `watchme_wifi_probe_gateway_tcp_reachable` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome` | Wi-Fi-bound active gateway TCP probe | `1` when the gateway host was reached, including TCP refusal, otherwise `0`. |
+| `watchme_wifi_probe_gateway_tcp_connect_success` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome` | Wi-Fi-bound active gateway TCP probe | `1` when TCP connect reached `.ready`, otherwise `0`. |
+| `watchme_wifi_probe_gateway_tcp_duration_seconds` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome` | Wi-Fi-bound active gateway TCP probe | Duration of the latest gateway TCP probe. |
+| `watchme_wifi_probe_gateway_tcp_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome` | Wi-Fi-bound active gateway TCP probe | Unix timestamp of the latest gateway TCP probe completion. |
 
 ## Trace lifecycle
 
@@ -235,10 +251,12 @@ Every trace currently includes active validation because all `emitTrace` call si
 
 | Span name | Parent | Timing | Status | Tags |
 | --- | --- | --- | --- | --- |
-| `phase.active_validation` | Root | Wall-clock time around all configured active targets. | OK | `phase.name=active_validation`, `phase.source=network_framework_active_probe`, `phase.validation_scope=http_head_targets`, `probe.targets`, `span.source=watchme`, `otel.status_code=OK`. |
-| `target.probe` | `phase.active_validation` | Duration of one target's HTTP HEAD probe. | OK when HTTP status is `200..<500`; error otherwise. | `span.source=active_probe`, `active_probe.interface`, `active_probe.required_interface`, `probe.target`, `url.full`, `target.probe.child_span_count`, optional `http.response.status_code`, optional `error`, default route tags. |
+| `phase.active_validation` | Root | Wall-clock time around all configured active targets. | OK | `phase.name=active_validation`, `phase.source=network_framework_active_probe`, `phase.validation_scope=http_head_targets,dns_targets,gateway_tcp`, `probe.targets`, `probe.dns_resolvers`, `probe.gateway`, `span.source=watchme`, `otel.status_code=OK`. |
+| `target.probe` | `phase.active_validation` | Duration of one target's HTTP HEAD probe. | OK when HTTP status is `200..<500`; error otherwise. | `span.source=active_probe`, `active_probe.interface`, `active_probe.required_interface`, `probe.target`, `url.full`, `target.probe.child_span_count`, optional `http.response.status_code`, optional `error`, default route tags, Wi-Fi service route tags. |
 | `probe.network.connect` | `target.probe` | Probe start until `NWConnection` reaches `.ready`. | OK | `span.source=network_framework`, `network.framework.phase=dns_tcp_tls_connect`, `net.peer.name`, `net.peer.port`, `probe.target`, `url.scheme`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`; emitted only when the connection reaches ready. |
-| `probe.http.head` | `target.probe` | Probe start until response bytes or failure. | OK when HTTP status is `200..<500`; error otherwise. | `span.source=network_framework_active_probe`, `http.request.method=HEAD`, optional `http.response.status_code`, optional `error`, `net.peer.name`, `net.peer.port`, `probe.target`, `url.scheme`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.http.head` | `target.probe` | `NWConnection.ready` until response bytes or failure; if the connection never becomes ready, falls back to probe start. | OK when HTTP status is `200..<500`; error otherwise. | `span.source=network_framework_active_probe`, `http.request.method=HEAD`, optional `http.response.status_code`, optional `error`, `net.peer.name`, `net.peer.port`, `probe.target`, `url.scheme`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.dns.resolve` | `phase.active_validation` | UDP DNS query send/receive duration for each active target host and up to two Wi-Fi service DNS resolvers. | OK when rcode is `0` and at least one answer is present. | `span.source=network_framework_dns_probe`, `probe.target`, `dns.resolver`, `dns.transport`, optional `dns.rcode`, optional `dns.answer_count`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.gateway.tcp_connect` | `phase.active_validation` | TCP connect duration to the Wi-Fi service router on port 53. | OK when the gateway host is reachable; TCP refusal is reachable but not connect success. | `span.source=network_framework_gateway_probe`, `network.wifi_gateway`, `network.gateway_probe.port`, `network.gateway_probe.outcome`, `network.gateway_probe.reachable`, `network.gateway_probe.connect_success`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
 
 Default route tags on `target.probe`:
 
@@ -246,6 +264,13 @@ Default route tags on `target.probe`:
 - **`network.primary_interface`:** `State:/Network/Global/IPv4` `PrimaryInterface`.
 - **`network.primary_service`:** `State:/Network/Global/IPv4` `PrimaryService`.
 - **`network.gateway`:** `State:/Network/Global/IPv4` `Router`.
+
+Wi-Fi service route tags on `target.probe`:
+
+- **`network.wifi_interface`:** Wi-Fi interface name used to select the network service.
+- **`network.wifi_service`:** SystemConfiguration service ID whose state is bound to the Wi-Fi interface.
+- **`network.wifi_gateway`:** Router from `State:/Network/Service/<service>/IPv4`.
+- **`network.wifi_dns_servers`:** DNS resolvers from `State:/Network/Service/<service>/DNS`.
 
 ### Packet-window phase span
 
@@ -338,6 +363,16 @@ The active probe validates the Wi-Fi path, not just general host reachability.
 5. The status line is parsed from the first response bytes.
 
 A response status in `200..<500` is treated as a successful reachability result; 4xx means the network path worked even if the endpoint rejected the request.
+HTTP probe metrics split duration into `connect`, `http_head`, and `total`.
+The `connect` phase covers Network.framework readiness and therefore combines DNS, TCP, and TLS work in the current implementation.
+
+DNS active probes use the Wi-Fi service's DNS resolvers instead of the global default route.
+For each active target host, WatchMe sends a raw UDP A query over `NWConnection` with `requiredInterface` set to Wi-Fi.
+Only the first two Wi-Fi service DNS resolvers are probed to keep a bounded active trace cost.
+
+Gateway active probes use the Wi-Fi service's IPv4 router, not `State:/Network/Global/IPv4`.
+The probe opens a TCP connection to gateway port 53 over the Wi-Fi interface.
+TCP refusal is treated as host reachable because the gateway replied, but `connect_success` remains `0`.
 
 ## Event classification
 
@@ -361,19 +396,18 @@ SystemConfiguration events are reasoned from key paths:
 
 SystemConfiguration event traces are emitted when the event indicates a join or when the primary IPv4 address changed while associated.
 
-## Currently unused span helper
+## URLSessionTaskMetrics helper
 
 `ActiveProbe.swift` still contains `spanEventsFromURLMetrics`, which converts `URLSessionTaskMetrics` into span events.
-The current active probe uses `Network.framework` directly and does not call this helper.
-These span names are therefore not emitted by the current `watchme wifi` code path:
+The current active probe uses `Network.framework` directly for interface binding and does not call this helper.
+The active DNS span named `probe.dns.resolve` is emitted by `ActiveDNSProbe.swift`, not by URLSession.
+If a future URLSession spike can preserve Wi-Fi interface binding, this helper can map URLSession timings into these additional span names:
 
-- **`probe.dns.resolve`:** `URLSessionTaskMetrics.domainLookupStartDate` to `domainLookupEndDate`.
 - **`probe.tcp.connect`:** `connectStartDate` to `connectEndDate`.
 - **`probe.tls.handshake`:** `secureConnectionStartDate` to `secureConnectionEndDate`.
 - **`probe.http.request_to_first_byte`:** `requestStartDate` to `responseStartDate`.
 
 If URLSession-based probing is removed permanently, this helper should be deleted.
-If it is revived, the emitted span list above should be updated.
 
 ## Operational checks
 
