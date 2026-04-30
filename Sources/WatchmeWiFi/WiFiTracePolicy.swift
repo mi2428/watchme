@@ -32,6 +32,10 @@ enum WiFiTracePolicy {
         !isAssociationRecoveryReason(reason) && reason != "wifi.disconnect"
     }
 
+    static func shouldSuppressEventTraceAfterAssociation(reason: String) -> Bool {
+        shouldSuppressEventTraceDuringAssociation(reason: reason)
+    }
+
     static func shouldSuppressCoveredAssociationTrace(
         eventTags: [String: String],
         lastCompletedEpochNanos: UInt64?

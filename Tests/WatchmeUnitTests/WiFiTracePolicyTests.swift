@@ -126,6 +126,14 @@ final class WiFiTracePolicyTests: XCTestCase {
         XCTAssertFalse(WiFiTracePolicy.shouldSuppressEventTraceDuringAssociation(reason: "wifi.disconnect"))
     }
 
+    func testRecentlyCompletedAssociationSuppressesOnlyCoveredEventTraces() {
+        XCTAssertTrue(WiFiTracePolicy.shouldSuppressEventTraceAfterAssociation(reason: "wifi.power.changed"))
+        XCTAssertTrue(WiFiTracePolicy.shouldSuppressEventTraceAfterAssociation(reason: "wifi.network.ipv4_changed"))
+        XCTAssertFalse(WiFiTracePolicy.shouldSuppressEventTraceAfterAssociation(reason: "wifi.join"))
+        XCTAssertFalse(WiFiTracePolicy.shouldSuppressEventTraceAfterAssociation(reason: "wifi.roam"))
+        XCTAssertFalse(WiFiTracePolicy.shouldSuppressEventTraceAfterAssociation(reason: "wifi.disconnect"))
+    }
+
     func testCoveredAssociationEventsAreSuppressedAfterCompletedTrace() {
         XCTAssertTrue(
             WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(

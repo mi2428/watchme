@@ -23,6 +23,18 @@ extension WiFiAgent {
                 return
             }
             let now = Date()
+            if !force, now < self.packetWindowSuppressedUntil,
+               WiFiTracePolicy.shouldSuppressEventTraceAfterAssociation(reason: reason)
+            {
+                logEvent(
+                    .debug, "trace_trigger_suppressed",
+                    fields: [
+                        "reason": reason,
+                        "suppression_reason": "association_trace_recently_completed",
+                    ]
+                )
+                return
+            }
             guard force || now.timeIntervalSince(self.lastTrigger) >= self.config.triggerCooldown else {
                 logEvent(
                     .debug, "trace_trigger_suppressed",
@@ -231,6 +243,18 @@ extension WiFiAgent {
         let snapshot = context.snapshot
         let networkState = context.networkState
         let connectivityReadiness = context.connectivityReadiness
+        if shouldSuppressNetworkAttachmentTrace(reason: reason, readiness: connectivityReadiness) {
+            logEvent(
+                .info, "network_attachment_trace_suppressed",
+                fields: [
+                    "reason": reason,
+                    "suppression_reason": connectivityReadiness.skipReason ?? "not_ready",
+                    "associated": snapshot.isAssociated ? "true" : "false",
+                    "power_on": snapshot.powerOn.map { $0 ? "true" : "false" } ?? "unknown",
+                ]
+            )
+            return
+        }
         if shouldSuppressStaleAssociationTrace(reason: reason, readiness: connectivityReadiness) {
             logEvent(
                 .info, "association_trace_suppressed",
@@ -536,6 +560,10 @@ func shouldSuppressStaleAssociationTrace(reason: String, readiness: WiFiConnecti
     default:
         return false
     }
+}
+
+func shouldSuppressNetworkAttachmentTrace(reason: String, readiness: WiFiConnectivityCheckReadiness) -> Bool {
+    reason == "wifi.network.attachment" && !readiness.ready
 }
 
 func associationPacketSpanWindowStart(

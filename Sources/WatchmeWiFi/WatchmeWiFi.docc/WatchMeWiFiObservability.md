@@ -473,8 +473,8 @@ All ICMPv6 packet spans receive:
 - Trace attachment uses `--wifi.probe.bpf.span-max-age` as the lookback window; default is 180 seconds.
 - `consume=true` suppresses re-emitting the same packet span in later event-triggered traces.
 - Association traces and network attachment traces use `consume=true` after collecting recent packet-derived spans, so DHCP/ARP/ICMPv6 recovery evidence is not repeatedly attached to later event traces.
-- Non-association event traces and BPF network attachment traces are suppressed while an association trace is pending, because the association trace carries the same DHCP/ARP/ICMPv6 recovery evidence.
-- BPF network attachment traces require unconsumed DHCP or router-solicitation-to-router-advertisement spans, so normal steady-state ARP replies or neighbor discovery do not create extra attachment traces.
+- Non-association event traces and BPF network attachment traces are suppressed while an association trace is pending or recently completed, because the association trace carries the same DHCP/ARP/ICMPv6 recovery evidence.
+- BPF network attachment traces require Wi-Fi readiness plus unconsumed DHCP or router-solicitation-to-router-advertisement spans, so normal steady-state ARP replies, neighbor discovery, or pre-association packet windows do not create extra attachment traces.
 - ARP network attachment prefers the Wi-Fi service IPv4 router when it is known; otherwise it includes recent ARP request/reply spans without a gateway filter.
 - Emitted-span de-duplication keys include span name, start time, duration, `packet.event`, `dhcp.xid`, `icmpv6.nd.target_address`, and `arp.target_ip`.
 

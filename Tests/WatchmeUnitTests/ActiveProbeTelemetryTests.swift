@@ -253,6 +253,33 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         )
     }
 
+    func testNetworkAttachmentTraceIsSuppressedUntilWiFiIsReady() {
+        XCTAssertTrue(
+            shouldSuppressNetworkAttachmentTrace(
+                reason: "wifi.network.attachment",
+                readiness: .skip("wifi_not_associated")
+            )
+        )
+        XCTAssertTrue(
+            shouldSuppressNetworkAttachmentTrace(
+                reason: "wifi.network.attachment",
+                readiness: .skip("wifi_dns_unavailable")
+            )
+        )
+        XCTAssertFalse(
+            shouldSuppressNetworkAttachmentTrace(
+                reason: "wifi.network.attachment",
+                readiness: .ready
+            )
+        )
+        XCTAssertFalse(
+            shouldSuppressNetworkAttachmentTrace(
+                reason: "wifi.join",
+                readiness: .skip("wifi_not_associated")
+            )
+        )
+    }
+
     func testActiveProbeTagsCarryWiFiIdentityContext() {
         let snapshot = makeSnapshot(ssid: "lab-wifi", bssid: "aa:bb:cc:dd:ee:ff")
         let tags = makeAgent().activeInternetHTTPTags(result: httpResult(), snapshot: snapshot)
