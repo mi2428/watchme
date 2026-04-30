@@ -62,6 +62,10 @@ func parseTCPPacketObservation(
     guard dataOffset >= 20, offset + dataOffset <= context.packetEnd else {
         return nil
     }
+    let payloadOffset = offset + dataOffset
+    let payloadLength = max(context.packetEnd - payloadOffset, 0)
+    let prefixEnd = min(context.packetEnd, payloadOffset + 256)
+    let payloadPrefix = payloadOffset < prefixEnd ? Array(buffer[payloadOffset ..< prefixEnd]) : []
     return TCPPacketObservation(
         interfaceName: context.interfaceName,
         wallNanos: context.timestampNanos,
@@ -69,11 +73,56 @@ func parseTCPPacketObservation(
         destinationIP: context.destinationIP,
         sourcePort: readBigUInt16(buffer, offset: offset),
         destinationPort: readBigUInt16(buffer, offset: offset + 2),
-        flags: buffer[offset + 13]
+        flags: buffer[offset + 13],
+        payloadLength: payloadLength,
+        payloadPrefix: payloadPrefix
     )
 }
 
-private func parseDNSName(
+func parseICMPv4PacketObservation(
+    buffer: [UInt8],
+    offset: Int,
+    context: TransportPacketContext
+) -> ICMPPacketObservation? {
+    parseICMPEchoPacketObservation(buffer: buffer, offset: offset, context: context, family: .ipv4)
+}
+
+func parseICMPv6EchoPacketObservation(
+    buffer: [UInt8],
+    offset: Int,
+    context: TransportPacketContext
+) -> ICMPPacketObservation? {
+    parseICMPEchoPacketObservation(buffer: buffer, offset: offset, context: context, family: .ipv6)
+}
+
+private func parseICMPEchoPacketObservation(
+    buffer: [UInt8],
+    offset: Int,
+    context: TransportPacketContext,
+    family: InternetAddressFamily
+) -> ICMPPacketObservation? {
+    guard offset + 8 <= context.packetEnd else {
+        return nil
+    }
+    let type = buffer[offset]
+    let echoTypes: Set<UInt8> = family == .ipv4 ? [0, 8] : [128, 129]
+    guard echoTypes.contains(type) else {
+        return nil
+    }
+    return ICMPPacketObservation(
+        interfaceName: context.interfaceName,
+        wallNanos: context.timestampNanos,
+        family: family,
+        type: type,
+        code: buffer[offset + 1],
+        sourceIP: context.sourceIP,
+        destinationIP: context.destinationIP,
+        identifier: readBigUInt16(buffer, offset: offset + 4),
+        sequence: readBigUInt16(buffer, offset: offset + 6)
+    )
+}
+
+func parseDNSName(
     buffer: [UInt8],
     messageOffset: Int,
     cursor startCursor: Int,

@@ -234,13 +234,6 @@ func stringValue(_ value: Any?) -> String? {
     }
 }
 
-func normalizedTargetURL(_ target: String) -> URL {
-    if let url = URL(string: target), url.scheme != nil {
-        return url
-    }
-    return URL(string: "https://\(target)/")!
-}
-
 func traceRootName(_ reason: String) -> String {
     let normalized = reason.lowercased().map { character -> Character in
         if character.isLetter || character.isNumber || character == "." || character == "_" || character == "-" {

@@ -75,7 +75,7 @@ extension WiFiAgent {
         logEvent(
             .info,
             "bpf_monitor_started",
-            fields: ["interface": interfaceName, "profiles": "dhcp,icmpv6_control,active_dns,active_tcp"]
+            fields: ["interface": interfaceName, "profiles": "dhcp,icmpv6_control,active_dns,active_icmp,active_http,active_tcp"]
         )
     }
 
@@ -213,14 +213,18 @@ extension WiFiAgent {
         let phaseId = recorder.newSpanId()
         let phaseStart = wallClockNanos()
         let networkState = currentWiFiServiceNetworkState(interfaceName: snapshot.interfaceName)
-        var routeTags = defaultRouteTags()
-        routeTags.merge(networkState.traceTags) { _, new in new }
+        let internetResults = runActiveInternetProbes(
+            config: config,
+            networkState: networkState,
+            interfaceName: snapshot.interfaceName,
+            packetStore: packetStore
+        )
+        let gatewayResult = runGatewayProbe(networkState: networkState, snapshot: snapshot)
 
-        for target in config.probeHTTPTargets {
-            recordActiveTarget(target, phaseId: phaseId, routeTags: routeTags, recorder: recorder, snapshot: snapshot)
+        recordInternetProbeResults(internetResults, phaseId: phaseId, recorder: recorder, snapshot: snapshot)
+        if let gatewayResult {
+            recordGatewayProbeResult(gatewayResult, phaseId: phaseId, recorder: recorder, snapshot: snapshot)
         }
-        recordActiveDNSProbes(phaseId: phaseId, networkState: networkState, recorder: recorder, snapshot: snapshot)
-        recordActiveGatewayProbe(phaseId: phaseId, networkState: networkState, recorder: recorder, snapshot: snapshot)
 
         recorder.recordSpan(
             name: "phase.active_validation",
@@ -230,232 +234,30 @@ extension WiFiAgent {
             tags: [
                 "phase.name": "active_validation",
                 "phase.source": "network_framework_active_probe",
-                "phase.validation_scope": "http_head_targets,dns_targets,gateway_tcp",
-                "probe.targets": config.probeHTTPTargets.joined(separator: ","),
+                "phase.validation_scope": "internet_dns,internet_icmp,internet_http,gateway_tcp",
+                "probe.internet.targets": config.probeInternetTargets.joined(separator: ","),
+                "probe.internet.family": config.probeInternetFamily.metricValue,
+                "probe.internet.dns.enabled": config.probeInternetDNS ? "true" : "false",
+                "probe.internet.icmp.enabled": config.probeInternetICMP ? "true" : "false",
+                "probe.internet.http.enabled": config.probeInternetHTTP ? "true" : "false",
+                "probe.internet.dns.span_count": "\(internetResults.dns.count)",
+                "probe.internet.icmp.span_count": "\(internetResults.icmp.count)",
+                "probe.internet.http.span_count": "\(internetResults.http.count)",
                 "probe.dns_resolvers": networkState.dnsServers.joined(separator: ","),
                 "probe.gateway": networkState.routerIPv4 ?? "",
             ]
         )
     }
 
-    private func recordActiveTarget(
-        _ target: String,
-        phaseId: String,
-        routeTags: [String: String],
-        recorder: TraceRecorder,
-        snapshot: WiFiSnapshot
-    ) {
-        let targetSpanId = recorder.newSpanId()
-        let result = runHTTPHeadProbe(target: target, timeout: config.probeHTTPTimeout, interfaceName: snapshot.interfaceName)
-        metricState.recordHTTPProbe(result)
-        for child in result.childSpans {
-            recorder.recordEvent(
-                child, parentId: targetSpanId,
-                tags: [
-                    "probe.target": target,
-                    "wifi.essid": snapshot.ssid ?? "unknown",
-                    "wifi.bssid": snapshot.bssid ?? "unknown",
-                ]
-            )
-        }
-        recorder.recordSpan(
-            name: "target.probe",
-            id: targetSpanId,
-            startWallNanos: result.startWallNanos,
-            durationNanos: result.durationNanos,
-            parentId: phaseId,
-            tags: activeTargetTags(target: target, result: result, routeTags: routeTags, snapshot: snapshot),
-            statusOK: result.ok
-        )
-        logEvent(
-            result.ok ? .debug : .warn, "active_probe_completed",
-            fields: [
-                "trace_id": recorder.traceId,
-                "target": target,
-                "url": result.url.absoluteString,
-                "status": result.ok ? "ok" : "error",
-                "status_code": result.statusCode.map(String.init) ?? "",
-                "error": result.error ?? "",
-            ]
-        )
-    }
-
-    private func activeTargetTags(
-        target: String,
-        result: ActiveProbeResult,
-        routeTags: [String: String],
-        snapshot: WiFiSnapshot
-    ) -> [String: String] {
-        var tags: [String: String] = [
-            "span.source": "active_probe",
-            "active_probe.interface": snapshot.interfaceName ?? "",
-            "active_probe.required_interface": snapshot.interfaceName ?? "",
-            "probe.target": target,
-            "url.full": result.url.absoluteString,
-            "target.probe.child_span_count": "\(result.childSpans.count)",
-        ]
-        tags.merge(routeTags) { _, new in new }
-        if let statusCode = result.statusCode {
-            tags["http.response.status_code"] = "\(statusCode)"
-        }
-        if let error = result.error {
-            tags["error"] = clipped(error, limit: 240)
-        }
-        return tags
-    }
-
-    private func recordActiveDNSProbes(
-        phaseId: String,
-        networkState: WiFiServiceNetworkState,
-        recorder: TraceRecorder,
-        snapshot: WiFiSnapshot
-    ) {
-        let resolvers = Array(networkState.dnsServers.prefix(2))
-        guard !resolvers.isEmpty else {
-            return
-        }
-        let targets = uniqueProbeHosts(config.probeHTTPTargets)
-        let timeout = min(config.probeHTTPTimeout, 2.0)
-        for resolver in resolvers {
-            for target in targets {
-                let result = runDNSAProbe(
-                    target: target,
-                    resolver: resolver,
-                    timeout: timeout,
-                    interfaceName: snapshot.interfaceName,
-                    packetStore: packetStore
-                )
-                metricState.recordDNSProbe(result)
-                recorder.recordSpan(
-                    name: "probe.dns.resolve",
-                    id: recorder.newSpanId(),
-                    startWallNanos: result.startWallNanos,
-                    durationNanos: result.durationNanos,
-                    parentId: phaseId,
-                    tags: activeDNSTags(result: result, snapshot: snapshot),
-                    statusOK: result.ok
-                )
-                logEvent(
-                    result.ok ? .debug : .warn, "active_dns_probe_completed",
-                    fields: [
-                        "trace_id": recorder.traceId,
-                        "target": result.target,
-                        "resolver": result.resolver,
-                        "transport": result.transport,
-                        "status": result.ok ? "ok" : "error",
-                        "rcode": result.rcode.map(String.init) ?? "",
-                        "answers": result.answerCount.map(String.init) ?? "",
-                        "timing_source": result.timingSource,
-                        "error": result.error ?? "",
-                    ]
-                )
-            }
-        }
-    }
-
-    private func recordActiveGatewayProbe(
-        phaseId: String,
-        networkState: WiFiServiceNetworkState,
-        recorder: TraceRecorder,
-        snapshot: WiFiSnapshot
-    ) {
+    private func runGatewayProbe(networkState: WiFiServiceNetworkState, snapshot: WiFiSnapshot) -> ActiveGatewayProbeResult? {
         guard let gateway = networkState.routerIPv4 else {
-            return
+            return nil
         }
-        let result = runGatewayTCPConnectProbe(
+        return runGatewayTCPConnectProbe(
             gateway: gateway,
-            timeout: min(config.probeHTTPTimeout, 2.0),
+            timeout: min(config.probeInternetTimeout, 2.0),
             interfaceName: snapshot.interfaceName,
             packetStore: packetStore
         )
-        metricState.recordGatewayProbe(result)
-        recorder.recordSpan(
-            name: "probe.gateway.tcp_connect",
-            id: recorder.newSpanId(),
-            startWallNanos: result.startWallNanos,
-            durationNanos: result.durationNanos,
-            parentId: phaseId,
-            tags: activeGatewayTags(result: result, snapshot: snapshot),
-            statusOK: result.reachable
-        )
-        logEvent(
-            result.reachable ? .debug : .warn, "active_gateway_probe_completed",
-            fields: [
-                "trace_id": recorder.traceId,
-                "gateway": result.gateway,
-                "port": "\(result.port)",
-                "outcome": result.outcome,
-                "reachable": result.reachable ? "true" : "false",
-                "connect_success": result.connectSuccess ? "true" : "false",
-                "timing_source": result.timingSource,
-                "error": result.error ?? "",
-            ]
-        )
-    }
-
-    private func activeDNSTags(result: ActiveDNSProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
-        var tags: [String: String] = [
-            "span.source": "network_framework_dns_probe",
-            "active_probe.interface": snapshot.interfaceName ?? "",
-            "active_probe.required_interface": snapshot.interfaceName ?? "",
-            "probe.target": result.target,
-            "probe.timing_source": result.timingSource,
-            "probe.timestamp_source": result.timestampSource,
-            "dns.resolver": result.resolver,
-            "dns.transport": result.transport,
-            "dns.answer_count": result.answerCount.map(String.init) ?? "",
-            "wifi.essid": snapshot.ssid ?? "unknown",
-            "wifi.bssid": snapshot.bssid ?? "unknown",
-        ]
-        if let rcode = result.rcode {
-            tags["dns.rcode"] = "\(rcode)"
-        }
-        if result.timingSource == bpfPacketTimingSource {
-            tags["packet.event"] = "dns_query_to_response"
-            tags["packet.timestamp_source"] = bpfHeaderTimestampSource
-            tags["packet.timestamp_resolution"] = "microsecond"
-        }
-        if let error = result.error {
-            tags["error"] = clipped(error, limit: 240)
-        }
-        return tags
-    }
-
-    private func activeGatewayTags(result: ActiveGatewayProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
-        var tags: [String: String] = [
-            "span.source": "network_framework_gateway_probe",
-            "active_probe.interface": snapshot.interfaceName ?? "",
-            "active_probe.required_interface": snapshot.interfaceName ?? "",
-            "probe.timing_source": result.timingSource,
-            "probe.timestamp_source": result.timestampSource,
-            "network.wifi_gateway": result.gateway,
-            "network.gateway_probe.port": "\(result.port)",
-            "network.gateway_probe.outcome": result.outcome,
-            "network.gateway_probe.reachable": result.reachable ? "true" : "false",
-            "network.gateway_probe.connect_success": result.connectSuccess ? "true" : "false",
-            "wifi.essid": snapshot.ssid ?? "unknown",
-            "wifi.bssid": snapshot.bssid ?? "unknown",
-        ]
-        if result.timingSource == bpfPacketTimingSource {
-            tags["packet.event"] = "tcp_syn_to_response"
-            tags["packet.timestamp_source"] = bpfHeaderTimestampSource
-            tags["packet.timestamp_resolution"] = "microsecond"
-        }
-        if let error = result.error {
-            tags["error"] = clipped(error, limit: 240)
-        }
-        return tags
-    }
-}
-
-func uniqueProbeHosts(_ targets: [String]) -> [String] {
-    var seen = Set<String>()
-    return targets.compactMap { target in
-        let host = normalizedTargetURL(target).host ?? target
-        guard !host.isEmpty, !seen.contains(host) else {
-            return nil
-        }
-        seen.insert(host)
-        return host
     }
 }

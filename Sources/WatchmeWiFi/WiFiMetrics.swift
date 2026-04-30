@@ -182,8 +182,9 @@ struct WiFiMetricState {
 
     private(set) var coreWLANEvents: [String: Int] = [:]
     private(set) var snapshotChanges: [String: Int] = [:]
-    private(set) var httpProbes: [String: ActiveProbeResult] = [:]
+    private(set) var internetHTTPProbes: [String: ActiveInternetHTTPProbeResult] = [:]
     private(set) var dnsProbes: [String: ActiveDNSProbeResult] = [:]
+    private(set) var icmpProbes: [String: ActiveICMPProbeResult] = [:]
     private(set) var gatewayProbes: [String: ActiveGatewayProbeResult] = [:]
 
     mutating func recordCoreWLANEvent(_ event: String) {
@@ -199,12 +200,24 @@ struct WiFiMetricState {
         }
     }
 
-    mutating func recordHTTPProbe(_ result: ActiveProbeResult) {
-        httpProbes["\(result.url.scheme ?? "")|\(result.url.host ?? result.target)"] = result
+    mutating func recordInternetHTTPProbe(_ result: ActiveInternetHTTPProbeResult) {
+        internetHTTPProbes["\(result.target)|\(result.family.metricValue)"] = result
     }
 
     mutating func recordDNSProbe(_ result: ActiveDNSProbeResult) {
-        dnsProbes["\(result.transport)|\(result.resolver)|\(result.target)"] = result
+        let familyKey = "\(result.target)|\(result.family.metricValue)"
+        if result.resolver == "none" {
+            dnsProbes = dnsProbes.filter { _, existing in
+                familyKey != "\(existing.target)|\(existing.family.metricValue)"
+            }
+        } else {
+            dnsProbes.removeValue(forKey: "udp|none|\(familyKey)")
+        }
+        dnsProbes["\(result.transport)|\(result.resolver)|\(familyKey)"] = result
+    }
+
+    mutating func recordICMPProbe(_ result: ActiveICMPProbeResult) {
+        icmpProbes["\(result.target)|\(result.family.metricValue)"] = result
     }
 
     mutating func recordGatewayProbe(_ result: ActiveGatewayProbeResult) {
@@ -214,8 +227,9 @@ struct WiFiMetricState {
     func metrics(labels: [String: String]) -> [PrometheusMetric] {
         var metrics: [PrometheusMetric] = []
         metrics.append(contentsOf: counterMetrics(labels: labels))
-        metrics.append(contentsOf: httpProbeMetrics(labels: labels))
+        metrics.append(contentsOf: internetHTTPProbeMetrics(labels: labels))
         metrics.append(contentsOf: dnsProbeMetrics(labels: labels))
+        metrics.append(contentsOf: icmpProbeMetrics(labels: labels))
         metrics.append(contentsOf: gatewayProbeMetrics(labels: labels))
         return metrics
     }
@@ -251,22 +265,33 @@ struct WiFiMetricState {
         return metrics
     }
 
-    private func httpProbeMetrics(labels: [String: String]) -> [PrometheusMetric] {
-        httpProbes.values.flatMap { result -> [PrometheusMetric] in
+    private func internetHTTPProbeMetrics(labels: [String: String]) -> [PrometheusMetric] {
+        internetHTTPProbes.values.flatMap { result -> [PrometheusMetric] in
             var probeLabels = labels
-            probeLabels["target"] = result.url.host ?? result.target
-            probeLabels["scheme"] = result.url.scheme ?? "unknown"
+            probeLabels["target"] = result.target
+            probeLabels["family"] = result.family.metricValue
+            probeLabels["remote_ip"] = result.remoteIP
+            probeLabels["scheme"] = "http"
+            probeLabels["outcome"] = result.outcome
+            probeLabels["timing_source"] = result.timingSource
             var metrics = [
                 PrometheusMetric(
-                    name: "watchme_wifi_probe_http_success",
-                    help: "Whether the latest Wi-Fi-bound HTTP probe succeeded.",
+                    name: "watchme_wifi_probe_internet_http_success",
+                    help: "Whether the latest Wi-Fi-bound internet plain HTTP probe succeeded.",
                     type: .gauge,
                     labels: probeLabels,
                     value: result.ok ? 1 : 0
                 ),
                 PrometheusMetric(
-                    name: "watchme_wifi_probe_http_last_run_timestamp_seconds",
-                    help: "Unix timestamp of the latest Wi-Fi-bound HTTP probe.",
+                    name: "watchme_wifi_probe_internet_http_duration_seconds",
+                    help: "Duration of the latest Wi-Fi-bound internet plain HTTP request-to-first-byte probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromDurationNanos: result.durationNanos)
+                ),
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_internet_http_last_run_timestamp_seconds",
+                    help: "Unix timestamp of the latest Wi-Fi-bound internet plain HTTP probe.",
                     type: .gauge,
                     labels: probeLabels,
                     value: seconds(fromWallNanos: result.finishedWallNanos)
@@ -275,24 +300,11 @@ struct WiFiMetricState {
             if let statusCode = result.statusCode {
                 metrics.append(
                     PrometheusMetric(
-                        name: "watchme_wifi_probe_http_status_code",
-                        help: "HTTP status code returned by the latest Wi-Fi-bound HTTP probe.",
+                        name: "watchme_wifi_probe_internet_http_status_code",
+                        help: "HTTP status code returned by the latest Wi-Fi-bound internet plain HTTP probe.",
                         type: .gauge,
                         labels: probeLabels,
                         value: Double(statusCode)
-                    )
-                )
-            }
-            for phase in result.phaseDurations {
-                var phaseLabels = probeLabels
-                phaseLabels["phase"] = phase.phase
-                metrics.append(
-                    PrometheusMetric(
-                        name: "watchme_wifi_probe_http_duration_seconds",
-                        help: "Duration of the latest Wi-Fi-bound HTTP probe phase.",
-                        type: .gauge,
-                        labels: phaseLabels,
-                        value: seconds(fromDurationNanos: phase.durationNanos)
                     )
                 )
             }
@@ -304,37 +316,46 @@ struct WiFiMetricState {
         dnsProbes.values.flatMap { result -> [PrometheusMetric] in
             var probeLabels = labels
             probeLabels["target"] = result.target
+            probeLabels["family"] = result.family.metricValue
             probeLabels["resolver"] = result.resolver
             probeLabels["transport"] = result.transport
+            probeLabels["record_type"] = result.recordType.name
             probeLabels["timing_source"] = result.timingSource
             var metrics = [
                 PrometheusMetric(
-                    name: "watchme_wifi_probe_dns_success",
-                    help: "Whether the latest Wi-Fi-bound DNS probe succeeded.",
+                    name: "watchme_wifi_probe_internet_dns_success",
+                    help: "Whether the latest Wi-Fi-bound internet DNS probe succeeded.",
                     type: .gauge,
                     labels: probeLabels,
                     value: result.ok ? 1 : 0
                 ),
                 PrometheusMetric(
-                    name: "watchme_wifi_probe_dns_duration_seconds",
-                    help: "Duration of the latest Wi-Fi-bound DNS probe.",
+                    name: "watchme_wifi_probe_internet_dns_duration_seconds",
+                    help: "Duration of the latest Wi-Fi-bound internet DNS probe.",
                     type: .gauge,
                     labels: probeLabels,
                     value: seconds(fromDurationNanos: result.durationNanos)
                 ),
                 PrometheusMetric(
-                    name: "watchme_wifi_probe_dns_last_run_timestamp_seconds",
-                    help: "Unix timestamp of the latest Wi-Fi-bound DNS probe.",
+                    name: "watchme_wifi_probe_internet_dns_last_run_timestamp_seconds",
+                    help: "Unix timestamp of the latest Wi-Fi-bound internet DNS probe.",
                     type: .gauge,
                     labels: probeLabels,
                     value: seconds(fromWallNanos: result.finishedWallNanos)
+                ),
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_internet_dns_address_count",
+                    help: "Number of addresses returned by the latest Wi-Fi-bound internet DNS probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: Double(result.addresses.count)
                 ),
             ]
             if let rcode = result.rcode {
                 metrics.append(
                     PrometheusMetric(
-                        name: "watchme_wifi_probe_dns_rcode",
-                        help: "DNS response code returned by the latest Wi-Fi-bound DNS probe.",
+                        name: "watchme_wifi_probe_internet_dns_rcode",
+                        help: "DNS response code returned by the latest Wi-Fi-bound internet DNS probe.",
                         type: .gauge,
                         labels: probeLabels,
                         value: Double(rcode)
@@ -342,6 +363,40 @@ struct WiFiMetricState {
                 )
             }
             return metrics
+        }
+    }
+
+    private func icmpProbeMetrics(labels: [String: String]) -> [PrometheusMetric] {
+        icmpProbes.values.flatMap { result -> [PrometheusMetric] in
+            var probeLabels = labels
+            probeLabels["target"] = result.target
+            probeLabels["family"] = result.family.metricValue
+            probeLabels["remote_ip"] = result.remoteIP
+            probeLabels["outcome"] = result.outcome
+            probeLabels["timing_source"] = result.timingSource
+            return [
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_internet_icmp_success",
+                    help: "Whether the latest Wi-Fi-bound internet ICMP echo probe succeeded.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: result.ok ? 1 : 0
+                ),
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_internet_icmp_duration_seconds",
+                    help: "Duration of the latest Wi-Fi-bound internet ICMP echo probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromDurationNanos: result.durationNanos)
+                ),
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_internet_icmp_last_run_timestamp_seconds",
+                    help: "Unix timestamp of the latest Wi-Fi-bound internet ICMP echo probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromWallNanos: result.finishedWallNanos)
+                ),
+            ]
         }
     }
 

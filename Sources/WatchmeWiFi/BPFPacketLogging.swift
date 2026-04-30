@@ -23,15 +23,37 @@ func logActiveDNSPacket(_ observation: DNSPacketObservation) {
 }
 
 func logActiveTCPPacket(_ observation: TCPPacketObservation) {
+    var fields: [String: String] = [
+        "interface": observation.interfaceName,
+        "tcp.source_ip": observation.sourceIP,
+        "tcp.destination_ip": observation.destinationIP,
+        "tcp.source_port": "\(observation.sourcePort)",
+        "tcp.destination_port": "\(observation.destinationPort)",
+        "tcp.flags": String(format: "0x%02x", observation.flags),
+        "tcp.payload_length": "\(observation.payloadLength)",
+        "packet.timestamp_epoch_ns": "\(observation.wallNanos)",
+    ]
+    if observation.payloadLength > 0 {
+        fields["tcp.payload_prefix_ascii"] = clipped(
+            String(bytes: observation.payloadPrefix.prefix(64), encoding: .utf8) ?? "",
+            limit: 64
+        )
+    }
+    logEvent(.debug, "active_tcp_packet_observed", fields: fields)
+}
+
+func logActiveICMPPacket(_ observation: ICMPPacketObservation) {
     logEvent(
-        .debug, "active_tcp_packet_observed",
+        .debug, "active_icmp_packet_observed",
         fields: [
             "interface": observation.interfaceName,
-            "tcp.source_ip": observation.sourceIP,
-            "tcp.destination_ip": observation.destinationIP,
-            "tcp.source_port": "\(observation.sourcePort)",
-            "tcp.destination_port": "\(observation.destinationPort)",
-            "tcp.flags": String(format: "0x%02x", observation.flags),
+            "network.family": observation.family.metricValue,
+            "icmp.type": "\(observation.type)",
+            "icmp.code": "\(observation.code)",
+            "icmp.identifier": String(format: "0x%04x", observation.identifier),
+            "icmp.sequence": "\(observation.sequence)",
+            "icmp.source_ip": observation.sourceIP,
+            "icmp.destination_ip": observation.destinationIP,
             "packet.timestamp_epoch_ns": "\(observation.wallNanos)",
         ]
     )

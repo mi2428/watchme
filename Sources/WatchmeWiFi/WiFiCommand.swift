@@ -17,14 +17,14 @@ public struct WiFiCommand: WatchmeSubcommand {
         logger.minimumLevel = config.logLevel
 
         if config.authorizeLocation {
-            return requestWiFiLocationAuthorization(timeout: config.probeHTTPTimeout)
+            return requestWiFiLocationAuthorization(timeout: config.probeInternetTimeout)
         }
 
         let telemetry = TelemetryClient(
             serviceName: "watchme-macos",
             tracesEndpoint: config.tracesURL,
             metricsSink: PushgatewayMetricSink(baseURL: config.metricsPushURL, pathPrefix: config.metricsPushPrefix),
-            metricsTimeout: config.probeHTTPTimeout
+            metricsTimeout: config.probeInternetTimeout
         )
         let agent = WiFiAgent(config: config, telemetry: telemetry)
         if config.once {
@@ -48,10 +48,14 @@ struct WiFiConfig {
     var metricsInterval: TimeInterval = 5
     var activeInterval: TimeInterval = 60
     var triggerCooldown: TimeInterval = 2
-    var probeHTTPTimeout: TimeInterval = 5
+    var probeInternetTimeout: TimeInterval = 5
+    var probeInternetFamily: InternetProbeFamily = .dual
+    var probeInternetDNS = true
+    var probeInternetICMP = true
+    var probeInternetHTTP = true
+    var probeInternetTargets = ["example.com", "www.cloudflare.com"]
     var bpfEnabled = true
     var bpfSpanMaxAge: TimeInterval = 180
-    var probeHTTPTargets = ["www.apple.com", "www.cloudflare.com"]
     var logLevel: LogLevel = .debug
 
     static func parse(_ arguments: [String]) throws -> WiFiConfig {
@@ -63,7 +67,7 @@ struct WiFiConfig {
 private struct WiFiConfigParser {
     let arguments: [String]
     var config = WiFiConfig()
-    var explicitTargets: [String] = []
+    var explicitInternetTargets: [String] = []
     var index = 0
 
     mutating func parse() throws -> WiFiConfig {
@@ -78,8 +82,9 @@ private struct WiFiConfigParser {
             try consumeOption()
             index += 1
         }
-        if !explicitTargets.isEmpty {
-            config.probeHTTPTargets = explicitTargets
+        if !explicitInternetTargets.isEmpty {
+            _ = try uniqueInternetProbeTargets(explicitInternetTargets)
+            config.probeInternetTargets = explicitInternetTargets
         }
         return config
     }
@@ -106,16 +111,18 @@ private struct WiFiConfigParser {
     private mutating func consumeOption() throws {
         let (argument, inlineValue) = splitInlineValue(arguments[index])
         switch argument {
-        case "--probe.http.target":
-            try explicitTargets.append(requireValue(for: argument, inlineValue: inlineValue))
+        case "--probe.internet.target":
+            try explicitInternetTargets.append(requireValue(for: argument, inlineValue: inlineValue))
+        case "--probe.internet.family":
+            try applyInternetFamily(argument, inlineValue: inlineValue)
         case "--traces.url", "--metrics.push.url":
             try applyURL(argument, inlineValue: inlineValue)
         case "--metrics.push.prefix":
             config.metricsPushPrefix = try requireValue(for: argument, inlineValue: inlineValue)
-        case "--metrics.interval", "--traces.interval", "--traces.cooldown", "--probe.http.timeout", "--probe.bpf.span-max-age":
+        case "--metrics.interval", "--traces.interval", "--traces.cooldown", "--probe.internet.timeout", "--probe.bpf.span-max-age":
             try applyTimeInterval(argument, inlineValue: inlineValue)
-        case "--probe.bpf.enabled":
-            config.bpfEnabled = try parseBoolOption(argument, inlineValue: inlineValue)
+        case "--probe.internet.dns", "--probe.internet.icmp", "--probe.internet.http", "--probe.bpf.enabled":
+            try applyBoolOption(argument, inlineValue: inlineValue)
         case "--log.level":
             try applyLogLevel(argument, inlineValue: inlineValue)
         case "--help", "-h":
@@ -172,13 +179,21 @@ private struct WiFiConfigParser {
             config.activeInterval = try positive(value, name: "active interval")
         case "--traces.cooldown":
             config.triggerCooldown = try nonNegative(value, name: "trigger cooldown")
-        case "--probe.http.timeout":
-            config.probeHTTPTimeout = try positive(value, name: "probe HTTP timeout")
+        case "--probe.internet.timeout":
+            config.probeInternetTimeout = try positive(value, name: "internet probe timeout")
         case "--probe.bpf.span-max-age":
             config.bpfSpanMaxAge = try positive(value, name: "BPF span max age")
         default:
             break
         }
+    }
+
+    private mutating func applyInternetFamily(_ argument: String, inlineValue: String?) throws {
+        let value = try requireValue(for: argument, inlineValue: inlineValue).lowercased()
+        guard let family = InternetProbeFamily(rawValue: value) else {
+            throw WatchmeError.invalidArgument("Invalid internet probe family for \(argument): \(value)")
+        }
+        config.probeInternetFamily = family
     }
 
     private mutating func applyLogLevel(_ argument: String, inlineValue: String?) throws {
@@ -189,15 +204,28 @@ private struct WiFiConfigParser {
         config.logLevel = level
     }
 
-    private mutating func parseBoolOption(_ argument: String, inlineValue: String?) throws -> Bool {
+    private mutating func applyBoolOption(_ argument: String, inlineValue: String?) throws {
         let rawValue = try requireValue(for: argument, inlineValue: inlineValue).lowercased()
+        let value: Bool
         switch rawValue {
         case "1", "true", "yes", "on":
-            return true
+            value = true
         case "0", "false", "no", "off":
-            return false
+            value = false
         default:
             throw WatchmeError.invalidArgument("Invalid boolean for \(argument): \(rawValue)")
+        }
+        switch argument {
+        case "--probe.internet.dns":
+            config.probeInternetDNS = value
+        case "--probe.internet.icmp":
+            config.probeInternetICMP = value
+        case "--probe.internet.http":
+            config.probeInternetHTTP = value
+        case "--probe.bpf.enabled":
+            config.bpfEnabled = value
+        default:
+            break
         }
     }
 
@@ -243,8 +271,12 @@ func printWiFiUsage() {
         ("--traces.url URL", "OTLP/HTTP trace endpoint. Default: http://127.0.0.1:4318/v1/traces"),
         ("--traces.interval seconds", "Active trace interval. Default: 60"),
         ("--traces.cooldown seconds", "Minimum seconds between event traces. Default: 2"),
-        ("--probe.http.timeout seconds", "Active probe HTTP timeout. Default: 5"),
-        ("--probe.http.target target", "Active HTTP HEAD target. Can be repeated."),
+        ("--probe.internet.target host", "Internet probe host. Can be repeated. Default: example.com, www.cloudflare.com"),
+        ("--probe.internet.family value", "ipv4, ipv6, or dual. Default: dual"),
+        ("--probe.internet.timeout sec", "Internet probe timeout. Default: 5"),
+        ("--probe.internet.dns bool", "Enable internet DNS probe. Default: true"),
+        ("--probe.internet.icmp bool", "Enable internet ICMP probe. Default: true"),
+        ("--probe.internet.http bool", "Enable internet plain HTTP probe. Default: true"),
         ("--probe.bpf.enabled bool", "Enable passive BPF probe for DHCP/RS/RA/NDP. Default: true"),
         ("--probe.bpf.span-max-age sec", "Passive probe packet span lookback window. Default: 180"),
         ("--log.level level", "debug, info, warn, or error. Default: debug"),

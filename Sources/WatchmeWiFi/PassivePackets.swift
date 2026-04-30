@@ -48,6 +48,8 @@ struct TCPPacketObservation {
     let sourcePort: UInt16
     let destinationPort: UInt16
     let flags: UInt8
+    let payloadLength: Int
+    let payloadPrefix: [UInt8]
 
     var isSYN: Bool {
         flags & 0x02 != 0
@@ -59,6 +61,26 @@ struct TCPPacketObservation {
 
     var isRST: Bool {
         flags & 0x04 != 0
+    }
+}
+
+struct ICMPPacketObservation {
+    let interfaceName: String
+    let wallNanos: UInt64
+    let family: InternetAddressFamily
+    let type: UInt8
+    let code: UInt8
+    let sourceIP: String
+    let destinationIP: String
+    let identifier: UInt16
+    let sequence: UInt16
+
+    var isEchoRequest: Bool {
+        (family == .ipv4 && type == 8) || (family == .ipv6 && type == 128)
+    }
+
+    var isEchoReply: Bool {
+        (family == .ipv4 && type == 0) || (family == .ipv6 && type == 129)
     }
 }
 
@@ -90,16 +112,55 @@ struct ActiveTCPPacketExchange {
     }
 }
 
-private struct ActiveDNSProbeRegistration {
+struct ActiveICMPPacketExchange {
+    let request: ICMPPacketObservation
+    let reply: ICMPPacketObservation
+
+    var timing: ActiveProbeTiming {
+        .bpfPacket(start: request.wallNanos, finished: reply.wallNanos)
+    }
+}
+
+struct ActiveHTTPPacketExchange {
+    let request: TCPPacketObservation
+    let response: TCPPacketObservation
+    let statusCode: Int?
+
+    var timing: ActiveProbeTiming {
+        .bpfPacket(start: request.wallNanos, finished: response.wallNanos)
+    }
+}
+
+struct ActiveDNSProbeRegistration {
     let transactionID: UInt16
     let target: String
+    let queryType: UInt16
     let resolver: String
     let interfaceName: String?
     let startWallNanos: UInt64
     let expiresWallNanos: UInt64
 }
 
-private struct ActiveTCPProbeRegistration {
+struct ActiveTCPProbeRegistration {
+    let remoteIP: String
+    let port: UInt16
+    let interfaceName: String?
+    let startWallNanos: UInt64
+    let expiresWallNanos: UInt64
+}
+
+struct ActiveICMPProbeRegistration {
+    let family: InternetAddressFamily
+    let remoteIP: String
+    let identifier: UInt16?
+    let sequence: UInt16?
+    let interfaceName: String?
+    let startWallNanos: UInt64
+    let expiresWallNanos: UInt64
+}
+
+struct ActiveHTTPProbeRegistration {
+    let target: String
     let remoteIP: String
     let port: UInt16
     let interfaceName: String?
@@ -110,6 +171,7 @@ private struct ActiveTCPProbeRegistration {
 struct ActiveDNSProbeRequest {
     let transactionID: UInt16
     let target: String
+    let queryType: UInt16
     let resolver: String
     let interfaceName: String?
     let startWallNanos: UInt64
@@ -124,15 +186,37 @@ struct ActiveTCPProbeRequest {
     let timeout: TimeInterval
 }
 
+struct ActiveICMPProbeRequest {
+    let family: InternetAddressFamily
+    let remoteIP: String
+    let identifier: UInt16?
+    let sequence: UInt16?
+    let interfaceName: String?
+    let startWallNanos: UInt64
+    let timeout: TimeInterval
+}
+
+struct ActiveHTTPProbeRequest {
+    let target: String
+    let remoteIP: String
+    let port: UInt16
+    let interfaceName: String?
+    let startWallNanos: UInt64
+    let timeout: TimeInterval
+}
+
 final class PassivePacketStore {
-    private let lock = NSLock()
-    private var dhcp: [DHCPObservation] = []
-    private var icmpv6: [ICMPv6Observation] = []
-    private var dns: [DNSPacketObservation] = []
-    private var tcp: [TCPPacketObservation] = []
-    private var activeDNSProbes: [ActiveDNSProbeRegistration] = []
-    private var activeTCPProbes: [ActiveTCPProbeRegistration] = []
-    private var emittedKeys = Set<String>()
+    let lock = NSLock()
+    var dhcp: [DHCPObservation] = []
+    var icmpv6: [ICMPv6Observation] = []
+    var dns: [DNSPacketObservation] = []
+    var tcp: [TCPPacketObservation] = []
+    var icmp: [ICMPPacketObservation] = []
+    var activeDNSProbes: [ActiveDNSProbeRegistration] = []
+    var activeTCPProbes: [ActiveTCPProbeRegistration] = []
+    var activeICMPProbes: [ActiveICMPProbeRegistration] = []
+    var activeHTTPProbes: [ActiveHTTPProbeRegistration] = []
+    var emittedKeys = Set<String>()
 
     func appendDHCP(_ observation: DHCPObservation) {
         lock.lock()
@@ -154,6 +238,7 @@ final class PassivePacketStore {
             ActiveDNSProbeRegistration(
                 transactionID: request.transactionID,
                 target: normalizedDNSName(request.target),
+                queryType: request.queryType,
                 resolver: request.resolver,
                 interfaceName: request.interfaceName,
                 startWallNanos: request.startWallNanos,
@@ -168,7 +253,10 @@ final class PassivePacketStore {
         let normalizedTarget = normalizedDNSName(request.target)
         lock.lock()
         activeDNSProbes.removeAll {
-            $0.transactionID == request.transactionID && $0.target == normalizedTarget && $0.resolver == request.resolver
+            $0.transactionID == request.transactionID
+                && $0.target == normalizedTarget
+                && $0.queryType == request.queryType
+                && $0.resolver == request.resolver
         }
         lock.unlock()
     }
@@ -231,11 +319,94 @@ final class PassivePacketStore {
         lock.unlock()
     }
 
+    func registerActiveICMPProbe(_ request: ActiveICMPProbeRequest) {
+        lock.lock()
+        activeICMPProbes.append(
+            ActiveICMPProbeRegistration(
+                family: request.family,
+                remoteIP: request.remoteIP,
+                identifier: request.identifier,
+                sequence: request.sequence,
+                interfaceName: request.interfaceName,
+                startWallNanos: request.startWallNanos,
+                expiresWallNanos: request.startWallNanos + activeProbeRetentionNanos(timeout: request.timeout)
+            )
+        )
+        pruneLocked()
+        lock.unlock()
+    }
+
+    func unregisterActiveICMPProbe(_ request: ActiveICMPProbeRequest) {
+        lock.lock()
+        activeICMPProbes.removeAll {
+            $0.family == request.family
+                && $0.remoteIP == request.remoteIP
+                && $0.identifier == request.identifier
+                && $0.sequence == request.sequence
+        }
+        lock.unlock()
+    }
+
+    @discardableResult
+    func appendICMP(_ observation: ICMPPacketObservation) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isActiveICMPObservationLocked(observation) else {
+            return false
+        }
+        icmp.append(observation)
+        pruneLocked()
+        return true
+    }
+
+    func icmpExchange(
+        for request: ActiveICMPProbeRequest,
+        wait: TimeInterval
+    ) -> ActiveICMPPacketExchange? {
+        let deadline = Date().addingTimeInterval(wait)
+        while true {
+            lock.lock()
+            let match = icmpExchangeLocked(request: request, finishedWallNanos: wallClockNanos())
+            lock.unlock()
+            if let match {
+                return match
+            }
+            guard Date() < deadline else {
+                return nil
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+    }
+
+    func registerActiveHTTPProbe(_ request: ActiveHTTPProbeRequest) {
+        lock.lock()
+        activeHTTPProbes.append(
+            ActiveHTTPProbeRegistration(
+                target: normalizedDNSName(request.target),
+                remoteIP: request.remoteIP,
+                port: request.port,
+                interfaceName: request.interfaceName,
+                startWallNanos: request.startWallNanos,
+                expiresWallNanos: request.startWallNanos + activeProbeRetentionNanos(timeout: request.timeout)
+            )
+        )
+        pruneLocked()
+        lock.unlock()
+    }
+
+    func unregisterActiveHTTPProbe(_ request: ActiveHTTPProbeRequest) {
+        lock.lock()
+        activeHTTPProbes.removeAll {
+            $0.target == normalizedDNSName(request.target) && $0.remoteIP == request.remoteIP && $0.port == request.port
+        }
+        lock.unlock()
+    }
+
     @discardableResult
     func appendTCP(_ observation: TCPPacketObservation) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard isActiveTCPObservationLocked(observation) else {
+        guard isActiveTCPObservationLocked(observation) || isActiveHTTPObservationLocked(observation) else {
             return false
         }
         tcp.append(observation)
@@ -255,6 +426,26 @@ final class PassivePacketStore {
                 request: request,
                 finishedWallNanos: finishedWallNanos
             )
+            lock.unlock()
+            if let match {
+                return match
+            }
+            guard Date() < deadline else {
+                return nil
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+    }
+
+    func httpExchange(
+        for request: ActiveHTTPProbeRequest,
+        finishedWallNanos: UInt64,
+        wait: TimeInterval = 0.05
+    ) -> ActiveHTTPPacketExchange? {
+        let deadline = Date().addingTimeInterval(wait)
+        while true {
+            lock.lock()
+            let match = httpExchangeLocked(request: request, finishedWallNanos: finishedWallNanos)
             lock.unlock()
             if let match {
                 return match
@@ -289,130 +480,6 @@ final class PassivePacketStore {
         lock.unlock()
         return spans
     }
-
-    private func isActiveDNSObservationLocked(_ observation: DNSPacketObservation) -> Bool {
-        activeDNSProbes.contains { registration in
-            guard observation.transactionID == registration.transactionID,
-                  observation.wallNanos >= registration.startWallNanos,
-                  observation.wallNanos <= registration.expiresWallNanos,
-                  registration.interfaceName == nil || observation.interfaceName == registration.interfaceName
-            else {
-                return false
-            }
-            let resolverMatches = observation.sourceIP == registration.resolver || observation.destinationIP == registration.resolver
-            guard resolverMatches else {
-                return false
-            }
-            if let queryName = observation.queryName, !queryName.isEmpty {
-                return normalizedDNSName(queryName) == registration.target
-            }
-            // Some DNS responses can omit a parseable question section. The
-            // active transaction ID plus resolver match is still sufficiently
-            // narrow because registrations are short-lived and probe-scoped.
-            return observation.isResponse
-        }
-    }
-
-    private func dnsExchangeLocked(
-        request: ActiveDNSProbeRequest,
-        finishedWallNanos: UInt64
-    ) -> ActiveDNSPacketExchange? {
-        let target = normalizedDNSName(request.target)
-        let (windowStart, windowEnd) = activeProbeSearchWindow(start: request.startWallNanos, finished: finishedWallNanos)
-        let candidates = dns
-            .filter {
-                $0.transactionID == request.transactionID
-                    && $0.wallNanos >= windowStart
-                    && $0.wallNanos <= windowEnd
-                    && (request.interfaceName == nil || $0.interfaceName == request.interfaceName)
-                    && ($0.sourceIP == request.resolver || $0.destinationIP == request.resolver)
-            }
-            .sorted { $0.wallNanos < $1.wallNanos }
-        guard let query = candidates.first(where: {
-            !$0.isResponse
-                && $0.destinationIP == request.resolver
-                && $0.destinationPort == 53
-                && normalizedDNSName($0.queryName ?? "") == target
-        }) else {
-            return nil
-        }
-        guard let response = candidates.first(where: {
-            $0.isResponse
-                && $0.wallNanos >= query.wallNanos
-                && $0.sourceIP == request.resolver
-                && $0.sourcePort == 53
-                && $0.destinationPort == query.sourcePort
-                && ($0.queryName == nil || normalizedDNSName($0.queryName ?? "") == target)
-        }) else {
-            return nil
-        }
-        return ActiveDNSPacketExchange(query: query, response: response)
-    }
-
-    private func isActiveTCPObservationLocked(_ observation: TCPPacketObservation) -> Bool {
-        activeTCPProbes.contains { registration in
-            guard observation.wallNanos >= registration.startWallNanos,
-                  observation.wallNanos <= registration.expiresWallNanos,
-                  registration.interfaceName == nil || observation.interfaceName == registration.interfaceName
-            else {
-                return false
-            }
-            let outboundSYN = observation.destinationIP == registration.remoteIP
-                && observation.destinationPort == registration.port
-                && observation.isSYN
-                && !observation.isACK
-            let inboundHandshakeResponse = observation.sourceIP == registration.remoteIP
-                && observation.sourcePort == registration.port
-                && (observation.isRST || (observation.isSYN && observation.isACK))
-            return outboundSYN || inboundHandshakeResponse
-        }
-    }
-
-    private func tcpConnectExchangeLocked(
-        request: ActiveTCPProbeRequest,
-        finishedWallNanos: UInt64
-    ) -> ActiveTCPPacketExchange? {
-        let (windowStart, windowEnd) = activeProbeSearchWindow(start: request.startWallNanos, finished: finishedWallNanos)
-        let candidates = tcp
-            .filter {
-                $0.wallNanos >= windowStart
-                    && $0.wallNanos <= windowEnd
-                    && (request.interfaceName == nil || $0.interfaceName == request.interfaceName)
-                    && ($0.sourceIP == request.remoteIP || $0.destinationIP == request.remoteIP)
-                    && ($0.sourcePort == request.port || $0.destinationPort == request.port)
-            }
-            .sorted { $0.wallNanos < $1.wallNanos }
-        guard let syn = candidates.first(where: {
-            $0.destinationIP == request.remoteIP && $0.destinationPort == request.port && $0.isSYN && !$0.isACK
-        }) else {
-            return nil
-        }
-        guard let response = candidates.first(where: {
-            $0.wallNanos >= syn.wallNanos
-                && $0.sourceIP == request.remoteIP
-                && $0.sourcePort == request.port
-                && $0.destinationIP == syn.sourceIP
-                && $0.destinationPort == syn.sourcePort
-                && ($0.isRST || ($0.isSYN && $0.isACK))
-        }) else {
-            return nil
-        }
-        return ActiveTCPPacketExchange(syn: syn, response: response)
-    }
-
-    private func pruneLocked() {
-        let now = wallClockNanos()
-        let cutoff = now - UInt64(600 * 1_000_000_000)
-        dhcp.removeAll { $0.wallNanos < cutoff }
-        icmpv6.removeAll { $0.wallNanos < cutoff }
-        dns.removeAll { $0.wallNanos < cutoff }
-        tcp.removeAll { $0.wallNanos < cutoff }
-        activeDNSProbes.removeAll { $0.expiresWallNanos < now }
-        activeTCPProbes.removeAll { $0.expiresWallNanos < now }
-        if emittedKeys.count > 5000 {
-            emittedKeys.removeAll()
-        }
-    }
 }
 
 func normalizedDNSName(_ value: String) -> String {
@@ -421,10 +488,4 @@ func normalizedDNSName(_ value: String) -> String {
 
 private func activeProbeRetentionNanos(timeout: TimeInterval) -> UInt64 {
     UInt64((timeout + 1.0) * 1_000_000_000)
-}
-
-private func activeProbeSearchWindow(start: UInt64, finished: UInt64) -> (start: UInt64, end: UInt64) {
-    let slack: UInt64 = 200_000_000
-    let windowStart = start > slack ? start - slack : 0
-    return (windowStart, finished + slack)
 }
