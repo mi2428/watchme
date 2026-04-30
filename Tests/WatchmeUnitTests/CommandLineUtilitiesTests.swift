@@ -3,20 +3,23 @@ import XCTest
 
 final class CommandLineUtilitiesTests: XCTestCase {
     func testSplitInlineValueSeparatesOnlyTheFirstEqualsSign() {
-        XCTAssertEqual(splitInlineValue("--otlp.url=http://host:4318").option, "--otlp.url")
-        XCTAssertEqual(splitInlineValue("--otlp.url=http://host:4318").inlineValue, "http://host:4318")
+        let option = WatchmeCLI.Option.otlpURL.name
+
+        XCTAssertEqual(splitInlineValue("\(option)=http://host:4318").option, option)
+        XCTAssertEqual(splitInlineValue("\(option)=http://host:4318").inlineValue, "http://host:4318")
         XCTAssertEqual(splitInlineValue("--flag").option, "--flag")
         XCTAssertNil(splitInlineValue("--flag").inlineValue)
         XCTAssertEqual(splitInlineValue("--label=a=b").inlineValue, "a=b")
     }
 
     func testRequireOptionValueConsumesNextArgumentOrUsesInlineValue() throws {
+        let option = "--value"
         var index = 0
         XCTAssertEqual(
             try requireOptionValue(
-                arguments: ["--system.metrics.interval", "2.5"],
+                arguments: [option, "2.5"],
                 index: &index,
-                argument: "--system.metrics.interval",
+                argument: option,
                 inlineValue: nil
             ),
             "2.5"
@@ -26,9 +29,9 @@ final class CommandLineUtilitiesTests: XCTestCase {
         var inlineIndex = 0
         XCTAssertEqual(
             try requireOptionValue(
-                arguments: ["--system.metrics.interval=2.5"],
+                arguments: ["\(option)=2.5"],
                 index: &inlineIndex,
-                argument: "--system.metrics.interval",
+                argument: option,
                 inlineValue: "2.5"
             ),
             "2.5"
@@ -37,12 +40,13 @@ final class CommandLineUtilitiesTests: XCTestCase {
     }
 
     func testRequireOptionValueRejectsMissingValues() {
+        let option = "--value"
         var missingIndex = 0
         XCTAssertThrowsError(
             try requireOptionValue(
-                arguments: ["--system.metrics.interval"],
+                arguments: [option],
                 index: &missingIndex,
-                argument: "--system.metrics.interval",
+                argument: option,
                 inlineValue: nil
             )
         )
@@ -50,22 +54,24 @@ final class CommandLineUtilitiesTests: XCTestCase {
         var emptyIndex = 0
         XCTAssertThrowsError(
             try requireOptionValue(
-                arguments: ["--system.metrics.interval="],
+                arguments: ["\(option)="],
                 index: &emptyIndex,
-                argument: "--system.metrics.interval",
+                argument: option,
                 inlineValue: ""
             )
         )
     }
 
     func testValidatedOTLPURLAcceptsHTTPCollectorsWithoutQueryOrFragment() throws {
+        let option = WatchmeCLI.Option.otlpURL.name
+
         XCTAssertEqual(
-            try validatedOTLPURL("https://collector.example:4318/otlp", argument: "--otlp.url").absoluteString,
+            try validatedOTLPURL("https://collector.example:4318/otlp", argument: option).absoluteString,
             "https://collector.example:4318/otlp"
         )
-        XCTAssertThrowsError(try validatedOTLPURL("ftp://collector.example/otlp", argument: "--otlp.url"))
-        XCTAssertThrowsError(try validatedOTLPURL("http://collector.example/otlp?debug=1", argument: "--otlp.url"))
-        XCTAssertThrowsError(try validatedOTLPURL("http://collector.example/otlp#debug", argument: "--otlp.url"))
+        XCTAssertThrowsError(try validatedOTLPURL("ftp://collector.example/otlp", argument: option))
+        XCTAssertThrowsError(try validatedOTLPURL("http://collector.example/otlp?debug=1", argument: option))
+        XCTAssertThrowsError(try validatedOTLPURL("http://collector.example/otlp#debug", argument: option))
     }
 
     func testOTLPEndpointURLAppendsEndpointPathToBasePath() throws {

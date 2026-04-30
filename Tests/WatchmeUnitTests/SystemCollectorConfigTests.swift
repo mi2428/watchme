@@ -1,3 +1,4 @@
+@testable import WatchmeCore
 @testable import WatchmeSystem
 import XCTest
 
@@ -5,7 +6,7 @@ final class SystemCollectorConfigTests: XCTestCase {
     func testParseNamespacedMetricsInterval() throws {
         let otlpURL = try XCTUnwrap(URL(string: "http://collector.example:4318/otlp"))
         let config = try SystemConfig.parse([
-            "--system.metrics.interval=2.5",
+            "\(SystemCLI.Option.metricsInterval.name)=2.5",
         ], otlpURL: otlpURL)
 
         XCTAssertEqual(config.otlpURL.absoluteString, "http://collector.example:4318/otlp")
@@ -15,17 +16,17 @@ final class SystemCollectorConfigTests: XCTestCase {
     }
 
     func testDefaultMetricsInterval() throws {
-        let config = try SystemConfig.parse([], otlpURL: XCTUnwrap(URL(string: "http://127.0.0.1:4318")))
+        let config = try SystemConfig.parse([], otlpURL: WatchmeDefaults.otlpURL)
 
-        XCTAssertEqual(config.metricsInterval, 5)
+        XCTAssertEqual(config.metricsInterval, SystemDefaults.metricsInterval)
     }
 
     func testRejectsUnknownAndInvalidArguments() throws {
-        let otlpURL = try XCTUnwrap(URL(string: "http://127.0.0.1:4318"))
+        let otlpURL = WatchmeDefaults.otlpURL
 
-        XCTAssertThrowsError(try SystemConfig.parse(["--system.metrics.interval", "0"], otlpURL: otlpURL))
-        XCTAssertThrowsError(try SystemConfig.parse(["--system.metrics.interval", "-1"], otlpURL: otlpURL))
-        XCTAssertThrowsError(try SystemConfig.parse(["--system.metrics.interval"], otlpURL: otlpURL))
+        XCTAssertThrowsError(try SystemConfig.parse([SystemCLI.Option.metricsInterval.name, "0"], otlpURL: otlpURL))
+        XCTAssertThrowsError(try SystemConfig.parse([SystemCLI.Option.metricsInterval.name, "-1"], otlpURL: otlpURL))
+        XCTAssertThrowsError(try SystemConfig.parse([SystemCLI.Option.metricsInterval.name], otlpURL: otlpURL))
         XCTAssertThrowsError(try SystemConfig.parse(["--unknown"], otlpURL: otlpURL))
     }
 }

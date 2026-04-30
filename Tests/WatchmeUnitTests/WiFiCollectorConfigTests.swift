@@ -1,3 +1,4 @@
+@testable import WatchmeCore
 @testable import WatchmeWiFi
 import XCTest
 
@@ -5,20 +6,20 @@ final class WiFiCollectorConfigTests: XCTestCase {
     func testParseNamespacedTelemetryOptions() throws {
         let otlpURL = try XCTUnwrap(URL(string: "http://collector.example:4318/otlp"))
         let config = try WiFiConfig.parse([
-            "--wifi.metrics.interval", "2.5",
-            "--wifi.traces.interval=30",
-            "--wifi.traces.cooldown", "0",
-            "--wifi.probe.internet.timeout", "3",
-            "--wifi.probe.internet.family", "ipv6",
-            "--wifi.probe.internet.dns", "false",
-            "--wifi.probe.internet.icmp", "true",
-            "--wifi.probe.internet.http", "false",
-            "--wifi.probe.gateway.count", "6",
-            "--wifi.probe.gateway.interval=0.1",
-            "--wifi.probe.bpf.span-max-age=90",
-            "--wifi.probe.bpf.enabled", "false",
-            "--wifi.probe.internet.target", "example.com",
-            "--wifi.probe.internet.target=www.apple.com",
+            WiFiCLI.Option.metricsInterval.name, "2.5",
+            "\(WiFiCLI.Option.activeInterval.name)=30",
+            WiFiCLI.Option.triggerCooldown.name, "0",
+            WiFiCLI.Option.internetTimeout.name, "3",
+            WiFiCLI.Option.internetFamily.name, "ipv6",
+            WiFiCLI.Option.internetDNS.name, "false",
+            WiFiCLI.Option.internetICMP.name, "true",
+            WiFiCLI.Option.internetHTTP.name, "false",
+            WiFiCLI.Option.gatewayCount.name, "6",
+            "\(WiFiCLI.Option.gatewayInterval.name)=0.1",
+            "\(WiFiCLI.Option.bpfSpanMaxAge.name)=90",
+            WiFiCLI.Option.bpfEnabled.name, "false",
+            WiFiCLI.Option.internetTarget.name, "example.com",
+            "\(WiFiCLI.Option.internetTarget.name)=www.apple.com",
         ], otlpURL: otlpURL)
 
         XCTAssertEqual(config.otlpURL.absoluteString, "http://collector.example:4318/otlp")
@@ -40,36 +41,36 @@ final class WiFiCollectorConfigTests: XCTestCase {
     }
 
     func testDefaultConfiguration() throws {
-        let config = try WiFiConfig.parse([], otlpURL: XCTUnwrap(URL(string: "http://127.0.0.1:4318")))
+        let config = try WiFiConfig.parse([], otlpURL: WatchmeDefaults.otlpURL)
 
-        XCTAssertEqual(config.probeInternetTargets, ["example.com", "www.cloudflare.com"])
-        XCTAssertEqual(config.probeInternetFamily, .dual)
-        XCTAssertEqual(config.metricsInterval, 5)
-        XCTAssertEqual(config.activeInterval, 60)
+        XCTAssertEqual(config.probeInternetTargets, WiFiDefaults.probeInternetTargets)
+        XCTAssertEqual(config.probeInternetFamily, WiFiDefaults.probeInternetFamily)
+        XCTAssertEqual(config.metricsInterval, WiFiDefaults.metricsInterval)
+        XCTAssertEqual(config.activeInterval, WiFiDefaults.activeInterval)
     }
 
     func testAuthorizationTimeoutParserOnlyAllowsTimeout() throws {
-        XCTAssertEqual(try WiFiCollectorFactory.authorizationTimeout(arguments: []), 5)
+        XCTAssertEqual(try WiFiCollectorFactory.authorizationTimeout(arguments: []), WiFiDefaults.probeInternetTimeout)
         XCTAssertEqual(
-            try WiFiCollectorFactory.authorizationTimeout(arguments: ["--wifi.probe.internet.timeout", "12"]),
+            try WiFiCollectorFactory.authorizationTimeout(arguments: [WiFiCLI.Option.internetTimeout.name, "12"]),
             12
         )
 
-        XCTAssertThrowsError(try WiFiCollectorFactory.authorizationTimeout(arguments: ["--wifi.metrics.interval", "1"]))
-        XCTAssertThrowsError(try WiFiCollectorFactory.authorizationTimeout(arguments: ["--wifi.probe.internet.timeout", "0"]))
+        XCTAssertThrowsError(try WiFiCollectorFactory.authorizationTimeout(arguments: [WiFiCLI.Option.metricsInterval.name, "1"]))
+        XCTAssertThrowsError(try WiFiCollectorFactory.authorizationTimeout(arguments: [WiFiCLI.Option.internetTimeout.name, "0"]))
     }
 
     func testRejectsUnknownAndInvalidArguments() throws {
-        let otlpURL = try XCTUnwrap(URL(string: "http://127.0.0.1:4318"))
+        let otlpURL = WatchmeDefaults.otlpURL
 
-        XCTAssertThrowsError(try WiFiConfig.parse(["--wifi.metrics.interval", "0"], otlpURL: otlpURL))
-        XCTAssertThrowsError(try WiFiConfig.parse(["--wifi.probe.internet.target"], otlpURL: otlpURL))
-        XCTAssertThrowsError(try WiFiConfig.parse(["--wifi.probe.internet.family", "both"], otlpURL: otlpURL))
-        XCTAssertThrowsError(try WiFiConfig.parse(["--wifi.probe.internet.icmp", "maybe"], otlpURL: otlpURL))
-        XCTAssertThrowsError(try WiFiConfig.parse(["--wifi.probe.gateway.count", "0"], otlpURL: otlpURL))
-        XCTAssertThrowsError(try WiFiConfig.parse(["--wifi.probe.gateway.interval", "-0.1"], otlpURL: otlpURL))
-        XCTAssertThrowsError(try WiFiConfig.parse(["--wifi.probe.bpf.enabled", "maybe"], otlpURL: otlpURL))
-        XCTAssertThrowsError(try WiFiConfig.parse(["--wifi.unknown"], otlpURL: otlpURL))
+        XCTAssertThrowsError(try WiFiConfig.parse([WiFiCLI.Option.metricsInterval.name, "0"], otlpURL: otlpURL))
+        XCTAssertThrowsError(try WiFiConfig.parse([WiFiCLI.Option.internetTarget.name], otlpURL: otlpURL))
+        XCTAssertThrowsError(try WiFiConfig.parse([WiFiCLI.Option.internetFamily.name, "both"], otlpURL: otlpURL))
+        XCTAssertThrowsError(try WiFiConfig.parse([WiFiCLI.Option.internetICMP.name, "maybe"], otlpURL: otlpURL))
+        XCTAssertThrowsError(try WiFiConfig.parse([WiFiCLI.Option.gatewayCount.name, "0"], otlpURL: otlpURL))
+        XCTAssertThrowsError(try WiFiConfig.parse([WiFiCLI.Option.gatewayInterval.name, "-0.1"], otlpURL: otlpURL))
+        XCTAssertThrowsError(try WiFiConfig.parse([WiFiCLI.Option.bpfEnabled.name, "maybe"], otlpURL: otlpURL))
+        XCTAssertThrowsError(try WiFiConfig.parse(["--\(WiFiCollectorFactory.name).unknown"], otlpURL: otlpURL))
         XCTAssertThrowsError(try WiFiConfig.parse(["--unknown"], otlpURL: otlpURL))
     }
 }

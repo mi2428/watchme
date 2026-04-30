@@ -1,4 +1,5 @@
 import Foundation
+@testable import WatchmeCore
 import WatchmeTelemetry
 @testable import WatchmeWiFi
 import XCTest
@@ -85,8 +86,8 @@ final class ActiveProbeTelemetryTests: XCTestCase {
             config: WiFiConfig(),
             telemetry: TelemetryClient(
                 serviceName: "watchme-test",
-                tracesEndpoint: URL(string: "http://127.0.0.1:4318/v1/traces")!,
-                metricsEndpoint: URL(string: "http://127.0.0.1:4318/v1/metrics")!
+                tracesEndpoint: otlpEndpointURL(baseURL: WatchmeDefaults.otlpURL, path: "v1/traces"),
+                metricsEndpoint: otlpEndpointURL(baseURL: WatchmeDefaults.otlpURL, path: "v1/metrics")
             )
         )
     }

@@ -14,41 +14,44 @@ final class AgentCommandTests: XCTestCase {
         let config = try AgentConfig.parse([], factories: factories)
 
         XCTAssertEqual(config.mode, .longRunning)
-        XCTAssertEqual(config.enabledCollectors, ["system"])
-        XCTAssertEqual(config.otlpURL.absoluteString, "http://127.0.0.1:4318")
-        XCTAssertEqual(config.logLevel, .debug)
+        XCTAssertEqual(config.enabledCollectors, [SystemCollectorFactory.name])
+        XCTAssertEqual(config.otlpURL.absoluteString, WatchmeDefaults.otlpURLString)
+        XCTAssertEqual(config.logLevel, WatchmeDefaults.logLevel)
 
         let collectors = try config.makeCollectors(factories: factories)
-        XCTAssertEqual(collectorNames(collectors), ["system"])
+        XCTAssertEqual(collectorNames(collectors), [SystemCollectorFactory.name])
     }
 
     func testParseOnceWithBothCollectorsAndNamespacedOptions() throws {
         let config = try AgentConfig.parse([
-            "once",
-            "--collector.system",
-            "--collector.wifi",
-            "--otlp.url", "http://collector.example:4318/base",
-            "--log.level", "info",
-            "--system.metrics.interval", "2.5",
-            "--wifi.metrics.interval=3",
-            "--wifi.probe.internet.icmp", "false",
+            WatchmeCLI.Mode.once,
+            WatchmeCLI.Collector.option(SystemCollectorFactory.name),
+            WatchmeCLI.Collector.option(WiFiCollectorFactory.name),
+            WatchmeCLI.Option.otlpURL.name, "http://collector.example:4318/base",
+            WatchmeCLI.Option.logLevel.name, "info",
+            SystemCLI.Option.metricsInterval.name, "2.5",
+            "\(WiFiCLI.Option.metricsInterval.name)=3",
+            WiFiCLI.Option.internetICMP.name, "false",
         ], factories: factories)
 
         XCTAssertEqual(config.mode, .once)
-        XCTAssertEqual(config.enabledCollectors, ["system", "wifi"])
+        XCTAssertEqual(config.enabledCollectors, [SystemCollectorFactory.name, WiFiCollectorFactory.name])
         XCTAssertEqual(config.otlpURL.absoluteString, "http://collector.example:4318/base")
         XCTAssertEqual(config.logLevel, .info)
-        XCTAssertEqual(config.collectorArguments["system"], ["--system.metrics.interval", "2.5"])
-        XCTAssertEqual(config.collectorArguments["wifi"], ["--wifi.metrics.interval=3", "--wifi.probe.internet.icmp", "false"])
+        XCTAssertEqual(config.collectorArguments[SystemCollectorFactory.name], [SystemCLI.Option.metricsInterval.name, "2.5"])
+        XCTAssertEqual(
+            config.collectorArguments[WiFiCollectorFactory.name],
+            ["\(WiFiCLI.Option.metricsInterval.name)=3", WiFiCLI.Option.internetICMP.name, "false"]
+        )
 
         let collectors = try config.makeCollectors(factories: factories)
-        XCTAssertEqual(collectorNames(collectors), ["system", "wifi"])
+        XCTAssertEqual(collectorNames(collectors), [SystemCollectorFactory.name, WiFiCollectorFactory.name])
     }
 
     func testParseAuthorizationMode() throws {
         let config = try AgentConfig.parse([
-            "authorize-location",
-            "--wifi.probe.internet.timeout", "9",
+            WatchmeCLI.Mode.authorizeLocation,
+            WiFiCLI.Option.internetTimeout.name, "9",
         ], factories: factories)
 
         XCTAssertEqual(config.mode, .authorizeLocation)
@@ -59,26 +62,39 @@ final class AgentCommandTests: XCTestCase {
     func testUsageShowsCollectorBasedCLI() {
         let usage = agentUsageText()
 
-        XCTAssertTrue(usage.contains("watchme agent [options]"))
-        XCTAssertTrue(usage.contains("watchme agent once [options]"))
-        XCTAssertTrue(usage.contains("watchme agent authorize-location [options]"))
-        XCTAssertTrue(usage.contains("--collector.system"))
-        XCTAssertTrue(usage.contains("--collector.wifi"))
-        XCTAssertTrue(usage.contains("--otlp.url URL"))
-        XCTAssertTrue(usage.contains("--system.metrics.interval seconds"))
-        XCTAssertTrue(usage.contains("--wifi.probe.internet.target host"))
+        XCTAssertTrue(usage.contains("\(WatchmeCLI.Command.executable) \(AgentCommand.name) [options]"))
+        XCTAssertTrue(usage.contains("\(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.once) [options]"))
+        XCTAssertTrue(usage
+            .contains("\(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.authorizeLocation) [options]"))
+        XCTAssertTrue(usage.contains(WatchmeCLI.Collector.option(SystemCollectorFactory.name)))
+        XCTAssertTrue(usage.contains(WatchmeCLI.Collector.option(WiFiCollectorFactory.name)))
+        XCTAssertTrue(usage.contains(WatchmeCLI.Option.otlpURL.usage))
+        XCTAssertTrue(usage.contains(SystemCLI.Option.metricsInterval.usage))
+        XCTAssertTrue(usage.contains(WiFiCLI.Option.internetTarget.usage))
     }
 
     func testRejectsUnknownAndAmbiguousOptions() {
         let registry = CommandRegistry(commands: [AgentCommand.self])
 
-        XCTAssertThrowsError(try registry.parse(["watchme", "unknown"]))
-        XCTAssertThrowsError(try AgentConfig.parse(["--collector.unknown"], factories: factories))
+        XCTAssertThrowsError(try registry.parse([WatchmeCLI.Command.executable, "unknown"]))
+        XCTAssertThrowsError(try AgentConfig.parse(["\(WatchmeCLI.Collector.prefix)unknown"], factories: factories))
         XCTAssertThrowsError(try AgentConfig.parse(["--unknown"], factories: factories))
-        XCTAssertThrowsError(try AgentConfig.parse(["--wifi.metrics.interval", "1"], factories: factories))
-        XCTAssertThrowsError(try AgentConfig.parse(["--collector.wifi=false"], factories: factories))
-        XCTAssertThrowsError(try AgentConfig.parse(["authorize-location", "--collector.wifi"], factories: factories))
-        XCTAssertThrowsError(try AgentConfig.parse(["authorize-location", "--system.metrics.interval", "1"], factories: factories))
+        XCTAssertThrowsError(try AgentConfig.parse([WiFiCLI.Option.metricsInterval.name, "1"], factories: factories))
+        XCTAssertThrowsError(
+            try AgentConfig.parse(["\(WatchmeCLI.Collector.option(WiFiCollectorFactory.name))=false"], factories: factories)
+        )
+        XCTAssertThrowsError(
+            try AgentConfig.parse([
+                WatchmeCLI.Mode.authorizeLocation,
+                WatchmeCLI.Collector.option(WiFiCollectorFactory.name),
+            ], factories: factories)
+        )
+        XCTAssertThrowsError(
+            try AgentConfig.parse([
+                WatchmeCLI.Mode.authorizeLocation,
+                SystemCLI.Option.metricsInterval.name, "1",
+            ], factories: factories)
+        )
     }
 
     private func collectorNames(_ collectors: [any WatchmeCollector]) -> [String] {
