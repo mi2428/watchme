@@ -130,6 +130,14 @@ private struct AgentConfigParser {
         return names
     }
 
+    var defaultCollectorNames: [String] {
+        var names: [String] = []
+        for factory in factories {
+            names.append(factory.name)
+        }
+        return names
+    }
+
     mutating func parse() throws -> AgentConfig {
         consumeLeadingMode()
         while index < arguments.count {
@@ -235,7 +243,7 @@ private struct AgentConfigParser {
             return
         }
         if config.enabledCollectors.isEmpty {
-            config.enabledCollectors = [SystemCollectorFactory.name]
+            config.enabledCollectors = defaultCollectorNames
         }
         for collectorName in config.collectorArguments.keys where !config.enabledCollectors.contains(collectorName) {
             throw WatchmeError.invalidArgument("--\(collectorName).* options require \(WatchmeCLI.Collector.option(collectorName))")
@@ -305,8 +313,8 @@ public func agentUsageText() -> String {
     \(wifiOptions)
 
     Defaults:
-      `\(WatchmeCLI.Command.executable) \(AgentCommand.name)` starts \(WatchmeCLI.displayName) with only `\(WatchmeCLI.Collector
-        .option(SystemCollectorFactory.name))` unless any `\(WatchmeCLI.Collector.wildcard)` option is provided.
-      Enable Wi-Fi explicitly with `\(WatchmeCLI.Collector.option(WiFiCollectorFactory.name))`.
+      `\(WatchmeCLI.Command.executable) \(AgentCommand.name)` starts \(WatchmeCLI.displayName) with all collectors: `\(WatchmeCLI.Collector
+        .option(SystemCollectorFactory.name))`, `\(WatchmeCLI.Collector.option(WiFiCollectorFactory.name))`.
+      Pass one or more `\(WatchmeCLI.Collector.wildcard)` options to run only those collectors.
     """
 }

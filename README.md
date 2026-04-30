@@ -4,6 +4,7 @@ WatchMe Agent exports OpenTelemetry metrics and traces from macOS.
 
 ## Commands
 
+- `watchme agent`: all collectors.
 - `watchme agent --collector.wifi`: Wi-Fi metrics, event traces, active probes, and passive packet timing.
   - `watchme agent once --collector.wifi`: one-shot Wi-Fi metrics and active trace export.
   - `watchme agent authorize-location`: request Location authorization for app-bundled Wi-Fi labels.
@@ -17,6 +18,7 @@ Build `WatchMe.app` when Wi-Fi SSID/BSSID labels need macOS Location authorizati
 ```console
 $ make app
 $ scripts/watchme-app agent authorize-location
+$ scripts/watchme-app agent
 $ scripts/watchme-app agent once --collector.wifi
 $ scripts/watchme-app agent once --collector.system
 ```
