@@ -89,4 +89,10 @@ final class CommandLineUtilitiesTests: XCTestCase {
             "  --short         Short option.\n  --longer VALUE  Long option."
         )
     }
+
+    func testLogMessageFormattingQuotesMessagesAndNormalizesEventNames() {
+        XCTAssertEqual(logMessageText("watchme_system_metrics_exported"), "watchme system metrics exported")
+        XCTAssertEqual(logfmtQuoted("watchme system metrics exported"), "\"watchme system metrics exported\"")
+        XCTAssertEqual(logfmtQuoted("quote \"value\""), "\"quote \\\"value\\\"\"")
+    }
 }

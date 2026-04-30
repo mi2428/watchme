@@ -39,7 +39,7 @@ public final class StructuredLogger {
         var parts = [
             "time=\(logfmt(formatter.string(from: Date())))",
             "level=\(level.rawValue)",
-            "msg=\(logfmt(message))",
+            "msg=\(logfmtQuoted(logMessageText(message)))",
         ]
         for key in fields.keys.sorted() {
             if let value = fields[key] {

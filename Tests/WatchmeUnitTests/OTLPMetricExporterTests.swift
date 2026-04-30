@@ -28,6 +28,10 @@ final class OTLPMetricExporterTests: XCTestCase {
         ])
 
         XCTAssertTrue(result.ok)
+        XCTAssertEqual(result.samples.count, 2)
+        XCTAssertEqual(result.samples[0].name, "watchme_test_memory_bytes")
+        XCTAssertEqual(result.samples[0].labels, ["state": "free"])
+        XCTAssertEqual(result.samples[0].value, 1024)
         let request = try XCTUnwrap(transport.requests.first)
         XCTAssertEqual(request.url?.absoluteString, "http://collector.example/v1/metrics")
         XCTAssertEqual(request.httpMethod, "POST")
@@ -72,6 +76,15 @@ final class OTLPMetricExporterTests: XCTestCase {
         let request = try XCTUnwrap(transport.requests.last)
         let metrics = try metricPayloadMetrics(from: request)
         XCTAssertEqual(dataPointValue(metricName: "watchme_test_counter_total", field: "sum", in: metrics), 16)
+        XCTAssertEqual(exporter.export([
+            MetricSample(
+                name: "watchme_test_counter_total",
+                help: "Counter.",
+                type: .counter,
+                labels: ["kind": "unit"],
+                value: 5
+            ),
+        ]).samples.first?.value, 17)
     }
 }
 

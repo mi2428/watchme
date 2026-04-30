@@ -31,6 +31,18 @@ public func logfmt(_ value: String) -> String {
         .replacingOccurrences(of: "\n", with: "\\n") + "\""
 }
 
+public func logfmtQuoted(_ value: String) -> String {
+    "\""
+        + value
+        .replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
+        .replacingOccurrences(of: "\n", with: "\\n") + "\""
+}
+
+public func logMessageText(_ message: String) -> String {
+    message.replacingOccurrences(of: "_", with: " ")
+}
+
 public func randomHex(bytes: Int) -> String {
     (0 ..< bytes).map { _ in String(format: "%02x", UInt8.random(in: 0 ... 255)) }.joined()
 }

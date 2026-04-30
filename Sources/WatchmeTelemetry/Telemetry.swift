@@ -29,6 +29,14 @@ public struct MetricExportResult {
     public let ok: Bool
     public let endpoint: URL
     public let error: String?
+    public let samples: [MetricExportedSample]
+}
+
+public struct MetricExportedSample {
+    public let name: String
+    public let type: MetricSample.MetricType
+    public let labels: [String: String]
+    public let value: Double
 }
 
 public struct TraceExportResult {
@@ -55,18 +63,64 @@ public final class TelemetryClient {
     public func exportMetrics(name: String, fields: [String: String], metrics samples: [MetricSample]) -> Bool {
         let result = metrics.export(samples)
         var logFields = fields
+        logFields["metric_export_name"] = name
         logFields["metrics_endpoint_url"] = result.endpoint.absoluteString
-        logFields["metric_sample_count"] = "\(samples.count)"
+        logFields["metric_sample_count"] = "\(result.samples.count)"
         if let error = result.error {
             logFields["error"] = error
         }
-        logEvent(result.ok ? .debug : .warn, result.ok ? "\(name)_metrics_exported" : "\(name)_metrics_export_failed", fields: logFields)
+        logEvent(result.ok ? .info : .warn, result.ok ? "metrics_exported" : "metrics_export_failed", fields: logFields)
+        if result.ok {
+            logMetricSamples(result.samples, exportName: name, endpoint: result.endpoint, fields: fields)
+        }
         return result.ok
     }
 
     public func exportTrace(records: TraceBatch) -> TraceExportResult {
         traces.export(records)
     }
+}
+
+private func logMetricSamples(
+    _ samples: [MetricExportedSample],
+    exportName: String,
+    endpoint: URL,
+    fields: [String: String]
+) {
+    for (index, sample) in samples.enumerated() {
+        var logFields = fields
+        logFields["metric_export_name"] = exportName
+        logFields["metrics_endpoint_url"] = endpoint.absoluteString
+        logFields["metric_sample_index"] = "\(index)"
+        logFields["metric_sample_count"] = "\(samples.count)"
+        logFields["metric_name"] = sample.name
+        logFields["metric_type"] = sample.type.rawValue
+        logFields["metric_value"] = formatMetricLogValue(sample.value)
+        logFields["metric_labels"] = formatMetricLogLabels(sample.labels)
+        for key in sample.labels.keys.sorted() {
+            logFields["metric_label.\(logFieldKeyComponent(key))"] = sample.labels[key] ?? ""
+        }
+        logEvent(.debug, "metric_sample_exported", fields: logFields)
+    }
+}
+
+private func formatMetricLogLabels(_ labels: [String: String]) -> String {
+    labels.keys.sorted().map { key in
+        "\(key)=\(labels[key] ?? "")"
+    }.joined(separator: ",")
+}
+
+private func formatMetricLogValue(_ value: Double) -> String {
+    guard value.isFinite else {
+        return "\(value)"
+    }
+    return String(format: "%.15g", value)
+}
+
+private func logFieldKeyComponent(_ key: String) -> String {
+    String(key.map { character in
+        character.isLetter || character.isNumber || character == "." || character == "_" || character == "-" ? character : "_"
+    })
 }
 
 public struct TraceSpanRecord {

@@ -24,7 +24,7 @@ final class OTelMetricExporter {
         lock.lock()
         defer { lock.unlock() }
 
-        let payload = metricPayload(samples)
+        let (payload, emittedSamples) = metricPayload(samples)
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -34,14 +34,16 @@ final class OTelMetricExporter {
         return MetricExportResult(
             ok: ok,
             endpoint: endpoint,
-            error: ok ? nil : result.errorDescription ?? "OTLP metric export failed"
+            error: ok ? nil : result.errorDescription ?? "OTLP metric export failed",
+            samples: emittedSamples
         )
     }
 
-    private func metricPayload(_ samples: [MetricSample]) -> Data {
+    private func metricPayload(_ samples: [MetricSample]) -> (Data, [MetricExportedSample]) {
         let timeUnixNano = "\(wallClockNanos())"
         var metricsByKey: [String: [String: Any]] = [:]
         var order: [String] = []
+        var emittedSamples: [MetricExportedSample] = []
 
         for sample in samples {
             let value: Double = switch sample.type {
@@ -50,6 +52,7 @@ final class OTelMetricExporter {
             case .counter:
                 recordCounterTotal(sample)
             }
+            emittedSamples.append(MetricExportedSample(name: sample.name, type: sample.type, labels: sample.labels, value: value))
 
             let key = "\(sample.name)\u{1e}\(sample.help)\u{1e}\(sample.type.rawValue)"
             if metricsByKey[key] == nil {
@@ -90,7 +93,7 @@ final class OTelMetricExporter {
                 ],
             ],
         ]
-        return (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
+        return ((try? JSONSerialization.data(withJSONObject: body)) ?? Data(), emittedSamples)
     }
 
     private func recordCounterTotal(_ sample: MetricSample) -> Double {
