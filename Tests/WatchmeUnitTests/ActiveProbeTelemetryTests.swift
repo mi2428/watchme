@@ -83,6 +83,22 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(tags["packet.timestamp_source"], bpfHeaderTimestampSource)
     }
 
+    func testGatewayProbeRecordsPathParentForICMPEcho() {
+        let agent = makeAgent()
+        let recorder = TraceRecorder()
+        let phaseId = recorder.newSpanId()
+
+        agent.recordGatewayProbeResult(gatewayResult(), phaseId: phaseId, recorder: recorder, snapshot: makeSnapshot())
+        let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
+        let path = spans.first { $0.name == "probe.gateway.path" }
+        let echo = spans.first { $0.name == "probe.gateway.icmp.echo" }
+
+        XCTAssertEqual(path?.parentId, phaseId)
+        XCTAssertEqual(echo?.parentId, path?.id)
+        XCTAssertEqual(path?.tags["probe.gateway.path.status"], "ok")
+        XCTAssertEqual(path?.tags["probe.gateway.icmp.span_count"], "1")
+    }
+
     func testActiveProbeTagsCarryWiFiIdentityContext() {
         let snapshot = makeSnapshot(ssid: "lab-wifi", bssid: "aa:bb:cc:dd:ee:ff")
         let tags = makeAgent().activeInternetHTTPTags(result: httpResult(), snapshot: snapshot)

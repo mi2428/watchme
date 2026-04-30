@@ -278,7 +278,7 @@ public final class TraceRecorder {
         } else {
             // Passive BPF spans may start before the CoreWLAN/SystemConfiguration
             // callback that triggered export. Expand the root span so Tempo shows
-            // the whole packet window rather than clipping the packet history.
+            // the whole attachment packet history rather than clipping it.
             rootStart = min(rootStartWallNanos, children.map(\.startWallNanos).min() ?? rootStartWallNanos)
             let last = max(wallClockNanos(), children.map { $0.startWallNanos + $0.durationNanos }.max() ?? rootStartWallNanos)
             rootDuration = max(1000, last - rootStart)
@@ -332,9 +332,9 @@ final class OTelTraceExporter {
         var spanById: [String: Span] = ["root": root]
 
         for record in batch.spans {
-            // Packet-window traces can contain synthetic phase spans and packet
-            // spans; this map preserves explicit parent relationships while
-            // falling back to the root if a referenced parent was pruned.
+            // Network attachment traces can contain synthetic phase spans and
+            // packet spans; this map preserves explicit parent relationships
+            // while falling back to the root if a referenced parent was pruned.
             let parent = record.parentId.flatMap { spanById[$0] } ?? root
             let span = tracer.spanBuilder(spanName: record.name)
                 .setParent(parent)

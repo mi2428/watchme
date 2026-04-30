@@ -144,12 +144,23 @@ extension WiFiAgent {
         snapshot: WiFiSnapshot
     ) {
         metricState.recordGatewayProbe(result)
+        let pathId = recorder.newSpanId()
+        let pathStart = parentSpanStart(before: result.startWallNanos)
+        recorder.recordSpan(
+            name: "probe.gateway.path",
+            id: pathId,
+            startWallNanos: pathStart,
+            durationNanos: result.finishedWallNanos - pathStart,
+            parentId: phaseId,
+            tags: activeGatewayPathTags(result: result, snapshot: snapshot),
+            statusOK: result.reachable
+        )
         recorder.recordSpan(
             name: "probe.gateway.icmp.echo",
             id: recorder.newSpanId(),
             startWallNanos: result.startWallNanos,
             durationNanos: result.burstDurationNanos,
-            parentId: phaseId,
+            parentId: pathId,
             tags: activeGatewayTags(result: result, snapshot: snapshot),
             statusOK: result.reachable
         )
@@ -170,6 +181,29 @@ extension WiFiAgent {
                 "error": result.error ?? "",
             ]
         )
+    }
+
+    func activeGatewayPathTags(result: ActiveGatewayProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
+        var tags = activeProbeBaseTags(
+            snapshot: snapshot,
+            timingSource: "composite",
+            timestampSource: wallClockTimestampSource,
+            spanSource: "watchme_connectivity_check"
+        )
+        tags.merge([
+            "probe.gateway.path.status": result.reachable ? "ok" : "error",
+            "probe.gateway.icmp.span_count": "1",
+            "network.family": result.family.metricValue,
+            "network.wifi_gateway": result.gateway,
+            "network.gateway_probe.reachable": result.reachable ? "true" : "false",
+            "network.gateway_probe.outcome": result.outcome,
+            "network.gateway_probe.probe_count": "\(result.probeCount)",
+            "network.gateway_probe.reply_count": "\(result.reachableCount)",
+            "network.gateway_probe.lost_count": "\(result.lostCount)",
+            "network.gateway_probe.loss_ratio": formatGatewayProbeDouble(result.lossRatio),
+        ]) { _, new in new }
+        addErrorTag(&tags, error: result.error)
+        return tags
     }
 
     func activeDNSTags(result: ActiveDNSProbeResult, snapshot: WiFiSnapshot) -> [String: String] {

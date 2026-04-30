@@ -63,6 +63,11 @@ func buildICMPv6Spans(_ observations: [ICMPv6Observation]) -> [SpanEvent] {
     let advertisements = sorted.filter { $0.type == 134 }
     let neighborSolicitations = sorted.filter { $0.type == 135 && $0.targetAddress != nil }
     let neighborAdvertisements = sorted.filter { $0.type == 136 && $0.targetAddress != nil }
+    let ipv6DefaultRouters = Set(
+        advertisements
+            .filter { ($0.routerLifetimeSeconds ?? 0) > 0 }
+            .map(\.sourceIP)
+    )
 
     for gap in retryGaps(solicitations.map(\.wallNanos)) {
         spans.append(
@@ -99,7 +104,13 @@ func buildICMPv6Spans(_ observations: [ICMPv6Observation]) -> [SpanEvent] {
         break
     }
 
-    spans.append(contentsOf: buildNeighborDiscoverySpans(solicitations: neighborSolicitations, advertisements: neighborAdvertisements))
+    spans.append(
+        contentsOf: buildNeighborDiscoverySpans(
+            solicitations: neighborSolicitations,
+            advertisements: neighborAdvertisements,
+            retryTargets: ipv6DefaultRouters
+        )
+    )
 
     return spans
 }
@@ -166,7 +177,8 @@ private func latestARPRequest(beforeOrAt end: UInt64, in values: [ARPObservation
 
 func buildNeighborDiscoverySpans(
     solicitations: [ICMPv6Observation],
-    advertisements: [ICMPv6Observation]
+    advertisements: [ICMPv6Observation],
+    retryTargets: Set<String> = []
 ) -> [SpanEvent] {
     var spans: [SpanEvent] = []
     let groupedNS = Dictionary(grouping: solicitations) { $0.targetAddress ?? "" }
@@ -178,7 +190,9 @@ func buildNeighborDiscoverySpans(
             continue
         }
         let sortedAttempts = attempts.sorted { $0.wallNanos < $1.wallNanos }
-        spans.append(contentsOf: neighborRetrySpans(target: target, attempts: sortedAttempts))
+        if retryTargets.contains(target) {
+            spans.append(contentsOf: neighborRetrySpans(target: target, attempts: sortedAttempts))
+        }
         if let resolution = neighborResolutionSpan(target: target, attempts: sortedAttempts, replies: replies) {
             spans.append(resolution)
         }

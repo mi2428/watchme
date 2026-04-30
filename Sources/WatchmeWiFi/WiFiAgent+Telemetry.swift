@@ -84,7 +84,7 @@ extension WiFiAgent {
     func schedulePacketWindowTrace(sourceReason: String, eventTags: [String: String], delay: TimeInterval) {
         if associationTracePending || Date() < packetWindowSuppressedUntil {
             logEvent(
-                .debug, "packet_window_trace_suppressed",
+                .debug, "network_attachment_trace_suppressed",
                 fields: [
                     "source_reason": sourceReason,
                     "suppression_reason": associationTracePending ? "association_trace_pending" : "association_trace_recently_completed",
@@ -95,7 +95,7 @@ extension WiFiAgent {
         packetWindowVersion += 1
         let version = packetWindowVersion
         logEvent(
-            .debug, "packet_window_trace_scheduled",
+            .debug, "network_attachment_trace_scheduled",
             fields: [
                 "source_reason": sourceReason,
                 "delay_seconds": String(format: "%.1f", delay),
@@ -103,14 +103,14 @@ extension WiFiAgent {
         )
         triggerQueue.asyncAfter(deadline: .now() + delay) {
             // DHCP and IPv6 control packets usually arrive after the CoreWLAN
-            // callback. Delay briefly so the packet-window trace contains the
-            // address acquisition sequence instead of only the trigger event.
+            // callback. Delay briefly so the network-attachment trace contains
+            // the address acquisition sequence instead of only the trigger event.
             guard version == self.packetWindowVersion else {
                 return
             }
             guard !self.associationTracePending, Date() >= self.packetWindowSuppressedUntil else {
                 logEvent(
-                    .debug, "packet_window_trace_suppressed",
+                    .debug, "network_attachment_trace_suppressed",
                     fields: [
                         "source_reason": sourceReason,
                         "suppression_reason": self.associationTracePending ? "association_trace_pending" : "association_trace_recently_completed",
@@ -119,9 +119,9 @@ extension WiFiAgent {
                 return
             }
             var tags = eventTags
-            tags["packet.window.source_reason"] = sourceReason
-            tags["packet.window.delay_seconds"] = String(format: "%.1f", delay)
-            self.emitTrace(reason: "wifi.packet.window", eventTags: tags, consumePacketSpans: true, includeConnectivityCheck: true)
+            tags["network_attachment.source_reason"] = sourceReason
+            tags["network_attachment.delay_seconds"] = String(format: "%.1f", delay)
+            self.emitTrace(reason: "wifi.network.attachment", eventTags: tags, consumePacketSpans: true, includeConnectivityCheck: true)
             self.packetWindowSuppressedUntil = Date().addingTimeInterval(self.config.packetWindowSuppressionAfterAssociation)
         }
     }
@@ -255,10 +255,11 @@ extension WiFiAgent {
             interfaceName: snapshot.interfaceName,
             ipv4Gateway: networkState.routerIPv4,
             maxAge: config.bpfSpanMaxAge,
-            consume: consumePacketSpans
+            consume: consumePacketSpans,
+            includeConsumed: { self.shouldReplayConsumedPacketSpan(reason: reason, span: $0) }
         )
         if !packetSpans.isEmpty, let window = spanWindow(packetSpans) {
-            recordPacketWindow(packetSpans, window: window, recorder: recorder, snapshot: snapshot)
+            recordNetworkAttachment(packetSpans, window: window, recorder: recorder, snapshot: snapshot)
         }
 
         if includeConnectivityCheck, connectivityReadiness.ready {
@@ -353,7 +354,7 @@ extension WiFiAgent {
         )
     }
 
-    private func recordPacketWindow(
+    private func recordNetworkAttachment(
         _ packetSpans: [SpanEvent],
         window: (start: UInt64, duration: UInt64),
         recorder: TraceRecorder,
@@ -370,13 +371,13 @@ extension WiFiAgent {
             )
         }
         recorder.recordSpan(
-            name: "phase.packet_window",
+            name: "phase.network_attachment",
             id: phaseId,
             startWallNanos: window.start > 1000 ? window.start - 1000 : window.start,
             durationNanos: window.duration + 1000,
             tags: [
-                "phase.name": "packet_window",
-                "phase.source": "continuous_bpf",
+                "phase.name": "network_attachment",
+                "phase.source": "passive_bpf",
                 "phase.packet_span_count": "\(packetSpans.count)",
             ]
         )
@@ -385,47 +386,61 @@ extension WiFiAgent {
     private func recordConnectivityCheck(recorder: TraceRecorder, snapshot: WiFiSnapshot, networkState: WiFiServiceNetworkState) {
         let phaseId = recorder.newSpanId()
         let phaseStart = wallClockNanos()
-        let internetResults = runActiveInternetProbes(
-            config: config,
-            networkState: networkState,
-            interfaceName: snapshot.interfaceName,
-            packetStore: packetStore
-        )
         let gatewayResult = runGatewayProbe(networkState: networkState, snapshot: snapshot)
 
-        recordInternetProbeResults(internetResults, phaseId: phaseId, recorder: recorder, snapshot: snapshot)
         if let gatewayResult {
             recordGatewayProbeResult(gatewayResult, phaseId: phaseId, recorder: recorder, snapshot: snapshot)
         }
+        let internetResults: ActiveInternetProbeResults
+        let internetSkippedReason: String?
+        if gatewayResult?.reachable == false {
+            internetResults = ActiveInternetProbeResults(lanes: [])
+            internetSkippedReason = "gateway_unreachable"
+        } else {
+            internetResults = runActiveInternetProbes(
+                config: config,
+                networkState: networkState,
+                interfaceName: snapshot.interfaceName,
+                packetStore: packetStore
+            )
+            internetSkippedReason = nil
+            recordInternetProbeResults(internetResults, phaseId: phaseId, recorder: recorder, snapshot: snapshot)
+        }
 
+        var phaseTags: [String: String] = [
+            "phase.name": "connectivity_check",
+            "phase.source": "wifi_connectivity_probe",
+            "phase.check_scope": "gateway_icmp,internet_dns,internet_icmp,internet_tcp,internet_http",
+            "probe.internet.targets": config.probeInternetTargets.joined(separator: ","),
+            "probe.internet.family": config.probeInternetFamily.metricValue,
+            "probe.internet.dns.enabled": config.probeInternetDNS ? "true" : "false",
+            "probe.internet.icmp.enabled": config.probeInternetICMP ? "true" : "false",
+            "probe.internet.tcp.enabled": config.probeInternetTCP ? "true" : "false",
+            "probe.internet.http.enabled": config.probeInternetHTTP ? "true" : "false",
+            "probe.internet.path.span_count": "\(internetResults.lanes.count)",
+            "probe.internet.dns.span_count": "\(internetResults.dns.count)",
+            "probe.internet.icmp.span_count": "\(internetResults.icmp.count)",
+            "probe.internet.tcp.span_count": "\(internetResults.tcp.count)",
+            "probe.internet.http.span_count": "\(internetResults.http.count)",
+            "probe.dns_resolvers": networkState.dnsServers.joined(separator: ","),
+            "probe.gateway": networkState.routerIPv4 ?? "",
+            "probe.gateway.burst_count": "\(config.probeGatewayBurstCount)",
+            "probe.gateway.burst_interval_seconds": formatGatewayProbeDouble(config.probeGatewayBurstInterval),
+            "probe.gateway.probe_count": gatewayResult.map { "\($0.probeCount)" } ?? "0",
+            "probe.gateway.span_count": gatewayResult == nil ? "0" : "1",
+        ]
+        setTag(&phaseTags, "probe.internet.skipped_reason", internetSkippedReason)
         recorder.recordSpan(
             name: "phase.connectivity_check",
             id: phaseId,
             startWallNanos: phaseStart,
             durationNanos: max(wallClockNanos() - phaseStart, 1000),
-            tags: [
-                "phase.name": "connectivity_check",
-                "phase.source": "wifi_connectivity_probe",
-                "phase.check_scope": "internet_dns,internet_icmp,internet_tcp,internet_http,gateway_icmp",
-                "probe.internet.targets": config.probeInternetTargets.joined(separator: ","),
-                "probe.internet.family": config.probeInternetFamily.metricValue,
-                "probe.internet.dns.enabled": config.probeInternetDNS ? "true" : "false",
-                "probe.internet.icmp.enabled": config.probeInternetICMP ? "true" : "false",
-                "probe.internet.tcp.enabled": config.probeInternetTCP ? "true" : "false",
-                "probe.internet.http.enabled": config.probeInternetHTTP ? "true" : "false",
-                "probe.internet.path.span_count": "\(internetResults.lanes.count)",
-                "probe.internet.dns.span_count": "\(internetResults.dns.count)",
-                "probe.internet.icmp.span_count": "\(internetResults.icmp.count)",
-                "probe.internet.tcp.span_count": "\(internetResults.tcp.count)",
-                "probe.internet.http.span_count": "\(internetResults.http.count)",
-                "probe.dns_resolvers": networkState.dnsServers.joined(separator: ","),
-                "probe.gateway": networkState.routerIPv4 ?? "",
-                "probe.gateway.burst_count": "\(config.probeGatewayBurstCount)",
-                "probe.gateway.burst_interval_seconds": formatGatewayProbeDouble(config.probeGatewayBurstInterval),
-                "probe.gateway.probe_count": gatewayResult.map { "\($0.probeCount)" } ?? "0",
-                "probe.gateway.span_count": gatewayResult == nil ? "0" : "1",
-            ]
+            tags: phaseTags
         )
+    }
+
+    private func shouldReplayConsumedPacketSpan(reason: String, span: SpanEvent) -> Bool {
+        WiFiTracePolicy.isAssociationRecoveryReason(reason) && span.name.hasPrefix("packet.dhcp.")
     }
 
     private func runGatewayProbe(networkState: WiFiServiceNetworkState, snapshot: WiFiSnapshot) -> ActiveGatewayProbeResult? {

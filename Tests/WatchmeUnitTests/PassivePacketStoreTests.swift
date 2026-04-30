@@ -59,6 +59,35 @@ final class PassivePacketStoreTests: XCTestCase {
         XCTAssertEqual(resolution?.tags["icmpv6.nd.target_link_layer_address"], "aa:bb:cc:dd:ee:ff")
     }
 
+    func testBuildICMPv6SpansSuppressesNonGatewayNeighborRetryGaps() {
+        let base: UInt64 = 5_000_000_000
+        let observations = [
+            icmp(
+                base,
+                type: 134,
+                source: "fe80::router",
+                destination: "ff02::1",
+                routerLifetime: 1800,
+                sourceLLA: "aa:bb:cc:dd:ee:ff"
+            ),
+            icmp(base + 1_000_000_000, type: 135, source: "fe80::host", destination: "ff02::1:ff00:2", target: "fe80::peer"),
+            icmp(base + 2_000_000_000, type: 135, source: "fe80::host", destination: "ff02::1:ff00:2", target: "fe80::peer"),
+            icmp(
+                base + 2_500_000_000,
+                type: 136,
+                source: "fe80::peer",
+                destination: "fe80::host",
+                target: "fe80::peer",
+                targetLLA: "11:22:33:44:55:66"
+            ),
+        ]
+
+        let spans = buildICMPv6Spans(observations)
+
+        XCTAssertFalse(spans.contains { $0.name == "packet.icmpv6.neighbor_solicitation_retry_gap" })
+        XCTAssertTrue(spans.contains { $0.name == "packet.icmpv6.neighbor_solicitation_to_advertisement" })
+    }
+
     func testPassivePacketStoreConsumeSuppressesPreviouslyReturnedSpans() {
         let store = PassivePacketStore()
         let now = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
@@ -72,6 +101,26 @@ final class PassivePacketStoreTests: XCTestCase {
         XCTAssertEqual(first.map(\.name), ["packet.dhcp.request_to_ack"])
         XCTAssertTrue(second.isEmpty)
         XCTAssertEqual(nonConsumed.map(\.name), ["packet.dhcp.request_to_ack"])
+    }
+
+    func testConsumedDHCPExchangeCanBeReplayedForAssociationTrace() {
+        let store = PassivePacketStore()
+        let now = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
+        store.appendDHCP(dhcp(now, xid: 0xAABB_CCDD, type: 1))
+        store.appendDHCP(dhcp(now + 1_000_000, xid: 0xAABB_CCDD, type: 2, server: "10.0.0.1"))
+        store.appendDHCP(dhcp(now + 2_000_000, xid: 0xAABB_CCDD, type: 3))
+        store.appendDHCP(dhcp(now + 3_000_000, xid: 0xAABB_CCDD, type: 5, yiaddr: "10.0.0.20"))
+
+        _ = store.recentPacketSpans(interfaceName: "en0", ipv4Gateway: nil, maxAge: 60, consume: true)
+        let replayed = store.recentPacketSpans(
+            interfaceName: "en0",
+            ipv4Gateway: nil,
+            maxAge: 60,
+            consume: true,
+            includeConsumed: { $0.name.hasPrefix("packet.dhcp.") }
+        )
+
+        XCTAssertEqual(replayed.map(\.name), ["packet.dhcp.discover_to_offer", "packet.dhcp.request_to_ack"])
     }
 
     func testBuildARPSpansPairsGatewayResolutionAndRetries() {
