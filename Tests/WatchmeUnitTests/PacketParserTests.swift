@@ -49,6 +49,83 @@ final class PacketParserTests: XCTestCase {
         XCTAssertNil(icmpv6NDLinkLayerAddressOption(buffer: [2, 0], optionsOffset: 0, packetEnd: 2, optionType: 2))
     }
 
+    func testParseDNSPacketObservationExtractsActiveProbeCorrelationFields() throws {
+        let query = try XCTUnwrap(dnsAQueryPacket(host: "www.example.test", id: 0xCAFE))
+        let queryBytes = [UInt8](query.data)
+        let queryContext = TransportPacketContext(
+            interfaceName: "en0",
+            packetEnd: queryBytes.count,
+            timestampNanos: 1000,
+            sourceIP: "192.168.22.173",
+            destinationIP: "192.168.23.254"
+        )
+        let parsedQuery = parseDNSPacketObservation(
+            buffer: queryBytes,
+            offset: 0,
+            context: queryContext,
+            sourcePort: 53000,
+            destinationPort: 53
+        )
+
+        XCTAssertEqual(parsedQuery?.transactionID, 0xCAFE)
+        XCTAssertEqual(parsedQuery?.isResponse, false)
+        XCTAssertEqual(parsedQuery?.queryName, "www.example.test")
+        XCTAssertEqual(parsedQuery?.queryType, 1)
+
+        var responseBytes = queryBytes
+        responseBytes[2] = 0x81
+        responseBytes[3] = 0x80
+        responseBytes[7] = 0x01
+        let responseContext = TransportPacketContext(
+            interfaceName: "en0",
+            packetEnd: responseBytes.count,
+            timestampNanos: 2000,
+            sourceIP: "192.168.23.254",
+            destinationIP: "192.168.22.173"
+        )
+        let parsedResponse = parseDNSPacketObservation(
+            buffer: responseBytes,
+            offset: 0,
+            context: responseContext,
+            sourcePort: 53,
+            destinationPort: 53000
+        )
+
+        XCTAssertEqual(parsedResponse?.isResponse, true)
+        XCTAssertEqual(parsedResponse?.rcode, 0)
+        XCTAssertEqual(parsedResponse?.answerCount, 1)
+        XCTAssertEqual(parsedResponse?.queryName, "www.example.test")
+    }
+
+    func testParseTCPPacketObservationExtractsPortsAndFlags() {
+        var packet = [UInt8](repeating: 0, count: 20)
+        packet[0] = 0xD2
+        packet[1] = 0xF0
+        packet[2] = 0x00
+        packet[3] = 0x35
+        packet[12] = 0x50
+        packet[13] = 0x02
+        let context = TransportPacketContext(
+            interfaceName: "en0",
+            packetEnd: packet.count,
+            timestampNanos: 1000,
+            sourceIP: "192.168.22.173",
+            destinationIP: "192.168.23.254"
+        )
+
+        let parsed = parseTCPPacketObservation(
+            buffer: packet,
+            offset: 0,
+            context: context
+        )
+
+        XCTAssertEqual(parsed?.sourcePort, 54000)
+        XCTAssertEqual(parsed?.destinationPort, 53)
+        XCTAssertEqual(parsed?.isSYN, true)
+        XCTAssertEqual(parsed?.isACK, false)
+        XCTAssertEqual(parsed?.isRST, false)
+    }
+
     private func dhcpPacketBase() -> [UInt8] {
         var packet = [UInt8](repeating: 0, count: 260)
         packet[1] = 1

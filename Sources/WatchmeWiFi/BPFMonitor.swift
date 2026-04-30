@@ -66,23 +66,82 @@ final class PassiveBPFMonitor {
             return
         }
         let headerLength = Int(buffer[offset] & 0x0F) * 4
-        guard offset + headerLength + 8 <= packetEnd, buffer[offset + 9] == UInt8(IPPROTO_UDP) else {
+        let fragmentState = readBigUInt16(buffer, offset: offset + 6)
+        guard headerLength >= 20, offset + headerLength <= packetEnd, fragmentState & 0x1FFF == 0 else {
             return
         }
-        let udpOffset = offset + headerLength
-        let sourcePort = readBigUInt16(buffer, offset: udpOffset)
-        let destinationPort = readBigUInt16(buffer, offset: udpOffset + 2)
+        let sourceIP = ipv4String(bytes: Array(buffer[(offset + 12) ..< (offset + 16)]))
+        let destinationIP = ipv4String(bytes: Array(buffer[(offset + 16) ..< (offset + 20)]))
+        let transportOffset = offset + headerLength
+        let context = TransportPacketContext(
+            interfaceName: interfaceName,
+            packetEnd: packetEnd,
+            timestampNanos: timestampNanos,
+            sourceIP: sourceIP,
+            destinationIP: destinationIP
+        )
+        switch buffer[offset + 9] {
+        case UInt8(IPPROTO_UDP):
+            handleUDPPacket(
+                buffer: buffer,
+                offset: transportOffset,
+                context: context
+            )
+        case UInt8(IPPROTO_TCP):
+            handleTCPPacket(
+                buffer: buffer,
+                offset: transportOffset,
+                context: context
+            )
+        default:
+            return
+        }
+    }
+
+    private func handleUDPPacket(
+        buffer: [UInt8],
+        offset: Int,
+        context: TransportPacketContext
+    ) {
+        guard offset + 8 <= context.packetEnd else {
+            return
+        }
+        let sourcePort = readBigUInt16(buffer, offset: offset)
+        let destinationPort = readBigUInt16(buffer, offset: offset + 2)
+        let udpLength = Int(readBigUInt16(buffer, offset: offset + 4))
+        guard udpLength >= 8 else {
+            return
+        }
+        let payloadEnd = min(context.packetEnd, offset + udpLength)
+        let payloadContext = TransportPacketContext(
+            interfaceName: context.interfaceName,
+            packetEnd: payloadEnd,
+            timestampNanos: context.timestampNanos,
+            sourceIP: context.sourceIP,
+            destinationIP: context.destinationIP
+        )
+        if sourcePort == 53 || destinationPort == 53 {
+            if let observation = parseDNSPacketObservation(
+                buffer: buffer,
+                offset: offset + 8,
+                context: payloadContext,
+                sourcePort: sourcePort,
+                destinationPort: destinationPort
+            ), store.appendDNS(observation) {
+                logActiveDNSPacket(observation)
+            }
+        }
         // DHCP is the IPv4 address-acquisition signal we care about after a
         // join. Non-DHCP UDP traffic is deliberately ignored.
         guard sourcePort == 67 || sourcePort == 68 || destinationPort == 67 || destinationPort == 68 else {
             return
         }
-        guard let packet = parseDHCPv4Packet(buffer: buffer, offset: udpOffset + 8, packetEnd: packetEnd) else {
+        guard let packet = parseDHCPv4Packet(buffer: buffer, offset: offset + 8, packetEnd: payloadEnd) else {
             return
         }
         let observation = DHCPObservation(
             interfaceName: interfaceName,
-            wallNanos: timestampNanos,
+            wallNanos: context.timestampNanos,
             xid: packet.xid,
             messageType: packet.messageType,
             yiaddr: packet.yiaddr,
@@ -97,7 +156,7 @@ final class PassiveBPFMonitor {
             "interface": interfaceName,
             "dhcp.xid": String(format: "0x%08x", packet.xid),
             "dhcp.message_type": dhcpMessageTypeName(messageType),
-            "packet.timestamp_epoch_ns": "\(timestampNanos)",
+            "packet.timestamp_epoch_ns": "\(context.timestampNanos)",
         ]
         setTag(&fields, "dhcp.yiaddr", packet.yiaddr)
         setTag(&fields, "dhcp.server_identifier", packet.serverIdentifier)
@@ -114,13 +173,61 @@ final class PassiveBPFMonitor {
         guard offset + 40 <= packetEnd, buffer[offset] >> 4 == 6 else {
             return
         }
-        guard buffer[offset + 6] == UInt8(IPPROTO_ICMPV6) else {
-            return
-        }
         let sourceIP = ipv6String(bytes: Array(buffer[(offset + 8) ..< (offset + 24)]))
         let destinationIP = ipv6String(bytes: Array(buffer[(offset + 24) ..< (offset + 40)]))
-        let icmpOffset = offset + 40
-        guard icmpOffset + 8 <= packetEnd else {
+        let transportOffset = offset + 40
+        let context = TransportPacketContext(
+            interfaceName: interfaceName,
+            packetEnd: packetEnd,
+            timestampNanos: timestampNanos,
+            sourceIP: sourceIP,
+            destinationIP: destinationIP
+        )
+        switch buffer[offset + 6] {
+        case UInt8(IPPROTO_UDP):
+            handleUDPPacket(
+                buffer: buffer,
+                offset: transportOffset,
+                context: context
+            )
+        case UInt8(IPPROTO_TCP):
+            handleTCPPacket(
+                buffer: buffer,
+                offset: transportOffset,
+                context: context
+            )
+        case UInt8(IPPROTO_ICMPV6):
+            handleICMPv6Packet(
+                buffer: buffer,
+                offset: transportOffset,
+                context: context
+            )
+        default:
+            return
+        }
+    }
+
+    private func handleTCPPacket(
+        buffer: [UInt8],
+        offset: Int,
+        context: TransportPacketContext
+    ) {
+        guard let observation = parseTCPPacketObservation(
+            buffer: buffer,
+            offset: offset,
+            context: context
+        ), store.appendTCP(observation) else {
+            return
+        }
+        logActiveTCPPacket(observation)
+    }
+
+    private func handleICMPv6Packet(
+        buffer: [UInt8],
+        offset icmpOffset: Int,
+        context: TransportPacketContext
+    ) {
+        guard icmpOffset + 8 <= context.packetEnd else {
             return
         }
         let type = buffer[icmpOffset]
@@ -140,37 +247,37 @@ final class PassiveBPFMonitor {
         // ICMPv6 control messages have different fixed headers before their ND
         // options. Keep those offsets explicit so truncation checks remain tied
         // to the RFC packet shape rather than a shared magic number.
-        if type == 134, icmpOffset + 16 <= packetEnd {
+        if type == 134, icmpOffset + 16 <= context.packetEnd {
             routerLifetimeSeconds = readBigUInt16(buffer, offset: icmpOffset + 6)
             sourceLinkLayerAddress = icmpv6NDLinkLayerAddressOption(
                 buffer: buffer,
                 optionsOffset: icmpOffset + 16,
-                packetEnd: packetEnd,
+                packetEnd: context.packetEnd,
                 optionType: 1
             )
-        } else if type == 135 || type == 136, icmpOffset + 24 <= packetEnd {
+        } else if type == 135 || type == 136, icmpOffset + 24 <= context.packetEnd {
             targetAddress = ipv6String(bytes: Array(buffer[(icmpOffset + 8) ..< (icmpOffset + 24)]))
             sourceLinkLayerAddress = icmpv6NDLinkLayerAddressOption(
                 buffer: buffer,
                 optionsOffset: icmpOffset + 24,
-                packetEnd: packetEnd,
+                packetEnd: context.packetEnd,
                 optionType: 1
             )
             targetLinkLayerAddress = icmpv6NDLinkLayerAddressOption(
                 buffer: buffer,
                 optionsOffset: icmpOffset + 24,
-                packetEnd: packetEnd,
+                packetEnd: context.packetEnd,
                 optionType: 2
             )
         }
 
         let observation = ICMPv6Observation(
             interfaceName: interfaceName,
-            wallNanos: timestampNanos,
+            wallNanos: context.timestampNanos,
             type: type,
             code: code,
-            sourceIP: sourceIP,
-            destinationIP: destinationIP,
+            sourceIP: context.sourceIP,
+            destinationIP: context.destinationIP,
             targetAddress: targetAddress,
             routerLifetimeSeconds: routerLifetimeSeconds,
             sourceLinkLayerAddress: sourceLinkLayerAddress,
@@ -183,9 +290,9 @@ final class PassiveBPFMonitor {
             "icmpv6.type": "\(type)",
             "icmpv6.type_name": icmpv6TypeName(type),
             "icmpv6.code": "\(code)",
-            "icmpv6.source_ip": sourceIP,
-            "icmpv6.destination_ip": destinationIP,
-            "packet.timestamp_epoch_ns": "\(timestampNanos)",
+            "icmpv6.source_ip": context.sourceIP,
+            "icmpv6.destination_ip": context.destinationIP,
+            "packet.timestamp_epoch_ns": "\(context.timestampNanos)",
         ]
         setTag(&fields, "icmpv6.nd.target_address", targetAddress)
         setTag(&fields, "icmpv6.nd.source_link_layer_address", sourceLinkLayerAddress)
@@ -198,76 +305,4 @@ final class PassiveBPFMonitor {
             onPacketEvent("wifi.rejoin.\(icmpv6TypeName(type))", fields)
         }
     }
-}
-
-struct DHCPv4Packet {
-    let xid: UInt32
-    let messageType: UInt8?
-    let yiaddr: String?
-    let serverIdentifier: String?
-    let leaseTimeSeconds: UInt32?
-}
-
-func parseDHCPv4Packet(buffer: [UInt8], offset: Int, packetEnd: Int) -> DHCPv4Packet? {
-    guard offset + 240 <= packetEnd else {
-        return nil
-    }
-    let hardwareType = buffer[offset + 1]
-    let hardwareLength = buffer[offset + 2]
-    guard hardwareType == 1, hardwareLength == 6 else {
-        return nil
-    }
-    let xid = readBigUInt32(buffer, offset: offset + 4)
-    let yiaddr = ipv4String(bytes: Array(buffer[(offset + 16) ..< (offset + 20)]))
-    // Without the magic cookie the BOOTP header is still useful for xid/yiaddr,
-    // but DHCP options such as message type and lease time are unavailable.
-    guard readBigUInt32(buffer, offset: offset + 236) == 0x6382_5363 else {
-        return DHCPv4Packet(xid: xid, messageType: nil, yiaddr: yiaddr, serverIdentifier: nil, leaseTimeSeconds: nil)
-    }
-
-    var messageType: UInt8?
-    var serverIdentifier: String?
-    var leaseTimeSeconds: UInt32?
-    var cursor = offset + 240
-    while cursor < packetEnd {
-        let option = buffer[cursor]
-        cursor += 1
-        if option == 0 {
-            // Pad options are single-byte fillers and do not carry a length.
-            continue
-        }
-        if option == 255 {
-            break
-        }
-        guard cursor < packetEnd else {
-            break
-        }
-        let length = Int(buffer[cursor])
-        cursor += 1
-        // A truncated option means the packet was capped by BPF or malformed.
-        // Return the fields parsed so far rather than failing the whole BOOTP
-        // observation; xid timing is still useful for retry spans.
-        guard cursor + length <= packetEnd else {
-            break
-        }
-        switch option {
-        case 53 where length >= 1:
-            messageType = buffer[cursor]
-        case 54 where length >= 4:
-            serverIdentifier = ipv4String(bytes: Array(buffer[cursor ..< (cursor + 4)]))
-        case 51 where length >= 4:
-            leaseTimeSeconds = readBigUInt32(buffer, offset: cursor)
-        default:
-            break
-        }
-        cursor += length
-    }
-
-    return DHCPv4Packet(
-        xid: xid,
-        messageType: messageType,
-        yiaddr: yiaddr,
-        serverIdentifier: serverIdentifier,
-        leaseTimeSeconds: leaseTimeSeconds
-    )
 }

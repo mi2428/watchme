@@ -25,10 +25,113 @@ struct ICMPv6Observation {
     let targetLinkLayerAddress: String?
 }
 
+struct DNSPacketObservation {
+    let interfaceName: String
+    let wallNanos: UInt64
+    let sourceIP: String
+    let destinationIP: String
+    let sourcePort: UInt16
+    let destinationPort: UInt16
+    let transactionID: UInt16
+    let isResponse: Bool
+    let rcode: Int?
+    let answerCount: Int?
+    let queryName: String?
+    let queryType: UInt16?
+}
+
+struct TCPPacketObservation {
+    let interfaceName: String
+    let wallNanos: UInt64
+    let sourceIP: String
+    let destinationIP: String
+    let sourcePort: UInt16
+    let destinationPort: UInt16
+    let flags: UInt8
+
+    var isSYN: Bool {
+        flags & 0x02 != 0
+    }
+
+    var isACK: Bool {
+        flags & 0x10 != 0
+    }
+
+    var isRST: Bool {
+        flags & 0x04 != 0
+    }
+}
+
+struct ActiveDNSPacketExchange {
+    let query: DNSPacketObservation
+    let response: DNSPacketObservation
+
+    var timing: ActiveProbeTiming {
+        .bpfPacket(start: query.wallNanos, finished: response.wallNanos)
+    }
+}
+
+struct ActiveTCPPacketExchange {
+    let syn: TCPPacketObservation
+    let response: TCPPacketObservation
+
+    var responseKind: String {
+        if response.isRST {
+            return "rst"
+        }
+        if response.isSYN, response.isACK {
+            return "syn_ack"
+        }
+        return "other"
+    }
+
+    var timing: ActiveProbeTiming {
+        .bpfPacket(start: syn.wallNanos, finished: response.wallNanos)
+    }
+}
+
+private struct ActiveDNSProbeRegistration {
+    let transactionID: UInt16
+    let target: String
+    let resolver: String
+    let interfaceName: String?
+    let startWallNanos: UInt64
+    let expiresWallNanos: UInt64
+}
+
+private struct ActiveTCPProbeRegistration {
+    let remoteIP: String
+    let port: UInt16
+    let interfaceName: String?
+    let startWallNanos: UInt64
+    let expiresWallNanos: UInt64
+}
+
+struct ActiveDNSProbeRequest {
+    let transactionID: UInt16
+    let target: String
+    let resolver: String
+    let interfaceName: String?
+    let startWallNanos: UInt64
+    let timeout: TimeInterval
+}
+
+struct ActiveTCPProbeRequest {
+    let remoteIP: String
+    let port: UInt16
+    let interfaceName: String?
+    let startWallNanos: UInt64
+    let timeout: TimeInterval
+}
+
 final class PassivePacketStore {
     private let lock = NSLock()
     private var dhcp: [DHCPObservation] = []
     private var icmpv6: [ICMPv6Observation] = []
+    private var dns: [DNSPacketObservation] = []
+    private var tcp: [TCPPacketObservation] = []
+    private var activeDNSProbes: [ActiveDNSProbeRegistration] = []
+    private var activeTCPProbes: [ActiveTCPProbeRegistration] = []
     private var emittedKeys = Set<String>()
 
     func appendDHCP(_ observation: DHCPObservation) {
@@ -43,6 +146,124 @@ final class PassivePacketStore {
         icmpv6.append(observation)
         pruneLocked()
         lock.unlock()
+    }
+
+    func registerActiveDNSProbe(_ request: ActiveDNSProbeRequest) {
+        lock.lock()
+        activeDNSProbes.append(
+            ActiveDNSProbeRegistration(
+                transactionID: request.transactionID,
+                target: normalizedDNSName(request.target),
+                resolver: request.resolver,
+                interfaceName: request.interfaceName,
+                startWallNanos: request.startWallNanos,
+                expiresWallNanos: request.startWallNanos + activeProbeRetentionNanos(timeout: request.timeout)
+            )
+        )
+        pruneLocked()
+        lock.unlock()
+    }
+
+    func unregisterActiveDNSProbe(_ request: ActiveDNSProbeRequest) {
+        let normalizedTarget = normalizedDNSName(request.target)
+        lock.lock()
+        activeDNSProbes.removeAll {
+            $0.transactionID == request.transactionID && $0.target == normalizedTarget && $0.resolver == request.resolver
+        }
+        lock.unlock()
+    }
+
+    @discardableResult
+    func appendDNS(_ observation: DNSPacketObservation) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isActiveDNSObservationLocked(observation) else {
+            return false
+        }
+        dns.append(observation)
+        pruneLocked()
+        return true
+    }
+
+    func dnsExchange(
+        for request: ActiveDNSProbeRequest,
+        finishedWallNanos: UInt64,
+        wait: TimeInterval = 0.05
+    ) -> ActiveDNSPacketExchange? {
+        let deadline = Date().addingTimeInterval(wait)
+        while true {
+            lock.lock()
+            let match = dnsExchangeLocked(
+                request: request,
+                finishedWallNanos: finishedWallNanos
+            )
+            lock.unlock()
+            if let match {
+                return match
+            }
+            guard Date() < deadline else {
+                return nil
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+    }
+
+    func registerActiveTCPProbe(_ request: ActiveTCPProbeRequest) {
+        lock.lock()
+        activeTCPProbes.append(
+            ActiveTCPProbeRegistration(
+                remoteIP: request.remoteIP,
+                port: request.port,
+                interfaceName: request.interfaceName,
+                startWallNanos: request.startWallNanos,
+                expiresWallNanos: request.startWallNanos + activeProbeRetentionNanos(timeout: request.timeout)
+            )
+        )
+        pruneLocked()
+        lock.unlock()
+    }
+
+    func unregisterActiveTCPProbe(_ request: ActiveTCPProbeRequest) {
+        lock.lock()
+        activeTCPProbes.removeAll {
+            $0.remoteIP == request.remoteIP && $0.port == request.port
+        }
+        lock.unlock()
+    }
+
+    @discardableResult
+    func appendTCP(_ observation: TCPPacketObservation) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isActiveTCPObservationLocked(observation) else {
+            return false
+        }
+        tcp.append(observation)
+        pruneLocked()
+        return true
+    }
+
+    func tcpConnectExchange(
+        for request: ActiveTCPProbeRequest,
+        finishedWallNanos: UInt64,
+        wait: TimeInterval = 0.05
+    ) -> ActiveTCPPacketExchange? {
+        let deadline = Date().addingTimeInterval(wait)
+        while true {
+            lock.lock()
+            let match = tcpConnectExchangeLocked(
+                request: request,
+                finishedWallNanos: finishedWallNanos
+            )
+            lock.unlock()
+            if let match {
+                return match
+            }
+            guard Date() < deadline else {
+                return nil
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
     }
 
     func recentPacketSpans(interfaceName: String?, maxAge: TimeInterval, consume: Bool) -> [SpanEvent] {
@@ -69,175 +290,141 @@ final class PassivePacketStore {
         return spans
     }
 
+    private func isActiveDNSObservationLocked(_ observation: DNSPacketObservation) -> Bool {
+        activeDNSProbes.contains { registration in
+            guard observation.transactionID == registration.transactionID,
+                  observation.wallNanos >= registration.startWallNanos,
+                  observation.wallNanos <= registration.expiresWallNanos,
+                  registration.interfaceName == nil || observation.interfaceName == registration.interfaceName
+            else {
+                return false
+            }
+            let resolverMatches = observation.sourceIP == registration.resolver || observation.destinationIP == registration.resolver
+            guard resolverMatches else {
+                return false
+            }
+            if let queryName = observation.queryName, !queryName.isEmpty {
+                return normalizedDNSName(queryName) == registration.target
+            }
+            // Some DNS responses can omit a parseable question section. The
+            // active transaction ID plus resolver match is still sufficiently
+            // narrow because registrations are short-lived and probe-scoped.
+            return observation.isResponse
+        }
+    }
+
+    private func dnsExchangeLocked(
+        request: ActiveDNSProbeRequest,
+        finishedWallNanos: UInt64
+    ) -> ActiveDNSPacketExchange? {
+        let target = normalizedDNSName(request.target)
+        let (windowStart, windowEnd) = activeProbeSearchWindow(start: request.startWallNanos, finished: finishedWallNanos)
+        let candidates = dns
+            .filter {
+                $0.transactionID == request.transactionID
+                    && $0.wallNanos >= windowStart
+                    && $0.wallNanos <= windowEnd
+                    && (request.interfaceName == nil || $0.interfaceName == request.interfaceName)
+                    && ($0.sourceIP == request.resolver || $0.destinationIP == request.resolver)
+            }
+            .sorted { $0.wallNanos < $1.wallNanos }
+        guard let query = candidates.first(where: {
+            !$0.isResponse
+                && $0.destinationIP == request.resolver
+                && $0.destinationPort == 53
+                && normalizedDNSName($0.queryName ?? "") == target
+        }) else {
+            return nil
+        }
+        guard let response = candidates.first(where: {
+            $0.isResponse
+                && $0.wallNanos >= query.wallNanos
+                && $0.sourceIP == request.resolver
+                && $0.sourcePort == 53
+                && $0.destinationPort == query.sourcePort
+                && ($0.queryName == nil || normalizedDNSName($0.queryName ?? "") == target)
+        }) else {
+            return nil
+        }
+        return ActiveDNSPacketExchange(query: query, response: response)
+    }
+
+    private func isActiveTCPObservationLocked(_ observation: TCPPacketObservation) -> Bool {
+        activeTCPProbes.contains { registration in
+            guard observation.wallNanos >= registration.startWallNanos,
+                  observation.wallNanos <= registration.expiresWallNanos,
+                  registration.interfaceName == nil || observation.interfaceName == registration.interfaceName
+            else {
+                return false
+            }
+            let outboundSYN = observation.destinationIP == registration.remoteIP
+                && observation.destinationPort == registration.port
+                && observation.isSYN
+                && !observation.isACK
+            let inboundHandshakeResponse = observation.sourceIP == registration.remoteIP
+                && observation.sourcePort == registration.port
+                && (observation.isRST || (observation.isSYN && observation.isACK))
+            return outboundSYN || inboundHandshakeResponse
+        }
+    }
+
+    private func tcpConnectExchangeLocked(
+        request: ActiveTCPProbeRequest,
+        finishedWallNanos: UInt64
+    ) -> ActiveTCPPacketExchange? {
+        let (windowStart, windowEnd) = activeProbeSearchWindow(start: request.startWallNanos, finished: finishedWallNanos)
+        let candidates = tcp
+            .filter {
+                $0.wallNanos >= windowStart
+                    && $0.wallNanos <= windowEnd
+                    && (request.interfaceName == nil || $0.interfaceName == request.interfaceName)
+                    && ($0.sourceIP == request.remoteIP || $0.destinationIP == request.remoteIP)
+                    && ($0.sourcePort == request.port || $0.destinationPort == request.port)
+            }
+            .sorted { $0.wallNanos < $1.wallNanos }
+        guard let syn = candidates.first(where: {
+            $0.destinationIP == request.remoteIP && $0.destinationPort == request.port && $0.isSYN && !$0.isACK
+        }) else {
+            return nil
+        }
+        guard let response = candidates.first(where: {
+            $0.wallNanos >= syn.wallNanos
+                && $0.sourceIP == request.remoteIP
+                && $0.sourcePort == request.port
+                && $0.destinationIP == syn.sourceIP
+                && $0.destinationPort == syn.sourcePort
+                && ($0.isRST || ($0.isSYN && $0.isACK))
+        }) else {
+            return nil
+        }
+        return ActiveTCPPacketExchange(syn: syn, response: response)
+    }
+
     private func pruneLocked() {
-        let cutoff = wallClockNanos() - UInt64(600 * 1_000_000_000)
+        let now = wallClockNanos()
+        let cutoff = now - UInt64(600 * 1_000_000_000)
         dhcp.removeAll { $0.wallNanos < cutoff }
         icmpv6.removeAll { $0.wallNanos < cutoff }
+        dns.removeAll { $0.wallNanos < cutoff }
+        tcp.removeAll { $0.wallNanos < cutoff }
+        activeDNSProbes.removeAll { $0.expiresWallNanos < now }
+        activeTCPProbes.removeAll { $0.expiresWallNanos < now }
         if emittedKeys.count > 5000 {
             emittedKeys.removeAll()
         }
     }
 }
 
-func buildDHCPSpans(_ observations: [DHCPObservation]) -> [SpanEvent] {
-    var spans: [SpanEvent] = []
-    let grouped = Dictionary(grouping: observations, by: \.xid)
-
-    for (xid, values) in grouped {
-        // DHCP transaction IDs are the only reliable join key visible in a
-        // passive capture. Grouping by xid avoids pairing retries from one lease
-        // attempt with the ACK from another.
-        let sorted = values.sorted { $0.wallNanos < $1.wallNanos }
-        let discovers = sorted.filter { $0.messageType == 1 }
-        let offers = sorted.filter { $0.messageType == 2 }
-        let requests = sorted.filter { $0.messageType == 3 }
-        let acks = sorted.filter { $0.messageType == 5 }
-
-        // Repeated DISCOVER/REQUEST packets are useful spans by themselves:
-        // they show link-layer recovery or DHCP server latency before success.
-        for gap in retryGaps(discovers.map(\.wallNanos)) {
-            spans.append(
-                packetSpan(
-                    "packet.dhcp.discover_retry_gap",
-                    start: gap.start,
-                    end: gap.end,
-                    tags: dhcpTags(xid: xid, event: "discover_retry_gap", interfaceName: sorted.first?.interfaceName)
-                )
-            )
-        }
-        for gap in retryGaps(requests.map(\.wallNanos)) {
-            spans.append(
-                packetSpan(
-                    "packet.dhcp.request_retry_gap",
-                    start: gap.start,
-                    end: gap.end,
-                    tags: dhcpTags(xid: xid, event: "request_retry_gap", interfaceName: sorted.first?.interfaceName)
-                )
-            )
-        }
-        if let offer = offers.first, let discover = latest(beforeOrAt: offer.wallNanos, in: discovers) {
-            var tags = dhcpTags(xid: xid, event: "discover_to_offer", interfaceName: offer.interfaceName)
-            setTag(&tags, "dhcp.server_identifier", offer.serverIdentifier)
-            spans.append(packetSpan("packet.dhcp.discover_to_offer", start: discover.wallNanos, end: offer.wallNanos, tags: tags))
-        }
-        if let ack = acks.first, let request = latest(beforeOrAt: ack.wallNanos, in: requests) {
-            var tags = dhcpTags(xid: xid, event: "request_to_ack", interfaceName: ack.interfaceName)
-            setTag(&tags, "dhcp.yiaddr", ack.yiaddr)
-            setTag(&tags, "dhcp.server_identifier", ack.serverIdentifier)
-            if let lease = ack.leaseTimeSeconds {
-                tags["dhcp.lease_time_seconds"] = "\(lease)"
-            }
-            spans.append(packetSpan("packet.dhcp.request_to_ack", start: request.wallNanos, end: ack.wallNanos, tags: tags))
-        }
-    }
-    return spans
+func normalizedDNSName(_ value: String) -> String {
+    value.trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
 }
 
-func buildICMPv6Spans(_ observations: [ICMPv6Observation]) -> [SpanEvent] {
-    var spans: [SpanEvent] = []
-    let sorted = observations.sorted { $0.wallNanos < $1.wallNanos }
-    let solicitations = sorted.filter { $0.type == 133 }
-    let advertisements = sorted.filter { $0.type == 134 }
-    let neighborSolicitations = sorted.filter { $0.type == 135 && $0.targetAddress != nil }
-    let neighborAdvertisements = sorted.filter { $0.type == 136 && $0.targetAddress != nil }
-
-    for gap in retryGaps(solicitations.map(\.wallNanos)) {
-        spans.append(
-            packetSpan(
-                "packet.icmpv6.router_solicitation_retry_gap",
-                start: gap.start,
-                end: gap.end,
-                tags: ["packet.protocol": "icmpv6", "icmpv6.type": "133", "packet.event": "router_solicitation_retry_gap"]
-            )
-        )
-    }
-
-    for ra in advertisements {
-        // Pair only close RS->RA exchanges. Older solicitations can remain in
-        // the rolling store and should not be treated as causal for a later RA.
-        guard let rs = latest(beforeOrAt: ra.wallNanos, in: solicitations),
-              ra.wallNanos - rs.wallNanos <= UInt64(3 * 1_000_000_000)
-        else {
-            continue
-        }
-        var tags: [String: String] = [
-            "packet.protocol": "icmpv6",
-            "packet.event": "router_solicitation_to_advertisement",
-            "icmpv6.rs.source_ip": rs.sourceIP,
-            "icmpv6.ra.source_ip": ra.sourceIP,
-            "icmpv6.ra.destination_ip": ra.destinationIP,
-            "network.interface": ra.interfaceName,
-        ]
-        if let lifetime = ra.routerLifetimeSeconds {
-            tags["icmpv6.ra.router_lifetime_seconds"] = "\(lifetime)"
-        }
-        setTag(&tags, "icmpv6.ra.source_link_layer_address", ra.sourceLinkLayerAddress)
-        spans.append(packetSpan("packet.icmpv6.router_solicitation_to_advertisement", start: rs.wallNanos, end: ra.wallNanos, tags: tags))
-        break
-    }
-
-    spans.append(contentsOf: buildNeighborDiscoverySpans(solicitations: neighborSolicitations, advertisements: neighborAdvertisements))
-
-    return spans
+private func activeProbeRetentionNanos(timeout: TimeInterval) -> UInt64 {
+    UInt64((timeout + 1.0) * 1_000_000_000)
 }
 
-func buildNeighborDiscoverySpans(
-    solicitations: [ICMPv6Observation],
-    advertisements: [ICMPv6Observation]
-) -> [SpanEvent] {
-    var spans: [SpanEvent] = []
-    let groupedNS = Dictionary(grouping: solicitations) { $0.targetAddress ?? "" }
-    let groupedNA = Dictionary(grouping: advertisements) { $0.targetAddress ?? "" }
-    for (target, attempts) in groupedNS {
-        // Neighbor Discovery is keyed by the IPv6 target address, not by source
-        // host. During rejoin the default router address is the stable value we
-        // need to measure resolution delay.
-        guard !target.isEmpty, let replies = groupedNA[target] else {
-            continue
-        }
-        let sortedAttempts = attempts.sorted { $0.wallNanos < $1.wallNanos }
-        spans.append(contentsOf: neighborRetrySpans(target: target, attempts: sortedAttempts))
-        if let resolution = neighborResolutionSpan(target: target, attempts: sortedAttempts, replies: replies) {
-            spans.append(resolution)
-        }
-    }
-    return spans
-}
-
-private func neighborRetrySpans(target: String, attempts: [ICMPv6Observation]) -> [SpanEvent] {
-    // Neighbor Solicitation retries often explain post-DHCP reachability delay,
-    // especially when the default router cache is cold after rejoin.
-    retryGaps(attempts.map(\.wallNanos)).map { gap in
-        packetSpan(
-            "packet.icmpv6.default_router_neighbor_solicitation_retry_gap",
-            start: gap.start,
-            end: gap.end,
-            tags: [
-                "packet.protocol": "icmpv6",
-                "packet.event": "neighbor_solicitation_retry_gap",
-                "icmpv6.nd.target_address": target,
-            ]
-        )
-    }
-}
-
-private func neighborResolutionSpan(
-    target: String,
-    attempts: [ICMPv6Observation],
-    replies: [ICMPv6Observation]
-) -> SpanEvent? {
-    guard let reply = replies.sorted(by: { $0.wallNanos < $1.wallNanos }).first,
-          let request = latest(beforeOrAt: reply.wallNanos, in: attempts)
-    else {
-        return nil
-    }
-    var tags: [String: String] = [
-        "packet.protocol": "icmpv6",
-        "packet.event": "default_router_neighbor_resolution",
-        "icmpv6.nd.target_address": target,
-        "network.interface": reply.interfaceName,
-    ]
-    setTag(&tags, "icmpv6.nd.target_link_layer_address", reply.targetLinkLayerAddress)
-    setTag(&tags, "icmpv6.nd.source_link_layer_address", reply.sourceLinkLayerAddress)
-    return packetSpan("packet.icmpv6.default_router_neighbor_resolution", start: request.wallNanos, end: reply.wallNanos, tags: tags)
+private func activeProbeSearchWindow(start: UInt64, finished: UInt64) -> (start: UInt64, end: UInt64) {
+    let slack: UInt64 = 200_000_000
+    let windowStart = start > slack ? start - slack : 0
+    return (windowStart, finished + slack)
 }
