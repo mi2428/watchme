@@ -1,21 +1,18 @@
 name: "${COMPOSE_PROJECT_NAME:-watchme}"
 
 services:
-  caddy:
-    image: caddy:latest
+  prometheus:
+    image: prom/prometheus:latest
     pull_policy: "${WATCHME_PULL_POLICY:-always}"
-    environment:
-      CADDY_HTTP_PORT: "${CADDY_HTTP_PORT:-9000}"
-    ports:
-      - "${CADDY_HTTP_PORT:-9000}:9000"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-remote-write-receiver"
     volumes:
-      - ./docker/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on:
-      - grafana
-      - otel-collector
-      - tempo
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_HTTP_PORT:-9090}:9090"
     restart: unless-stopped
 
   otel-collector:
@@ -25,10 +22,10 @@ services:
     volumes:
       - ./docker/otel-collector/config.yaml:/etc/otelcol/config.yaml:ro
     ports:
-      - "4317:4317"   # OTLP gRPC, useful for future modules
-      - "4318:4318"   # OTLP HTTP metrics and traces from WatchMe
-      - "8888:8888"   # Collector self metrics
+      - "${OTEL_GRPC_PORT:-4317}:4317"
+      - "${OTEL_HTTP_PORT:-4318}:4318"
     depends_on:
+      - prometheus
       - tempo
     restart: unless-stopped
 
@@ -40,7 +37,7 @@ services:
       - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
       - tempo-data:/var/tempo
     ports:
-      - "3200:3200"
+      - "${TEMPO_HTTP_PORT:-3200}:3200"
     restart: unless-stopped
 
   grafana:
@@ -50,8 +47,6 @@ services:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
-      GF_SERVER_ROOT_URL: "${GRAFANA_ROOT_URL:-/grafana/}"
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
@@ -61,13 +56,13 @@ services:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana-data:/var/lib/grafana
     ports:
-      - "3000:3000"
+      - "${GRAFANA_HTTP_PORT:-3000}:3000"
     depends_on:
+      - prometheus
       - tempo
     restart: unless-stopped
 
 volumes:
-  caddy-data:
-  caddy-config:
   grafana-data:
+  prometheus-data:
   tempo-data:

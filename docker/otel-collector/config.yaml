@@ -14,16 +14,21 @@ exporters:
     endpoint: tempo:4317
     tls:
       insecure: true
-  debug:
-    verbosity: basic
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    add_metric_suffixes: false
+    target_info:
+      enabled: true
+    resource_to_telemetry_conversion:
+      enabled: true
 
 service:
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp_grpc/tempo, debug]
+      exporters: [otlp_grpc/tempo]
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [prometheusremotewrite]
