@@ -23,9 +23,9 @@ Those views can be built downstream from the exported counters and gauges.
 
 ### CLI options
 
-- **`--collector.url`:** OTLP/HTTP collector base endpoint. WatchMe derives `/v1/metrics` and `/v1/traces` from this URL.
-- **`--metrics.interval`:** System metric collection interval in seconds.
-- **`--log.level`:** Structured log minimum level.
+- **`--collector.url`:** OTLP/HTTP collector base endpoint. `watchme system` exports metrics to `/v1/metrics` under this URL. Default: `http://127.0.0.1:4318`.
+- **`--metrics.interval`:** System metric collection interval in seconds. Default: `5`.
+- **`--log.level`:** Structured log minimum level. Default: `debug`.
 
 ## OTLP delivery and local spool
 

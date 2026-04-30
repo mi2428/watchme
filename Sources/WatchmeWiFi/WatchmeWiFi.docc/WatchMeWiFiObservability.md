@@ -121,21 +121,21 @@ Running `.build/watchme-app/WatchMe.app/Contents/MacOS/watchme` directly can sti
 
 The options below apply to `watchme wifi` and `watchme wifi once`.
 
-- **`--collector.url`:** OTLP/HTTP collector base endpoint. WatchMe derives `/v1/metrics` and `/v1/traces` from this URL.
-- **`--metrics.interval`:** Wi-Fi metric collection interval in seconds.
-- **`--traces.interval`:** Active trace interval in seconds.
-- **`--traces.cooldown`:** Minimum seconds between non-forced event traces.
-- **`--probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/ARP/RS/RA/NDP packets.
-- **`--probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds.
-- **`--probe.gateway.count`:** Gateway ICMP attempts per burst.
-- **`--probe.gateway.interval`:** Delay between gateway ICMP burst attempts in seconds.
-- **`--probe.internet.target`:** Internet probe host; repeat to probe multiple hosts.
+- **`--collector.url`:** OTLP/HTTP collector base endpoint. WatchMe derives `/v1/metrics` and `/v1/traces` from this URL. Default: `http://127.0.0.1:4318`.
+- **`--metrics.interval`:** Wi-Fi metric collection interval in seconds. Default: `5`.
+- **`--traces.interval`:** Active trace interval in seconds. Default: `60`.
+- **`--traces.cooldown`:** Minimum seconds between non-forced event traces. Default: `2`.
+- **`--probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/ARP/RS/RA/NDP packets. Default: `true`.
+- **`--probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds. Default: `180`.
+- **`--probe.gateway.count`:** Gateway ICMP attempts per burst. Default: `4`.
+- **`--probe.gateway.interval`:** Delay between gateway ICMP burst attempts in seconds. Default: `0.05`.
+- **`--probe.internet.target`:** Internet probe host; repeat to probe multiple hosts. Default: `example.com`, `www.cloudflare.com`.
 - **`--probe.internet.family`:** `ipv4`, `ipv6`, or `dual`; default is `dual`.
-- **`--probe.internet.timeout`:** Internet active probe timeout in seconds.
-- **`--probe.internet.dns`:** Boolean switch for internet DNS probes.
-- **`--probe.internet.icmp`:** Boolean switch for internet ICMP echo probes.
-- **`--probe.internet.http`:** Boolean switch for internet plain HTTP HEAD probes.
-- **`--log.level`:** Structured log minimum level.
+- **`--probe.internet.timeout`:** Internet active probe timeout in seconds. Default: `5`.
+- **`--probe.internet.dns`:** Boolean switch for internet DNS probes. Default: `true`.
+- **`--probe.internet.icmp`:** Boolean switch for internet ICMP echo probes. Default: `true`.
+- **`--probe.internet.http`:** Boolean switch for internet plain HTTP HEAD probes. Default: `true`.
+- **`--log.level`:** Structured log minimum level. Default: `debug`.
 
 ## OTLP delivery and local spool
 
@@ -357,7 +357,7 @@ This matters on Macs where Ethernet, VPN, or another service owns the default ro
 - **`probe.gateway`:** Router from `State:/Network/Service/<service>/IPv4`, attached to `phase.active_validation`.
 - **`network.wifi_gateway`:** Router used by `probe.gateway.icmp.echo`.
 - **`network.gateway_probe.protocol`:** `icmp` for gateway probes.
-- **`network.gateway_probe.outcome`:** Gateway probe outcome, such as `reply`, `partial_loss`, `loss`, `send_failed`, or `timeout`.
+- **`network.gateway_probe.outcome`:** Aggregated gateway burst outcome, such as `reply`, `partial_loss`, `loss`, `mixed`, or `no_samples`.
 - **`network.gateway_probe.reachable`:** `true` when at least one gateway echo reply was observed.
 - **`network.gateway_probe.probe_count`:** Number of ICMP echo requests in the gateway burst.
 - **`network.gateway_probe.reply_count`:** Number of gateway echo replies observed in the burst.
@@ -446,9 +446,11 @@ All ICMPv6 packet spans receive:
 
 ## Passive packet store behavior
 
-`PassivePacketStore` is a rolling in-memory store for DHCP, ARP, and ICMPv6 observations.
+`PassivePacketStore` is a rolling in-memory store for DHCP, ARP, and ICMPv6 observations, plus the active DNS/ICMP/HTTP registrations and matched packets used for active probe timing correlation.
 
-- Observations older than 600 seconds are pruned.
+- DHCP, ARP, ICMPv6, active DNS, active ICMP, and active HTTP packet observations older than 600 seconds are pruned.
+- Active probe registrations expire after the probe timeout plus one second.
+- Active DNS, ICMP, and HTTP packet observations are retained only when they match a currently registered probe identity.
 - Trace attachment uses `--probe.bpf.span-max-age` as the lookback window; default is 180 seconds.
 - `consume=true` suppresses re-emitting the same packet span in later event-triggered traces.
 - Packet-window traces use `consume=false` so the delayed trace can show the complete recent packet window.
@@ -470,7 +472,7 @@ The reusable BPF layer is in `Sources/WatchmeBPF`.
 - Reads BPF buffers in a utility queue and walks `bpf_hdr + frame` records using BPF word alignment.
 - Converts BPF `timeval` timestamps to wall-clock nanoseconds.
 
-The Wi-Fi BPF monitor only parses:
+The Wi-Fi BPF monitor parses Ethernet frames admitted by the filter, but it only retains or logs packet observations in the narrow cases below:
 
 - Ethernet type `0x0806` ARP packets for IPv4 gateway or neighbor resolution timing.
 - Ethernet type `0x0800` IPv4 UDP DHCP packets on ports 67/68.
@@ -483,13 +485,13 @@ The Wi-Fi BPF monitor only parses:
 
 Active internet probes validate the Wi-Fi path to internet hosts, not just general host reachability.
 The default targets are `example.com` and `www.cloudflare.com`.
-Both are dual-stack in the validation environment and support plain HTTP HEAD on port 80.
-`neverssl.com` is also dual-stack, but it timed out for HTTP and ICMP in the validation network used during this implementation, so it is not the default.
+These defaults are ordinary probe targets, not a guarantee that every network will permit DNS, ICMP, IPv6, or plain HTTP to them; use repeated `--probe.internet.target` options to choose targets appropriate for the environment.
 
 `--probe.internet.family=dual` expands each target into independent IPv4 and IPv6 probe work.
 `--probe.internet.family=ipv4` sends only A-record, IPv4 ICMP, and IPv4 HTTP probes.
 `--probe.internet.family=ipv6` sends only AAAA-record, IPv6 ICMP, and IPv6 HTTP probes.
-Independent target, family, resolver, ICMP, and HTTP work is executed in parallel, with DNS completing first because ICMP and HTTP need concrete addresses.
+When DNS probing is enabled, target/family/resolver DNS work is executed first because hostname ICMP and HTTP probes need concrete addresses.
+After DNS planning, ICMP and HTTP work is executed in parallel across targets and address families.
 
 DNS active probes use the Wi-Fi service's DNS resolvers instead of the global default route.
 For each active target host and concrete address family, WatchMe sends a raw UDP A or AAAA query over `NWConnection` with `requiredInterface` set to Wi-Fi.
@@ -498,6 +500,9 @@ Before sending the query, WatchMe registers the DNS transaction ID, query type, 
 The BPF monitor only stores DNS packets that match that active registration, so normal user DNS traffic is not retained for active probe timing.
 When both the query and response are observed, `probe.internet.dns.resolve` and the DNS duration metric use BPF packet timestamps from the BPF header.
 If packet correlation fails or BPF is disabled, the same span and metric fall back to Network.framework callback wall-clock timing.
+When DNS probing is enabled but the Wi-Fi service has no DNS resolver, WatchMe emits one failed DNS result per target and concrete address family with `resolver=none` and `timing_source=no_address`.
+When `--probe.internet.dns=false`, no DNS spans or DNS metrics are emitted.
+In that mode, ICMP and HTTP probes still run, but hostname targets have no resolved remote address and produce `outcome=no_address`; literal IPv4 or IPv6 targets can still be probed for their matching address family.
 
 ICMP active probes use Darwin datagram ICMP sockets and bind the socket to the Wi-Fi interface with `IP_BOUND_IF` or `IPV6_BOUND_IF`.
 Before sending an echo request, WatchMe registers the target address, family, and interface with `PassivePacketStore`.
