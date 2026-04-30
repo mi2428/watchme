@@ -115,7 +115,7 @@ extension WiFiAgent {
 
     func emitTrace(reason: String, eventTags: [String: String], consumePacketSpans: Bool, includeActive: Bool) {
         let traceStarted = wallClockNanos()
-        let snapshot = WiFiSnapshot.capture()
+        let snapshot = captureLatestSnapshot()
         logIdentityStatus(snapshot)
         _ = pushMetrics(snapshot: snapshot)
         let recorder = TraceRecorder()
@@ -171,7 +171,7 @@ extension WiFiAgent {
         telemetry.pushMetrics(
             job: "watchme_wifi",
             fields: snapshot.traceTags,
-            metrics: WiFiMetricBuilder.metrics(snapshot: snapshot)
+            metrics: WiFiMetricBuilder.metrics(snapshot: snapshot, counters: metricCounters)
         )
     }
 

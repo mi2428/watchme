@@ -19,6 +19,7 @@ final class WiFiAgent {
     var activeTimer: DispatchSourceTimer?
     var packetWindowVersion = 0
     var lastIdentityStatusLogSignature: String?
+    var metricCounters = WiFiMetricCounters()
 
     init(config: WiFiConfig, telemetry: TelemetryClient) {
         self.config = config
@@ -58,8 +59,7 @@ final class WiFiAgent {
             guard let self else {
                 return
             }
-            let snapshot = WiFiSnapshot.capture()
-            lastSnapshot = snapshot
+            let snapshot = captureLatestSnapshot()
             startBPFIfNeeded(interfaceName: snapshot.interfaceName)
             logIdentityStatus(snapshot)
             _ = pushMetrics(snapshot: snapshot)
@@ -111,8 +111,8 @@ final class WiFiAgent {
     private func handleWiFiEvent(_ event: WiFiEvent) {
         triggerQueue.async {
             let previous = self.lastSnapshot
-            let current = WiFiSnapshot.capture()
-            self.lastSnapshot = current
+            let current = self.captureLatestSnapshot()
+            self.metricCounters.recordCoreWLANEvent(event.name)
             self.startBPFIfNeeded(interfaceName: current.interfaceName)
             self.logIdentityStatus(current)
             _ = self.pushMetrics(snapshot: current)
@@ -147,8 +147,7 @@ final class WiFiAgent {
     private func handleSystemNetworkEvent(reason: String, tags: [String: String]) {
         triggerQueue.async {
             let previous = self.lastSnapshot
-            let current = WiFiSnapshot.capture()
-            self.lastSnapshot = current
+            let current = self.captureLatestSnapshot()
             self.startBPFIfNeeded(interfaceName: current.interfaceName)
             self.logIdentityStatus(current)
             _ = self.pushMetrics(snapshot: current)
@@ -190,6 +189,14 @@ final class WiFiAgent {
             return "wifi.join"
         }
         return event.replacingOccurrences(of: "_", with: ".")
+    }
+
+    func captureLatestSnapshot() -> WiFiSnapshot {
+        let previous = lastSnapshot
+        let current = WiFiSnapshot.capture()
+        metricCounters.recordSnapshotChanges(from: previous, to: current)
+        lastSnapshot = current
+        return current
     }
 }
 

@@ -2,7 +2,6 @@ import CoreWLAN
 import Darwin
 import Foundation
 import WatchmeCore
-import WatchmeTelemetry
 
 struct NativeInterfaceState {
     let isActive: Bool
@@ -14,12 +13,23 @@ struct WiFiSnapshot {
     let capturedWallNanos: UInt64
     let interfaceName: String?
     let ssid: String?
+    let ssidEncoding: String?
     let bssid: String?
     let isAssociated: Bool
     let rssiDBM: Int?
     let noiseDBM: Int?
     let txRateMbps: Double?
     let channel: Int?
+    let channelBand: String?
+    let channelWidth: String?
+    let channelWidthMHz: Int?
+    let phyMode: String?
+    let security: String?
+    let interfaceMode: String?
+    let countryCode: String?
+    let transmitPowerMW: Int?
+    let powerOn: Bool?
+    let serviceActive: Bool?
     let ipv4Addresses: [String]
     let ipv6Addresses: [String]
 
@@ -44,9 +54,16 @@ struct WiFiSnapshot {
             "wifi.identity_status": identityStatus,
             "wifi.essid": ssid ?? "unknown",
             "wifi.ssid": ssid ?? "unknown",
+            "wifi.essid_encoding": ssidEncoding ?? "unknown",
             "wifi.bssid": bssid ?? "unknown",
             "wifi.snapshot_epoch_ns": "\(capturedWallNanos)",
             "wifi.snapshot_timestamp_source": "corewlan_getifaddrs_snapshot",
+            "wifi.channel_band": channelBand ?? "unknown",
+            "wifi.channel_width": channelWidth ?? "unknown",
+            "wifi.phy_mode": phyMode ?? "unknown",
+            "wifi.security": security ?? "unknown",
+            "wifi.interface_mode": interfaceMode ?? "unknown",
+            "wifi.country_code": countryCode ?? "unknown",
             "network.ipv4_addresses": ipv4Addresses.joined(separator: ","),
             "network.ipv6_addresses": ipv6Addresses.joined(separator: ","),
         ]
@@ -63,6 +80,18 @@ struct WiFiSnapshot {
         }
         if let channel {
             tags["wifi.channel"] = "\(channel)"
+        }
+        if let channelWidthMHz {
+            tags["wifi.channel_width_mhz"] = "\(channelWidthMHz)"
+        }
+        if let transmitPowerMW {
+            tags["wifi.transmit_power_mw"] = "\(transmitPowerMW)"
+        }
+        if let powerOn {
+            tags["wifi.power_on"] = powerOn ? "true" : "false"
+        }
+        if let serviceActive {
+            tags["wifi.service_active"] = serviceActive ? "true" : "false"
         }
         return tags
     }
@@ -89,11 +118,23 @@ struct WiFiSnapshot {
             isAssociated ? "associated" : "disconnected",
             ssid ?? "-",
             bssid ?? "-",
+            channel.map(String.init) ?? "-",
+            channelBand ?? "-",
+            channelWidth ?? "-",
+            phyMode ?? "-",
+            security ?? "-",
+            interfaceMode ?? "-",
+            countryCode ?? "-",
+            powerOn.map { $0 ? "power_on" : "power_off" } ?? "-",
+            serviceActive.map { $0 ? "service_active" : "service_inactive" } ?? "-",
             primaryIPv4 ?? "-",
         ].joined(separator: "|")
     }
 
     static func capture() -> WiFiSnapshot {
+        // Keep this snapshot limited to OS-reported state. Derived quality
+        // scores belong in Prometheus/Grafana rules where operators can own
+        // the scoring policy instead of baking one into the agent.
         let interface = CWWiFiClient.shared().interface()
         let interfaceName = interface?.interfaceName ?? nativeWiFiInterfaceName()
         let state =
@@ -104,94 +145,65 @@ struct WiFiSnapshot {
                     ipv6Addresses: []
                 )
         let ssid = interface?.ssid()
+        let ssidData = interface?.ssidData()
         let bssid = interface?.bssid()?.lowercased()
+        let channel = interface?.wlanChannel()
         let isAssociated = ssid != nil || bssid != nil || (state.isActive && !state.ipv4Addresses.isEmpty)
+        let ssidFallback = normalizedSSID(ssid: ssid, ssidData: ssidData)
 
         return WiFiSnapshot(
             capturedWallNanos: wallClockNanos(),
             interfaceName: interfaceName,
-            ssid: ssid,
+            ssid: ssidFallback.value,
+            ssidEncoding: ssidFallback.encoding,
             bssid: bssid,
             isAssociated: isAssociated,
             rssiDBM: interface?.rssiValue(),
             noiseDBM: interface?.noiseMeasurement(),
             txRateMbps: interface?.transmitRate(),
-            channel: interface?.wlanChannel()?.channelNumber,
+            channel: channel?.channelNumber,
+            channelBand: coreWLANChannelBandName(channel?.channelBand),
+            channelWidth: coreWLANChannelWidthName(channel?.channelWidth),
+            channelWidthMHz: coreWLANChannelWidthMHz(channel?.channelWidth),
+            phyMode: coreWLANPHYModeName(interface?.activePHYMode()),
+            security: coreWLANSecurityName(interface?.security()),
+            interfaceMode: coreWLANInterfaceModeName(interface?.interfaceMode()),
+            countryCode: normalizedCountryCode(interface?.countryCode()),
+            transmitPowerMW: interface.map { $0.transmitPower() },
+            powerOn: interface.map { $0.powerOn() },
+            serviceActive: interface.map { $0.serviceActive() },
             ipv4Addresses: state.ipv4Addresses,
             ipv6Addresses: state.ipv6Addresses
         )
     }
+
+    func changedFields(from previous: WiFiSnapshot) -> [String] {
+        var fields: [String] = []
+        appendChange(&fields, "ssid", previous.ssid, ssid)
+        appendChange(&fields, "bssid", previous.bssid, bssid)
+        appendChange(&fields, "associated", previous.isAssociated, isAssociated)
+        appendChange(&fields, "channel", previous.channel, channel)
+        appendChange(&fields, "channel_band", previous.channelBand, channelBand)
+        appendChange(&fields, "channel_width", previous.channelWidth, channelWidth)
+        appendChange(&fields, "country_code", previous.countryCode, countryCode)
+        appendChange(&fields, "phy_mode", previous.phyMode, phyMode)
+        appendChange(&fields, "security", previous.security, security)
+        appendChange(&fields, "interface_mode", previous.interfaceMode, interfaceMode)
+        appendChange(&fields, "power_on", previous.powerOn, powerOn)
+        appendChange(&fields, "service_active", previous.serviceActive, serviceActive)
+        return fields
+    }
 }
 
-enum WiFiMetricBuilder {
-    static func metrics(snapshot: WiFiSnapshot) -> [PrometheusMetric] {
-        let labels = snapshot.metricLabels
-        var metrics: [PrometheusMetric] = []
-        if let value = snapshot.rssiDBM {
-            metrics.append(
-                PrometheusMetric(
-                    name: "watchme_wifi_rssi_dbm",
-                    help: "Received signal strength indicator in dBm.",
-                    type: .gauge,
-                    labels: labels,
-                    value: Double(value)
-                )
-            )
-        }
-        if let value = snapshot.noiseDBM {
-            metrics.append(
-                PrometheusMetric(
-                    name: "watchme_wifi_noise_dbm",
-                    help: "Noise floor in dBm.",
-                    type: .gauge,
-                    labels: labels,
-                    value: Double(value)
-                )
-            )
-        }
-        if let value = snapshot.txRateMbps {
-            metrics.append(
-                PrometheusMetric(
-                    name: "watchme_wifi_tx_rate_mbps",
-                    help: "Current transmit rate in Mbps.",
-                    type: .gauge,
-                    labels: labels,
-                    value: value
-                )
-            )
-        }
-        metrics.append(
-            PrometheusMetric(
-                name: "watchme_wifi_associated",
-                help: "Whether Wi-Fi appears associated.",
-                type: .gauge,
-                labels: labels,
-                value: snapshot.isAssociated ? 1 : 0
-            )
-        )
-        var infoLabels = snapshot.metricLabels
-        if let channel = snapshot.channel {
-            infoLabels["channel"] = "\(channel)"
-        }
-        metrics.append(
-            PrometheusMetric(
-                name: "watchme_wifi_info",
-                help: "Constant info metric with current Wi-Fi labels.",
-                type: .gauge,
-                labels: infoLabels,
-                value: 1
-            )
-        )
-        metrics.append(
-            PrometheusMetric(
-                name: "watchme_wifi_metrics_push_timestamp_seconds",
-                help: "Last metric push timestamp.",
-                type: .gauge,
-                labels: labels,
-                value: Date().timeIntervalSince1970
-            )
-        )
-        return metrics
+func appendChange<T: Equatable>(_ fields: inout [String], _ field: String, _ previous: T?, _ current: T?) {
+    if previous != current {
+        fields.append(field)
+    }
+}
+
+func appendChange<T: Equatable>(_ fields: inout [String], _ field: String, _ previous: T, _ current: T) {
+    if previous != current {
+        fields.append(field)
     }
 }
 
