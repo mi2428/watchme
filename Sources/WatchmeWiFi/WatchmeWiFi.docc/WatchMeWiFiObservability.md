@@ -335,7 +335,7 @@ Common root tags include every tag listed in the snapshot model section, plus:
 | SystemConfiguration join | `wifi.join` | Yes, after readiness | Recent packet spans are consumed by the join trace. | Detected when previous snapshot was not associated and current snapshot is. |
 | SystemConfiguration IPv4 acquisition while associated | `wifi.join` | Yes, after readiness | Recent packet spans are consumed by the join trace. | Converts the first IPv4 address after association into the same stable join trace. |
 | SystemConfiguration IPv4 change while already addressed | Event reason, e.g. `wifi.network.ipv4_changed` | Only when ready | Recent packet spans are consumed. | Subject to trigger cooldown. |
-| BPF DHCP ACK / ARP reply / ICMPv6 RA / ICMPv6 NA | `wifi.network.attachment` | Only when ready | Recent packet spans are consumed by the network attachment trace. | Delayed 1.25 seconds from packet event, and suppressed while an association trace is pending or just completed. |
+| BPF address-acquisition packet window | `wifi.network.attachment` | Only when ready | Recent packet spans are consumed by the network attachment trace. | Delayed 1.25 seconds from packet event, suppressed while an association trace is pending or just completed, and emitted only when recent packet spans include DHCP or RS->RA address-acquisition evidence. |
 
 `--wifi.traces.cooldown` suppresses non-forced event traces.
 Join, roam, startup, once, connectivity timer, and network attachment traces bypass or avoid this suppression as implemented by their call sites.
@@ -474,6 +474,7 @@ All ICMPv6 packet spans receive:
 - `consume=true` suppresses re-emitting the same packet span in later event-triggered traces.
 - Association traces and network attachment traces use `consume=true` after collecting recent packet-derived spans, so DHCP/ARP/ICMPv6 recovery evidence is not repeatedly attached to later event traces.
 - Non-association event traces and BPF network attachment traces are suppressed while an association trace is pending, because the association trace carries the same DHCP/ARP/ICMPv6 recovery evidence.
+- BPF network attachment traces require unconsumed DHCP or router-solicitation-to-router-advertisement spans, so normal steady-state ARP replies or neighbor discovery do not create extra attachment traces.
 - ARP network attachment prefers the Wi-Fi service IPv4 router when it is known; otherwise it includes recent ARP request/reply spans without a gateway filter.
 - Emitted-span de-duplication keys include span name, start time, duration, `packet.event`, `dhcp.xid`, `icmpv6.nd.target_address`, and `arp.target_ip`.
 

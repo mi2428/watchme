@@ -245,17 +245,6 @@ extension WiFiAgent {
         }
         logIdentityStatus(snapshot)
         _ = exportMetrics(snapshot: snapshot)
-        let recorder = TraceRecorder()
-
-        logEvent(
-            .info, "trace_started",
-            fields: [
-                "trace_id": recorder.traceId,
-                "reason": reason,
-                "include_connectivity_check": includeConnectivityCheck ? "true" : "false",
-                "connectivity_readiness": connectivityReadiness.ready ? "ready" : "not_ready",
-            ]
-        )
 
         var rootTags = snapshot.traceTags
         rootTags.merge(networkState.traceTags) { _, new in new }
@@ -297,6 +286,29 @@ extension WiFiAgent {
             consume: consumePacketSpans,
             includeConsumed: { shouldReplayConsumedNetworkAttachmentSpan(reason: reason, span: $0, replayStart: packetSpanWindowStart) }
         )
+        if reason == "wifi.network.attachment", !networkAttachmentTraceHasAddressAcquisitionEvidence(packetSpans) {
+            logEvent(
+                .debug, "network_attachment_trace_suppressed",
+                fields: [
+                    "source_reason": eventTags["network_attachment.source_reason"] ?? eventTags["agent.observation"] ?? reason,
+                    "suppression_reason": "no_address_acquisition_packet_span",
+                    "packet_span_count": "\(packetSpans.count)",
+                ]
+            )
+            return
+        }
+
+        let recorder = TraceRecorder()
+        logEvent(
+            .info, "trace_started",
+            fields: [
+                "trace_id": recorder.traceId,
+                "reason": reason,
+                "include_connectivity_check": includeConnectivityCheck ? "true" : "false",
+                "connectivity_readiness": connectivityReadiness.ready ? "ready" : "not_ready",
+            ]
+        )
+
         if !packetSpans.isEmpty, let window = spanWindow(packetSpans) {
             recordNetworkAttachment(packetSpans, window: window, recorder: recorder, snapshot: snapshot)
         }
@@ -546,4 +558,10 @@ func shouldReplayConsumedNetworkAttachmentSpan(reason: String, span: SpanEvent, 
         return false
     }
     return span.startWallNanos >= replayStart
+}
+
+func networkAttachmentTraceHasAddressAcquisitionEvidence(_ spans: [SpanEvent]) -> Bool {
+    spans.contains { span in
+        span.name.hasPrefix("packet.dhcp.") || span.name == "packet.icmpv6.router_solicitation_to_advertisement"
+    }
 }

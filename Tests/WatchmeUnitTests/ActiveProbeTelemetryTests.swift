@@ -176,6 +176,25 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         )
     }
 
+    func testNetworkAttachmentTraceRequiresAddressAcquisitionEvidence() {
+        XCTAssertTrue(
+            networkAttachmentTraceHasAddressAcquisitionEvidence([
+                packetSpanEvent(name: "packet.dhcp.request_to_ack"),
+            ])
+        )
+        XCTAssertTrue(
+            networkAttachmentTraceHasAddressAcquisitionEvidence([
+                packetSpanEvent(name: "packet.icmpv6.router_solicitation_to_advertisement"),
+            ])
+        )
+        XCTAssertFalse(
+            networkAttachmentTraceHasAddressAcquisitionEvidence([
+                packetSpanEvent(name: "packet.arp.request_to_reply"),
+                packetSpanEvent(name: "packet.icmpv6.neighbor_solicitation_to_advertisement"),
+            ])
+        )
+    }
+
     func testStaleAssociationTraceIsSuppressedWhenWiFiIsGone() {
         XCTAssertTrue(
             shouldSuppressStaleAssociationTrace(
