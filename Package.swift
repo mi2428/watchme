@@ -48,10 +48,21 @@ let package = Package(
                 .linkedFramework("SystemConfiguration"),
             ]
         ),
+        .target(
+            name: "WatchmeSystem",
+            dependencies: [
+                "WatchmeCore",
+                "WatchmeTelemetry",
+            ],
+            linkerSettings: [
+                .linkedFramework("IOKit"),
+            ]
+        ),
         .executableTarget(
             name: "watchme",
             dependencies: [
                 "WatchmeCore",
+                "WatchmeSystem",
                 "WatchmeWiFi",
             ],
             exclude: ["Info.plist"],
@@ -73,6 +84,7 @@ let package = Package(
             dependencies: [
                 "WatchmeBPF",
                 "WatchmeTelemetry",
+                "WatchmeSystem",
                 "WatchmeWiFi",
             ]
         ),

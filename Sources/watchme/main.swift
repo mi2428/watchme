@@ -1,9 +1,10 @@
 import Darwin
 import Foundation
 import WatchmeCore
+import WatchmeSystem
 import WatchmeWiFi
 
-let registry = CommandRegistry(commands: [WiFiCommand.self])
+let registry = CommandRegistry(commands: [WiFiCommand.self, SystemCommand.self])
 
 do {
     let command = try registry.parse(CommandLine.arguments)
