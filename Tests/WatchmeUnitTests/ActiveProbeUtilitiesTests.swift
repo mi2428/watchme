@@ -2,16 +2,10 @@
 import XCTest
 
 final class ActiveProbeUtilitiesTests: XCTestCase {
-    func testNormalizedTargetURLDefaultsToHTTPSRootPath() {
-        XCTAssertEqual(normalizedTargetURL("www.apple.com").absoluteString, "https://www.apple.com/")
-        XCTAssertEqual(normalizedTargetURL("http://example.test/health").absoluteString, "http://example.test/health")
-    }
+    func testHTTPHeadRequestIncludesRequiredHeaders() throws {
+        let request = try XCTUnwrap(String(data: httpHeadRequestBytes(path: "/", host: "example.test"), encoding: .utf8))
 
-    func testHTTPHeadRequestIncludesPathQueryAndRequiredHeaders() throws {
-        let url = try XCTUnwrap(URL(string: "https://example.test/search?q=wifi"))
-        let request = try XCTUnwrap(String(data: httpHeadRequestBytes(url: url, host: "example.test"), encoding: .utf8))
-
-        XCTAssertTrue(request.hasPrefix("HEAD /search?q=wifi HTTP/1.1\r\n"))
+        XCTAssertTrue(request.hasPrefix("HEAD / HTTP/1.1\r\n"))
         XCTAssertTrue(request.contains("Host: example.test\r\n"))
         XCTAssertTrue(request.contains("User-Agent: watchme/0.1\r\n"))
         XCTAssertTrue(request.hasSuffix("\r\n\r\n"))
@@ -32,13 +26,18 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
         let metadata = try XCTUnwrap(parseDNSResponseMetadata(data: response, expectedID: 0xCAFE))
         XCTAssertEqual(metadata.rcode, 0)
         XCTAssertEqual(metadata.answerCount, 2)
+        XCTAssertTrue(metadata.addresses.isEmpty)
         XCTAssertNil(parseDNSResponseMetadata(data: response, expectedID: 0xBEEF))
     }
 
-    func testUniqueProbeHostsNormalizesURLsAndDeduplicates() {
+    func testUniqueInternetProbeTargetsNormalizesAndDeduplicates() throws {
         XCTAssertEqual(
-            uniqueProbeHosts(["www.apple.com", "https://www.apple.com/path", "http://www.cloudflare.com"]),
+            try uniqueInternetProbeTargets(["www.apple.com", "https://www.apple.com/path", "http://www.cloudflare.com"]).map(\.host),
             ["www.apple.com", "www.cloudflare.com"]
         )
+    }
+
+    func testInternetChecksumUsesOnesComplementSum() {
+        XCTAssertEqual(internetChecksum([8, 0, 0, 0, 0x12, 0x34, 0, 1]), 0xE5CA)
     }
 }

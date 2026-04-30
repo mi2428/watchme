@@ -74,88 +74,6 @@ final class PassivePacketStoreTests: XCTestCase {
         XCTAssertEqual(nonConsumed.map(\.name), ["packet.dhcp.request_to_ack"])
     }
 
-    func testActiveDNSExchangeUsesOnlyRegisteredProbePackets() {
-        let store = PassivePacketStore()
-        let start = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
-        let request = ActiveDNSProbeRequest(
-            transactionID: 0xCAFE,
-            target: "www.example.test",
-            resolver: "192.168.23.254",
-            interfaceName: "en0",
-            startWallNanos: start,
-            timeout: 1
-        )
-        store.registerActiveDNSProbe(request)
-
-        XCTAssertFalse(
-            store.appendDNS(
-                dns(start + 500_000, transactionID: 0xBEEF, target: "www.example.test", response: false, sourcePort: 53000)
-            )
-        )
-        XCTAssertTrue(
-            store.appendDNS(
-                dns(start + 1_000_000, transactionID: 0xCAFE, target: "www.example.test", response: false, sourcePort: 53001)
-            )
-        )
-        XCTAssertTrue(
-            store.appendDNS(
-                dns(start + 4_000_000, transactionID: 0xCAFE, target: "www.example.test", response: true, destinationPort: 53001)
-            )
-        )
-
-        let exchange = store.dnsExchange(
-            for: request,
-            finishedWallNanos: start + 5_000_000,
-            wait: 0
-        )
-
-        XCTAssertEqual(exchange?.timing.timingSource, "bpf_packet")
-        XCTAssertEqual(exchange?.timing.durationNanos, 3_000_000)
-        XCTAssertEqual(exchange?.response.rcode, 0)
-        XCTAssertEqual(exchange?.response.answerCount, 1)
-    }
-
-    func testActiveTCPExchangePairsOutboundSYNWithGatewayResponse() {
-        let store = PassivePacketStore()
-        let start = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
-        let request = ActiveTCPProbeRequest(
-            remoteIP: "192.168.23.254",
-            port: 53,
-            interfaceName: "en0",
-            startWallNanos: start,
-            timeout: 1
-        )
-        store.registerActiveTCPProbe(request)
-
-        XCTAssertTrue(
-            store.appendTCP(
-                tcp(start + 1_000_000, sourcePort: 54000, destinationPort: 53, flags: 0x02)
-            )
-        )
-        XCTAssertTrue(
-            store.appendTCP(
-                tcp(
-                    start + 3_500_000,
-                    sourceIP: "192.168.23.254",
-                    destinationIP: "192.168.22.173",
-                    sourcePort: 53,
-                    destinationPort: 54000,
-                    flags: 0x14
-                )
-            )
-        )
-
-        let exchange = store.tcpConnectExchange(
-            for: request,
-            finishedWallNanos: start + 4_000_000,
-            wait: 0
-        )
-
-        XCTAssertEqual(exchange?.responseKind, "rst")
-        XCTAssertEqual(exchange?.timing.timingSource, "bpf_packet")
-        XCTAssertEqual(exchange?.timing.durationNanos, 2_500_000)
-    }
-
     private func dhcp(
         _ nanos: UInt64,
         xid: UInt32,
@@ -196,49 +114,6 @@ final class PassivePacketStoreTests: XCTestCase {
             routerLifetimeSeconds: routerLifetime,
             sourceLinkLayerAddress: sourceLLA,
             targetLinkLayerAddress: targetLLA
-        )
-    }
-
-    private func dns(
-        _ nanos: UInt64,
-        transactionID: UInt16,
-        target: String,
-        response: Bool,
-        sourcePort: UInt16 = 53,
-        destinationPort: UInt16 = 53
-    ) -> DNSPacketObservation {
-        DNSPacketObservation(
-            interfaceName: "en0",
-            wallNanos: nanos,
-            sourceIP: response ? "192.168.23.254" : "192.168.22.173",
-            destinationIP: response ? "192.168.22.173" : "192.168.23.254",
-            sourcePort: sourcePort,
-            destinationPort: destinationPort,
-            transactionID: transactionID,
-            isResponse: response,
-            rcode: response ? 0 : nil,
-            answerCount: response ? 1 : nil,
-            queryName: target,
-            queryType: 1
-        )
-    }
-
-    private func tcp(
-        _ nanos: UInt64,
-        sourceIP: String = "192.168.22.173",
-        destinationIP: String = "192.168.23.254",
-        sourcePort: UInt16,
-        destinationPort: UInt16,
-        flags: UInt8
-    ) -> TCPPacketObservation {
-        TCPPacketObservation(
-            interfaceName: "en0",
-            wallNanos: nanos,
-            sourceIP: sourceIP,
-            destinationIP: destinationIP,
-            sourcePort: sourcePort,
-            destinationPort: destinationPort,
-            flags: flags
         )
     }
 }

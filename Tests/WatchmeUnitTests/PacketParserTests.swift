@@ -124,6 +124,66 @@ final class PacketParserTests: XCTestCase {
         XCTAssertEqual(parsed?.isSYN, true)
         XCTAssertEqual(parsed?.isACK, false)
         XCTAssertEqual(parsed?.isRST, false)
+        XCTAssertEqual(parsed?.payloadLength, 0)
+    }
+
+    func testParseTCPPacketObservationExtractsPayloadPrefix() {
+        var packet = [UInt8](repeating: 0, count: 20)
+        packet[0] = 0xD2
+        packet[1] = 0xF0
+        packet[2] = 0x00
+        packet[3] = 0x50
+        packet[12] = 0x50
+        packet[13] = 0x18
+        packet.append(contentsOf: Array("HEAD / HTTP/1.1\r\n".utf8))
+        let context = TransportPacketContext(
+            interfaceName: "en0",
+            packetEnd: packet.count,
+            timestampNanos: 1000,
+            sourceIP: "192.168.22.173",
+            destinationIP: "34.223.124.45"
+        )
+
+        let parsed = parseTCPPacketObservation(buffer: packet, offset: 0, context: context)
+
+        XCTAssertEqual(parsed?.payloadLength, 17)
+        XCTAssertEqual(String(bytes: parsed?.payloadPrefix ?? [], encoding: .utf8), "HEAD / HTTP/1.1\r\n")
+    }
+
+    func testParseICMPEchoObservationExtractsCorrelationFields() {
+        let packet: [UInt8] = [8, 0, 0, 0, 0x12, 0x34, 0x00, 0x07]
+        let context = TransportPacketContext(
+            interfaceName: "en0",
+            packetEnd: packet.count,
+            timestampNanos: 1000,
+            sourceIP: "192.168.22.173",
+            destinationIP: "34.223.124.45"
+        )
+
+        let parsed = parseICMPv4PacketObservation(buffer: packet, offset: 0, context: context)
+
+        XCTAssertEqual(parsed?.family, .ipv4)
+        XCTAssertEqual(parsed?.isEchoRequest, true)
+        XCTAssertEqual(parsed?.identifier, 0x1234)
+        XCTAssertEqual(parsed?.sequence, 7)
+    }
+
+    func testParseICMPv6EchoObservationExtractsCorrelationFields() {
+        let packet: [UInt8] = [128, 0, 0, 0, 0xBE, 0xEF, 0x00, 0x09]
+        let context = TransportPacketContext(
+            interfaceName: "en0",
+            packetEnd: packet.count,
+            timestampNanos: 1000,
+            sourceIP: "2405:6581:3e00:a600::1",
+            destinationIP: "2606:4700:4700::1111"
+        )
+
+        let parsed = parseICMPv6EchoPacketObservation(buffer: packet, offset: 0, context: context)
+
+        XCTAssertEqual(parsed?.family, .ipv6)
+        XCTAssertEqual(parsed?.isEchoRequest, true)
+        XCTAssertEqual(parsed?.identifier, 0xBEEF)
+        XCTAssertEqual(parsed?.sequence, 9)
     }
 
     private func dhcpPacketBase() -> [UInt8] {

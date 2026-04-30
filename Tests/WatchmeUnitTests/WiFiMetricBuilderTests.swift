@@ -94,31 +94,60 @@ final class WiFiMetricBuilderTests: XCTestCase {
         XCTAssertEqual(ssid.encoding, "hex")
     }
 
-    func testActiveProbeMetricsExposeHTTPDNSAndGatewayResults() throws {
+    func testActiveProbeMetricsExposeInternetAndGatewayResults() throws {
         let snapshot = makeSnapshot()
         var state = WiFiMetricState()
         try recordSampleActiveProbes(in: &state)
 
         let metrics = WiFiMetricBuilder.metrics(snapshot: snapshot, state: state)
 
-        XCTAssertEqual(metric(named: "watchme_wifi_probe_http_success", labels: ["target": "www.apple.com"], in: metrics)?.value, 1)
-        XCTAssertEqual(metric(named: "watchme_wifi_probe_http_status_code", labels: ["target": "www.apple.com"], in: metrics)?.value, 200)
         XCTAssertEqual(
-            metric(named: "watchme_wifi_probe_http_duration_seconds", labels: ["target": "www.apple.com", "phase": "total"], in: metrics)?
+            metric(
+                named: "watchme_wifi_probe_internet_http_success",
+                labels: ["target": "neverssl.com", "family": "ipv4", "remote_ip": "34.223.124.45"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(named: "watchme_wifi_probe_internet_http_status_code", labels: ["target": "neverssl.com"], in: metrics)?.value,
+            200
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_http_duration_seconds",
+                labels: ["target": "neverssl.com", "timing_source": "bpf_packet"],
+                in: metrics
+            )?
                 .value ?? -1,
-            0.3,
+            0.18,
             accuracy: 0.000_001
         )
         XCTAssertEqual(
             metric(
-                named: "watchme_wifi_probe_dns_success",
-                labels: ["target": "www.apple.com", "timing_source": "bpf_packet"],
+                named: "watchme_wifi_probe_internet_dns_success",
+                labels: ["target": "neverssl.com", "family": "ipv4", "record_type": "A", "timing_source": "bpf_packet"],
                 in: metrics
             )?
                 .value,
             1
         )
-        XCTAssertEqual(metric(named: "watchme_wifi_probe_dns_rcode", labels: ["resolver": "192.168.23.254"], in: metrics)?.value, 0)
+        XCTAssertEqual(
+            metric(named: "watchme_wifi_probe_internet_dns_rcode", labels: ["resolver": "192.168.23.254"], in: metrics)?.value,
+            0
+        )
+        XCTAssertEqual(
+            metric(named: "watchme_wifi_probe_internet_dns_address_count", labels: ["target": "neverssl.com"], in: metrics)?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_icmp_success",
+                labels: ["target": "neverssl.com", "family": "ipv4", "remote_ip": "34.223.124.45"],
+                in: metrics
+            )?.value,
+            1
+        )
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_gateway_tcp_reachable",
@@ -132,39 +161,223 @@ final class WiFiMetricBuilderTests: XCTestCase {
             0
         )
     }
+
+    func testActiveProbeMetricsReplaceDisconnectedPlaceholderSeries() {
+        let snapshot = makeSnapshot()
+        var state = WiFiMetricState()
+
+        recordDisconnectedActiveProbePlaceholders(in: &state)
+        recordReconnectedActiveProbeSuccesses(in: &state)
+
+        let metrics = WiFiMetricBuilder.metrics(snapshot: snapshot, state: state)
+
+        XCTAssertNil(
+            metric(
+                named: "watchme_wifi_probe_internet_dns_success",
+                labels: ["target": "example.com", "family": "ipv4", "resolver": "none"],
+                in: metrics
+            )
+        )
+        XCTAssertNil(
+            metric(
+                named: "watchme_wifi_probe_internet_icmp_success",
+                labels: ["target": "example.com", "family": "ipv4", "remote_ip": "none"],
+                in: metrics
+            )
+        )
+        XCTAssertNil(
+            metric(
+                named: "watchme_wifi_probe_internet_http_success",
+                labels: ["target": "example.com", "family": "ipv4", "remote_ip": "none"],
+                in: metrics
+            )
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_dns_success",
+                labels: ["target": "example.com", "family": "ipv4", "resolver": "192.168.23.254"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_icmp_success",
+                labels: ["target": "example.com", "family": "ipv4", "remote_ip": "93.184.216.34"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_http_success",
+                labels: ["target": "example.com", "family": "ipv4", "remote_ip": "93.184.216.34"],
+                in: metrics
+            )?.value,
+            1
+        )
+    }
 }
 
-private func recordSampleActiveProbes(in state: inout WiFiMetricState) throws {
-    try state.recordHTTPProbe(
-        ActiveProbeResult(
-            target: "https://www.apple.com/",
-            url: XCTUnwrap(URL(string: "https://www.apple.com/")),
-            ok: true,
-            statusCode: 200,
-            error: nil,
-            startWallNanos: 1_000_000_000,
-            finishedWallNanos: 1_300_000_000,
-            durationNanos: 300_000_000,
-            phaseDurations: [
-                ProbePhaseDuration(phase: "connect", durationNanos: 120_000_000),
-                ProbePhaseDuration(phase: "http_head", durationNanos: 180_000_000),
-                ProbePhaseDuration(phase: "total", durationNanos: 300_000_000),
-            ],
-            childSpans: []
-        )
-    )
+private func recordDisconnectedActiveProbePlaceholders(in state: inout WiFiMetricState) {
     state.recordDNSProbe(
         ActiveDNSProbeResult(
-            target: "www.apple.com",
+            target: "example.com",
+            family: .ipv4,
+            recordType: .a,
+            resolver: "none",
+            transport: "udp",
+            ok: false,
+            rcode: nil,
+            answerCount: 0,
+            addresses: [],
+            error: "no resolver",
+            startWallNanos: 1_000_000_000,
+            finishedWallNanos: 1_000_001_000,
+            durationNanos: 1000,
+            timingSource: noAddressTimingSource,
+            timestampSource: wallClockTimestampSource
+        )
+    )
+    state.recordICMPProbe(
+        ActiveICMPProbeResult(
+            target: "example.com",
+            family: .ipv4,
+            remoteIP: "none",
+            identifier: 0,
+            sequence: 0,
+            ok: false,
+            outcome: "no_address",
+            error: "no address",
+            startWallNanos: 1_100_000_000,
+            finishedWallNanos: 1_100_001_000,
+            durationNanos: 1000,
+            timingSource: noAddressTimingSource,
+            timestampSource: wallClockTimestampSource
+        )
+    )
+    state.recordInternetHTTPProbe(
+        ActiveInternetHTTPProbeResult(
+            target: "example.com",
+            family: .ipv4,
+            remoteIP: "none",
+            ok: false,
+            outcome: "no_address",
+            statusCode: nil,
+            error: "no address",
+            startWallNanos: 1_200_000_000,
+            finishedWallNanos: 1_200_001_000,
+            durationNanos: 1000,
+            timingSource: noAddressTimingSource,
+            timestampSource: wallClockTimestampSource
+        )
+    )
+}
+
+private func recordReconnectedActiveProbeSuccesses(in state: inout WiFiMetricState) {
+    state.recordDNSProbe(
+        ActiveDNSProbeResult(
+            target: "example.com",
+            family: .ipv4,
+            recordType: .a,
             resolver: "192.168.23.254",
             transport: "udp",
             ok: true,
             rcode: 0,
-            answerCount: 2,
+            answerCount: 1,
+            addresses: ["93.184.216.34"],
             error: nil,
             startWallNanos: 2_000_000_000,
             finishedWallNanos: 2_050_000_000,
             durationNanos: 50_000_000,
+            timingSource: bpfPacketTimingSource,
+            timestampSource: bpfHeaderTimestampSource
+        )
+    )
+    state.recordICMPProbe(
+        ActiveICMPProbeResult(
+            target: "example.com",
+            family: .ipv4,
+            remoteIP: "93.184.216.34",
+            identifier: 0x1234,
+            sequence: 1,
+            ok: true,
+            outcome: "reply",
+            error: nil,
+            startWallNanos: 2_100_000_000,
+            finishedWallNanos: 2_130_000_000,
+            durationNanos: 30_000_000,
+            timingSource: bpfPacketTimingSource,
+            timestampSource: bpfHeaderTimestampSource
+        )
+    )
+    state.recordInternetHTTPProbe(
+        ActiveInternetHTTPProbeResult(
+            target: "example.com",
+            family: .ipv4,
+            remoteIP: "93.184.216.34",
+            ok: true,
+            outcome: "response",
+            statusCode: 200,
+            error: nil,
+            startWallNanos: 2_200_000_000,
+            finishedWallNanos: 2_290_000_000,
+            durationNanos: 90_000_000,
+            timingSource: bpfPacketTimingSource,
+            timestampSource: bpfHeaderTimestampSource
+        )
+    )
+}
+
+private func recordSampleActiveProbes(in state: inout WiFiMetricState) throws {
+    state.recordInternetHTTPProbe(
+        ActiveInternetHTTPProbeResult(
+            target: "neverssl.com",
+            family: .ipv4,
+            remoteIP: "34.223.124.45",
+            ok: true,
+            outcome: "response",
+            statusCode: 200,
+            error: nil,
+            startWallNanos: 1_000_000_000,
+            finishedWallNanos: 1_180_000_000,
+            durationNanos: 180_000_000,
+            timingSource: bpfPacketTimingSource,
+            timestampSource: bpfHeaderTimestampSource
+        )
+    )
+    state.recordDNSProbe(
+        ActiveDNSProbeResult(
+            target: "neverssl.com",
+            family: .ipv4,
+            recordType: .a,
+            resolver: "192.168.23.254",
+            transport: "udp",
+            ok: true,
+            rcode: 0,
+            answerCount: 1,
+            addresses: ["34.223.124.45"],
+            error: nil,
+            startWallNanos: 2_000_000_000,
+            finishedWallNanos: 2_050_000_000,
+            durationNanos: 50_000_000,
+            timingSource: bpfPacketTimingSource,
+            timestampSource: bpfHeaderTimestampSource
+        )
+    )
+    state.recordICMPProbe(
+        ActiveICMPProbeResult(
+            target: "neverssl.com",
+            family: .ipv4,
+            remoteIP: "34.223.124.45",
+            identifier: 0x1234,
+            sequence: 7,
+            ok: true,
+            outcome: "reply",
+            error: nil,
+            startWallNanos: 2_100_000_000,
+            finishedWallNanos: 2_120_000_000,
+            durationNanos: 20_000_000,
             timingSource: bpfPacketTimingSource,
             timestampSource: bpfHeaderTimestampSource
         )
