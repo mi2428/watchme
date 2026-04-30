@@ -4,8 +4,6 @@ import OpenTelemetryProtocolExporterHttp
 import OpenTelemetrySdk
 import WatchmeCore
 
-private let metricReaderIntervalSeconds: TimeInterval = 24 * 60 * 60
-
 public struct MetricSample {
     public enum MetricType: String {
         case gauge
@@ -33,6 +31,13 @@ public struct MetricExportResult {
     public let error: String?
 }
 
+public struct TraceExportResult {
+    public let traceId: String
+    public let ok: Bool
+    public let endpoint: URL
+    public let error: String?
+}
+
 public final class TelemetryClient {
     private let traces: OTelTraceExporter
     private let metrics: OTelMetricExporter
@@ -54,96 +59,8 @@ public final class TelemetryClient {
         return result.ok
     }
 
-    public func exportTrace(records: TraceBatch) -> String {
+    public func exportTrace(records: TraceBatch) -> TraceExportResult {
         traces.export(records)
-    }
-}
-
-final class OTelMetricExporter {
-    private let endpoint: URL
-    private let exporter: OtlpHttpMetricExporter
-    private let provider: MeterProviderSdk
-    private let meter: MeterSdk
-    private let lock = NSLock()
-    private var gauges: [String: DoubleGaugeSdk] = [:]
-    private var counters: [String: DoubleCounterSdk] = [:]
-    private var previousCounterValues: [String: Double] = [:]
-
-    init(serviceName: String, endpoint: URL, timeout: TimeInterval) {
-        self.endpoint = endpoint
-        exporter = OtlpHttpMetricExporter(endpoint: endpoint, httpClient: BlockingHTTPClient(timeout: timeout))
-        let reader = PeriodicMetricReaderBuilder(exporter: exporter)
-            .setInterval(timeInterval: metricReaderIntervalSeconds)
-            .build()
-        let resource = Resource(attributes: [
-            "service.name": AttributeValue.string(serviceName),
-            "host.name": AttributeValue.string(Host.current().localizedName ?? "unknown"),
-            "os.type": AttributeValue.string("macOS"),
-        ])
-        provider = MeterProviderSdk.builder()
-            .setResource(resource: resource)
-            .registerMetricReader(reader: reader)
-            .build()
-        meter = provider.get(name: "watchme")
-    }
-
-    func export(_ samples: [MetricSample]) -> MetricExportResult {
-        lock.lock()
-        defer { lock.unlock() }
-
-        for sample in samples {
-            switch sample.type {
-            case .gauge:
-                recordGauge(sample)
-            case .counter:
-                recordCounter(sample)
-            }
-        }
-
-        let providerResult = provider.forceFlush()
-        let exporterResult = exporter.flush()
-        let ok = providerResult == .success && exporterResult == .success
-        return MetricExportResult(
-            ok: ok,
-            endpoint: endpoint,
-            error: ok ? nil : "OTLP metric export failed"
-        )
-    }
-
-    private func recordGauge(_ sample: MetricSample) {
-        let gauge = gauges[sample.name] ?? meter.gaugeBuilder(name: sample.name)
-            .setDescription(sample.help)
-            .build()
-        gauges[sample.name] = gauge
-        gauge.record(value: sample.value, attributes: metricAttributes(sample.labels))
-    }
-
-    private func recordCounter(_ sample: MetricSample) {
-        let key = metricSeriesKey(name: sample.name, labels: sample.labels)
-        let previous = previousCounterValues[key]
-        let delta = previous.map { sample.value >= $0 ? sample.value - $0 : sample.value } ?? sample.value
-        previousCounterValues[key] = sample.value
-        guard delta > 0 || previous == nil else {
-            return
-        }
-
-        var counter = counters[sample.name] ?? meter.counterBuilder(name: sample.name)
-            .ofDoubles()
-            .setDescription(sample.help)
-            .build()
-        counter.add(value: delta, attributes: metricAttributes(sample.labels))
-        counters[sample.name] = counter
-    }
-}
-
-func metricSeriesKey(name: String, labels: [String: String]) -> String {
-    let labelKey = labels.keys.sorted().map { "\($0)=\(labels[$0] ?? "")" }.joined(separator: "\u{1f}")
-    return "\(name)\u{1e}\(labelKey)"
-}
-
-func metricAttributes(_ labels: [String: String]) -> [String: AttributeValue] {
-    labels.reduce(into: [:]) { result, entry in
-        result[entry.key] = .string(entry.value)
     }
 }
 
@@ -344,7 +261,7 @@ final class OTelTraceExporter {
         tracer = provider.get(instrumentationName: "watchme", instrumentationVersion: "0.1.0")
     }
 
-    func export(_ batch: TraceBatch) -> String {
+    func export(_ batch: TraceBatch) -> TraceExportResult {
         let root = tracer.spanBuilder(spanName: batch.rootName)
             .setNoParent()
             .setSpanKind(spanKind: .internal)
@@ -373,53 +290,102 @@ final class OTelTraceExporter {
         root.status = .ok
         root.end(time: dateFromWallNanos(batch.rootStartWallNanos + batch.rootDurationNanos))
         provider.forceFlush()
-        _ = exporter.flush()
-        return traceId
+        let exporterResult = exporter.flush()
+        let ok = exporterResult == .success
+        return TraceExportResult(
+            traceId: traceId,
+            ok: ok,
+            endpoint: endpoint,
+            error: ok ? nil : "OTLP trace export failed"
+        )
     }
 }
 
-final class BlockingHTTPClient: HTTPClient {
+final class BlockingHTTPClient: HTTPClient, OTLPHTTPTransport {
     private let session: URLSession
     private let timeout: TimeInterval
+    private let spool: OTLPSpool
 
-    init(timeout: TimeInterval) {
+    init(timeout: TimeInterval, spool: OTLPSpool = .shared) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout
         configuration.urlCache = nil
         session = URLSession(configuration: configuration)
         self.timeout = timeout
+        self.spool = spool
     }
 
     func send(request: URLRequest, completion: @escaping (Result<HTTPURLResponse, Error>) -> Void) {
         // The exporter API is callback-based, but watchme emits traces from a
-        // serial agent path and needs completion before logging "trace_sent".
+        // serial agent path and needs completion before logging export state.
         // Blocking here keeps lifecycle semantics simple without shelling out.
+        let flushResult = spool.flushPending { [weak self] pendingRequest in
+            guard let self else {
+                return .failure(WatchmeError.invalidArgument("OTLP HTTP client was released"))
+            }
+            return sendDirect(request: pendingRequest)
+        }
+        if let error = flushResult.error {
+            spool.enqueue(request, reason: "pending_spool_flush_failed")
+            completion(.failure(error))
+            return
+        }
+
+        let result = sendDirect(request: request)
+        if case let .failure(error) = result, isRetryableOTLPError(error) {
+            spool.enqueue(request, reason: "export_failed")
+        }
+        completion(result)
+    }
+
+    func sendSynchronously(request: URLRequest) -> Result<HTTPURLResponse, Error> {
+        var output: Result<HTTPURLResponse, Error>?
+        send(request: request) { result in
+            output = result
+        }
+        return output ?? .failure(OTLPHTTPError.missingHTTPResponse)
+    }
+
+    private func sendDirect(request: URLRequest) -> Result<HTTPURLResponse, Error> {
         let semaphore = DispatchSemaphore(value: 0)
         var output: Result<HTTPURLResponse, Error>?
-        let task = session.dataTask(with: request) { data, response, error in
+        let task = session.dataTask(with: request) { _, response, error in
             if let error {
                 output = .failure(error)
             } else if let http = response as? HTTPURLResponse {
                 if (200 ..< 300).contains(http.statusCode) {
                     output = .success(http)
                 } else {
-                    output = .failure(WatchmeError.invalidArgument("OTLP HTTP export failed with status \(http.statusCode)"))
+                    output = .failure(OTLPHTTPError.statusCode(http.statusCode))
                 }
             } else {
-                output = .failure(
-                    WatchmeError
-                        .invalidArgument("Failed to receive HTTPURLResponse: \(String(describing: response)), bytes=\(data?.count ?? 0)")
-                )
+                output = .failure(OTLPHTTPError.missingHTTPResponse)
             }
             semaphore.signal()
         }
         task.resume()
         if semaphore.wait(timeout: .now() + timeout) == .timedOut {
             task.cancel()
-            output = .failure(WatchmeError.invalidArgument("OTLP HTTP export timed out"))
+            output = .failure(OTLPHTTPError.timedOut)
         }
-        completion(output ?? .failure(WatchmeError.invalidArgument("OTLP HTTP export did not complete")))
+        return output ?? .failure(OTLPHTTPError.missingHTTPResponse)
+    }
+}
+
+extension Result where Success == HTTPURLResponse, Failure == Error {
+    var isSuccess: Bool {
+        if case .success = self {
+            return true
+        }
+        return false
+    }
+
+    var errorDescription: String? {
+        if case let .failure(error) = self {
+            return "\(error)"
+        }
+        return nil
     }
 }
 

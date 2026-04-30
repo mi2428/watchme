@@ -166,16 +166,22 @@ extension WiFiAgent {
         rootTags["trace.root_name"] = rootName
         rootTags["trace.start_epoch_ns"] = "\(traceStarted)"
         let batch = recorder.finish(rootName: rootName, rootTags: rootTags)
-        let otelTraceId = telemetry.exportTrace(records: batch)
+        let result = telemetry.exportTrace(records: batch)
+        var logFields = [
+            "trace_id": result.traceId,
+            "local_trace_id": recorder.traceId,
+            "reason": reason,
+            "spans": "\(batch.spans.count + 1)",
+            "collector_url": config.collectorURL.absoluteString,
+            "traces_endpoint_url": result.endpoint.absoluteString,
+        ]
+        if let error = result.error {
+            logFields["error"] = error
+        }
         logEvent(
-            .info, "trace_sent",
-            fields: [
-                "trace_id": otelTraceId,
-                "local_trace_id": recorder.traceId,
-                "reason": reason,
-                "spans": "\(batch.spans.count + 1)",
-                "collector_url": config.collectorURL.absoluteString,
-            ]
+            result.ok ? .info : .warn,
+            result.ok ? "trace_sent" : "trace_export_failed",
+            fields: logFields
         )
     }
 
