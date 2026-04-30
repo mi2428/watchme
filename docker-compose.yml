@@ -15,7 +15,6 @@ services:
     depends_on:
       - grafana
       - otel-collector
-      - prometheus
       - tempo
     restart: unless-stopped
 
@@ -28,29 +27,9 @@ services:
     ports:
       - "4317:4317"   # OTLP gRPC, useful for future modules
       - "4318:4318"   # OTLP HTTP metrics and traces from WatchMe
-      - "9464:9464"   # Collector metrics bridge for the local dashboard
       - "8888:8888"   # Collector self metrics
     depends_on:
       - tempo
-    restart: unless-stopped
-
-  prometheus:
-    image: prom/prometheus:latest
-    pull_policy: "${WATCHME_PULL_POLICY:-always}"
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-      - --storage.tsdb.path=/prometheus
-      - "--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}"
-      - --web.enable-lifecycle
-      - "--web.external-url=${PROMETHEUS_EXTERNAL_URL:-/prometheus/}"
-      - --web.route-prefix=/
-    volumes:
-      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - prometheus-data:/prometheus
-    ports:
-      - "9090:9090"
-    depends_on:
-      - otel-collector
     restart: unless-stopped
 
   tempo:
@@ -84,7 +63,6 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - prometheus
       - tempo
     restart: unless-stopped
 
@@ -92,5 +70,4 @@ volumes:
   caddy-data:
   caddy-config:
   grafana-data:
-  prometheus-data:
   tempo-data:
