@@ -122,7 +122,7 @@ private struct WiFiConfigParser {
         let (argument, inlineValue) = splitInlineValue(arguments[index])
         switch argument {
         case "--probe.internet.target":
-            try explicitInternetTargets.append(requireValue(for: argument, inlineValue: inlineValue))
+            try explicitInternetTargets.append(requireValue(argument, inlineValue: inlineValue))
         case "--probe.internet.family":
             try applyInternetFamily(argument, inlineValue: inlineValue)
         case "--probe.gateway.count":
@@ -145,36 +145,12 @@ private struct WiFiConfigParser {
         }
     }
 
-    private func splitInlineValue(_ argument: String) -> (option: String, inlineValue: String?) {
-        guard let equals = argument.firstIndex(of: "=") else {
-            return (argument, nil)
-        }
-        return (String(argument[..<equals]), String(argument[argument.index(after: equals)...]))
-    }
-
-    private func rejectInlineValue(_ argument: String, _ inlineValue: String?) throws {
-        guard inlineValue == nil else {
-            throw WatchmeError.invalidArgument("\(argument) does not accept a value")
-        }
-    }
-
     private mutating func applyCollectorURL(_ argument: String, inlineValue: String?) throws {
-        let value = try requireValue(for: argument, inlineValue: inlineValue)
-        guard
-            let url = URL(string: value),
-            let scheme = url.scheme?.lowercased(),
-            ["http", "https"].contains(scheme),
-            url.host != nil,
-            url.query == nil,
-            url.fragment == nil
-        else {
-            throw WatchmeError.invalidArgument("Invalid URL for \(argument): \(value)")
-        }
-        config.collectorURL = url
+        config.collectorURL = try validatedCollectorURL(requireValue(argument, inlineValue: inlineValue), argument: argument)
     }
 
     private mutating func applyTimeInterval(_ argument: String, inlineValue: String?) throws {
-        let rawValue = try requireValue(for: argument, inlineValue: inlineValue)
+        let rawValue = try requireValue(argument, inlineValue: inlineValue)
         guard let value = TimeInterval(rawValue) else {
             throw WatchmeError.invalidArgument("Invalid value for \(argument): \(rawValue)")
         }
@@ -197,7 +173,7 @@ private struct WiFiConfigParser {
     }
 
     private mutating func applyGatewayBurstCount(_ argument: String, inlineValue: String?) throws {
-        let rawValue = try requireValue(for: argument, inlineValue: inlineValue)
+        let rawValue = try requireValue(argument, inlineValue: inlineValue)
         guard let value = Int(rawValue), value > 0 else {
             throw WatchmeError.invalidArgument("Invalid gateway probe burst count: \(rawValue)")
         }
@@ -205,7 +181,7 @@ private struct WiFiConfigParser {
     }
 
     private mutating func applyInternetFamily(_ argument: String, inlineValue: String?) throws {
-        let value = try requireValue(for: argument, inlineValue: inlineValue).lowercased()
+        let value = try requireValue(argument, inlineValue: inlineValue).lowercased()
         guard let family = InternetProbeFamily(rawValue: value) else {
             throw WatchmeError.invalidArgument("Invalid internet probe family for \(argument): \(value)")
         }
@@ -213,7 +189,7 @@ private struct WiFiConfigParser {
     }
 
     private mutating func applyLogLevel(_ argument: String, inlineValue: String?) throws {
-        let value = try requireValue(for: argument, inlineValue: inlineValue).lowercased()
+        let value = try requireValue(argument, inlineValue: inlineValue).lowercased()
         guard let level = LogLevel(rawValue: value) else {
             throw WatchmeError.invalidArgument("Invalid log level: \(value)")
         }
@@ -221,7 +197,7 @@ private struct WiFiConfigParser {
     }
 
     private mutating func applyBoolOption(_ argument: String, inlineValue: String?) throws {
-        let rawValue = try requireValue(for: argument, inlineValue: inlineValue).lowercased()
+        let rawValue = try requireValue(argument, inlineValue: inlineValue).lowercased()
         let value: Bool
         switch rawValue {
         case "1", "true", "yes", "on":
@@ -245,18 +221,8 @@ private struct WiFiConfigParser {
         }
     }
 
-    private mutating func requireValue(for argument: String, inlineValue: String?) throws -> String {
-        if let inlineValue {
-            guard !inlineValue.isEmpty else {
-                throw WatchmeError.invalidArgument("Missing value for \(argument)")
-            }
-            return inlineValue
-        }
-        guard index + 1 < arguments.count else {
-            throw WatchmeError.invalidArgument("Missing value for \(argument)")
-        }
-        index += 1
-        return arguments[index]
+    private mutating func requireValue(_ argument: String, inlineValue: String?) throws -> String {
+        try requireOptionValue(arguments: arguments, index: &index, argument: argument, inlineValue: inlineValue)
     }
 
     private func positive(_ value: TimeInterval, name: String) throws -> TimeInterval {
@@ -279,12 +245,12 @@ func printWiFiUsage() {
 }
 
 func wiFiUsageText() -> String {
-    let commands = usageRows([
+    let commands = formatUsageRows([
         ("watchme wifi [options]", "Run the long-running Wi-Fi observability agent."),
         ("watchme wifi once [options]", "Export one metrics snapshot and send one active trace."),
         ("watchme wifi authorize-only", "Request Location authorization for the app-bundled CLI."),
     ])
-    let options = usageRows([
+    let options = formatUsageRows([
         ("--collector.url URL", "OTLP/HTTP collector endpoint. Default: http://127.0.0.1:4318"),
         ("--metrics.interval seconds", "Wi-Fi metric collection interval. Default: 5"),
         ("--traces.interval seconds", "Active trace interval. Default: 60"),
@@ -318,28 +284,4 @@ func wiFiUsageText() -> String {
 
       Press 'Allow' in the macOS Preferences popup.
     """
-}
-
-private func usageRows(_ rows: [(String, String)], leftColumnWidth: Int = 34) -> String {
-    rows
-        .map { left, right in
-            let separator = String(repeating: " ", count: max(leftColumnWidth - left.count, 2))
-            return "  \(left)\(separator)\(right)"
-        }
-        .joined(separator: "\n")
-}
-
-func collectorEndpointURL(baseURL: URL, path: String) -> URL {
-    var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
-    let basePath = components.percentEncodedPath
-        .split(separator: "/", omittingEmptySubsequences: true)
-        .map(String.init)
-        .joined(separator: "/")
-    let endpointPath = path
-        .split(separator: "/", omittingEmptySubsequences: true)
-        .map(String.init)
-        .joined(separator: "/")
-    let joined = [basePath, endpointPath].filter { !$0.isEmpty }.joined(separator: "/")
-    components.percentEncodedPath = joined.isEmpty ? "" : "/\(joined)"
-    return components.url!
 }

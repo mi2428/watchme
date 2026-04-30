@@ -57,6 +57,12 @@ private struct InternetProbeExecutionContext {
     let packetStore: PassivePacketStore
 }
 
+private struct InternetDNSProbeRequest {
+    let resolver: String
+    let target: InternetProbeTarget
+    let family: InternetAddressFamily
+}
+
 private struct PostDNSInternetProbeInput {
     let addressPlan: [InternetAddressPlan]
     let context: InternetProbeExecutionContext
@@ -123,31 +129,23 @@ private func runInternetDNSProbes(
             }
         }
     }
-    let results = LockedValues<ActiveDNSProbeResult>()
-    let group = DispatchGroup()
-    for resolver in resolvers {
-        for target in targets {
-            for family in families {
-                group.enter()
-                DispatchQueue.global(qos: .utility).async {
-                    let result = runInternetDNSProbe(
-                        target: target.host,
-                        family: family,
-                        resolver: resolver,
-                        timeout: context.timeout,
-                        interfaceName: context.interfaceName,
-                        packetStore: context.packetStore
-                    )
-                    results.append(result)
-                    group.leave()
-                }
+    let requests = resolvers.flatMap { resolver in
+        targets.flatMap { target in
+            families.map { family in
+                InternetDNSProbeRequest(resolver: resolver, target: target, family: family)
             }
         }
     }
-    group.wait()
-    return results.values.sorted {
-        [$0.target, $0.family.metricValue, $0.resolver].joined(separator: "|")
-            < [$1.target, $1.family.metricValue, $1.resolver].joined(separator: "|")
+
+    return runParallelSorted(requests, sortKey: dnsProbeSortKey) { request in
+        runInternetDNSProbe(
+            target: request.target.host,
+            family: request.family,
+            resolver: request.resolver,
+            timeout: context.timeout,
+            interfaceName: context.interfaceName,
+            packetStore: context.packetStore
+        )
     }
 }
 
@@ -155,27 +153,15 @@ private func runInternetICMPProbes(
     addressPlan: [InternetAddressPlan],
     context: InternetProbeExecutionContext
 ) -> [ActiveICMPProbeResult] {
-    let results = LockedValues<ActiveICMPProbeResult>()
-    let group = DispatchGroup()
-    for plan in addressPlan {
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            let result = runInternetICMPProbe(
-                target: plan.target.host,
-                family: plan.family,
-                remoteIP: plan.remoteIP,
-                timeout: context.timeout,
-                interfaceName: context.interfaceName,
-                packetStore: context.packetStore
-            )
-            results.append(result)
-            group.leave()
-        }
-    }
-    group.wait()
-    return results.values.sorted {
-        [$0.target, $0.family.metricValue, $0.remoteIP].joined(separator: "|")
-            < [$1.target, $1.family.metricValue, $1.remoteIP].joined(separator: "|")
+    runParallelSorted(addressPlan, sortKey: icmpProbeSortKey) { plan in
+        runInternetICMPProbe(
+            target: plan.target.host,
+            family: plan.family,
+            remoteIP: plan.remoteIP,
+            timeout: context.timeout,
+            interfaceName: context.interfaceName,
+            packetStore: context.packetStore
+        )
     }
 }
 
@@ -183,28 +169,50 @@ private func runInternetHTTPProbes(
     addressPlan: [InternetAddressPlan],
     context: InternetProbeExecutionContext
 ) -> [ActiveInternetHTTPProbeResult] {
-    let results = LockedValues<ActiveInternetHTTPProbeResult>()
+    runParallelSorted(addressPlan, sortKey: httpProbeSortKey) { plan in
+        runInternetHTTPProbe(
+            target: plan.target.host,
+            family: plan.family,
+            remoteIP: plan.remoteIP,
+            timeout: context.timeout,
+            interfaceName: context.interfaceName,
+            packetStore: context.packetStore
+        )
+    }
+}
+
+private func runParallelSorted<Input, Output>(
+    _ inputs: [Input],
+    sortKey: @escaping (Output) -> String,
+    operation: @escaping (Input) -> Output
+) -> [Output] {
+    let results = LockedValues<Output>()
     let group = DispatchGroup()
-    for plan in addressPlan {
+    for input in inputs {
         group.enter()
         DispatchQueue.global(qos: .utility).async {
-            let result = runInternetHTTPProbe(
-                target: plan.target.host,
-                family: plan.family,
-                remoteIP: plan.remoteIP,
-                timeout: context.timeout,
-                interfaceName: context.interfaceName,
-                packetStore: context.packetStore
-            )
-            results.append(result)
-            group.leave()
+            defer {
+                group.leave()
+            }
+            results.append(operation(input))
         }
     }
     group.wait()
     return results.values.sorted {
-        [$0.target, $0.family.metricValue, $0.remoteIP].joined(separator: "|")
-            < [$1.target, $1.family.metricValue, $1.remoteIP].joined(separator: "|")
+        sortKey($0) < sortKey($1)
     }
+}
+
+private func dnsProbeSortKey(_ result: ActiveDNSProbeResult) -> String {
+    [result.target, result.family.metricValue, result.resolver].joined(separator: "|")
+}
+
+private func icmpProbeSortKey(_ result: ActiveICMPProbeResult) -> String {
+    [result.target, result.family.metricValue, result.remoteIP].joined(separator: "|")
+}
+
+private func httpProbeSortKey(_ result: ActiveInternetHTTPProbeResult) -> String {
+    [result.target, result.family.metricValue, result.remoteIP].joined(separator: "|")
 }
 
 private func internetProbeAddressPlan(

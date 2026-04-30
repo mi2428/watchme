@@ -13,53 +13,6 @@ struct ActiveGatewayProbeAttempt {
     let error: String?
     let timing: ActiveProbeTiming
 
-    init(
-        sequence: Int,
-        identifier: UInt16?,
-        icmpSequence: UInt16?,
-        reachable: Bool,
-        outcome: String,
-        error: String?,
-        timing: ActiveProbeTiming
-    ) {
-        self.sequence = sequence
-        self.identifier = identifier
-        self.icmpSequence = icmpSequence
-        self.reachable = reachable
-        self.outcome = outcome
-        self.error = error
-        self.timing = timing
-    }
-
-    init(
-        sequence: Int,
-        identifier: UInt16?,
-        icmpSequence: UInt16?,
-        reachable: Bool,
-        outcome: String,
-        error: String?,
-        startWallNanos: UInt64,
-        finishedWallNanos: UInt64,
-        durationNanos _: UInt64,
-        timingSource: String,
-        timestampSource: String
-    ) {
-        self.init(
-            sequence: sequence,
-            identifier: identifier,
-            icmpSequence: icmpSequence,
-            reachable: reachable,
-            outcome: outcome,
-            error: error,
-            timing: ActiveProbeTiming(
-                startWallNanos: startWallNanos,
-                finishedWallNanos: finishedWallNanos,
-                timingSource: timingSource,
-                timestampSource: timestampSource
-            )
-        )
-    }
-
     var startWallNanos: UInt64 {
         timing.startWallNanos
     }
@@ -97,41 +50,6 @@ struct ActiveGatewayProbeResult {
         self.family = family
         self.attempts = attempts.sorted { $0.sequence < $1.sequence }
         self.burstIntervalSeconds = burstIntervalSeconds
-    }
-
-    init(
-        gateway: String,
-        family: InternetAddressFamily = .ipv4,
-        reachable: Bool,
-        outcome: String,
-        error: String?,
-        startWallNanos: UInt64,
-        finishedWallNanos: UInt64,
-        durationNanos _: UInt64,
-        timingSource: String,
-        timestampSource: String
-    ) {
-        self.init(
-            gateway: gateway,
-            family: family,
-            attempts: [
-                ActiveGatewayProbeAttempt(
-                    sequence: 1,
-                    identifier: nil,
-                    icmpSequence: nil,
-                    reachable: reachable,
-                    outcome: outcome,
-                    error: error,
-                    timing: ActiveProbeTiming(
-                        startWallNanos: startWallNanos,
-                        finishedWallNanos: finishedWallNanos,
-                        timingSource: timingSource,
-                        timestampSource: timestampSource
-                    )
-                ),
-            ],
-            burstIntervalSeconds: 0
-        )
     }
 
     var probeCount: Int {

@@ -16,69 +16,6 @@ struct ActiveDNSProbeResult {
     let error: String?
     let timing: ActiveProbeTiming
 
-    init(
-        target: String,
-        family: InternetAddressFamily,
-        recordType: DNSRecordType,
-        resolver: String,
-        transport: String,
-        ok: Bool,
-        rcode: Int?,
-        answerCount: Int?,
-        addresses: [String],
-        error: String?,
-        timing: ActiveProbeTiming
-    ) {
-        self.target = target
-        self.family = family
-        self.recordType = recordType
-        self.resolver = resolver
-        self.transport = transport
-        self.ok = ok
-        self.rcode = rcode
-        self.answerCount = answerCount
-        self.addresses = addresses
-        self.error = error
-        self.timing = timing
-    }
-
-    init(
-        target: String,
-        family: InternetAddressFamily,
-        recordType: DNSRecordType,
-        resolver: String,
-        transport: String,
-        ok: Bool,
-        rcode: Int?,
-        answerCount: Int?,
-        addresses: [String],
-        error: String?,
-        startWallNanos: UInt64,
-        finishedWallNanos: UInt64,
-        durationNanos _: UInt64,
-        timingSource: String,
-        timestampSource: String
-    ) {
-        self.init(
-            target: target,
-            family: family,
-            recordType: recordType,
-            resolver: resolver,
-            transport: transport,
-            ok: ok,
-            rcode: rcode,
-            answerCount: answerCount,
-            addresses: addresses,
-            error: error,
-            timing: ActiveProbeTiming(
-                startWallNanos: startWallNanos,
-                finishedWallNanos: finishedWallNanos,
-                timingSource: timingSource,
-                timestampSource: timestampSource
-            )
-        )
-    }
-
     var startWallNanos: UInt64 {
         timing.startWallNanos
     }
@@ -300,10 +237,6 @@ struct DNSQueryPacket {
     let id: UInt16
     let recordType: DNSRecordType
     let data: Data
-}
-
-func dnsAQueryPacket(host: String, id: UInt16 = UInt16.random(in: 0 ... UInt16.max)) -> DNSQueryPacket? {
-    dnsQueryPacket(host: host, recordType: .a, id: id)
 }
 
 func dnsQueryPacket(

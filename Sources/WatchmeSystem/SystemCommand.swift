@@ -46,11 +46,11 @@ struct SystemConfig {
     }
 
     var traceEndpointURL: URL {
-        systemCollectorEndpointURL(baseURL: collectorURL, path: "v1/traces")
+        collectorEndpointURL(baseURL: collectorURL, path: "v1/traces")
     }
 
     var metricEndpointURL: URL {
-        systemCollectorEndpointURL(baseURL: collectorURL, path: "v1/metrics")
+        collectorEndpointURL(baseURL: collectorURL, path: "v1/metrics")
     }
 }
 
@@ -104,36 +104,12 @@ private struct SystemConfigParser {
         }
     }
 
-    private func splitInlineValue(_ argument: String) -> (option: String, inlineValue: String?) {
-        guard let equals = argument.firstIndex(of: "=") else {
-            return (argument, nil)
-        }
-        return (String(argument[..<equals]), String(argument[argument.index(after: equals)...]))
-    }
-
-    private func rejectInlineValue(_ argument: String, _ inlineValue: String?) throws {
-        guard inlineValue == nil else {
-            throw WatchmeError.invalidArgument("\(argument) does not accept a value")
-        }
-    }
-
     private mutating func applyCollectorURL(_ argument: String, inlineValue: String?) throws {
-        let value = try requireValue(for: argument, inlineValue: inlineValue)
-        guard
-            let url = URL(string: value),
-            let scheme = url.scheme?.lowercased(),
-            ["http", "https"].contains(scheme),
-            url.host != nil,
-            url.query == nil,
-            url.fragment == nil
-        else {
-            throw WatchmeError.invalidArgument("Invalid URL for \(argument): \(value)")
-        }
-        config.collectorURL = url
+        config.collectorURL = try validatedCollectorURL(requireValue(argument, inlineValue: inlineValue), argument: argument)
     }
 
     private mutating func applyMetricsInterval(_ argument: String, inlineValue: String?) throws {
-        let rawValue = try requireValue(for: argument, inlineValue: inlineValue)
+        let rawValue = try requireValue(argument, inlineValue: inlineValue)
         guard let value = TimeInterval(rawValue), value > 0 else {
             throw WatchmeError.invalidArgument("Invalid metrics interval")
         }
@@ -141,25 +117,15 @@ private struct SystemConfigParser {
     }
 
     private mutating func applyLogLevel(_ argument: String, inlineValue: String?) throws {
-        let value = try requireValue(for: argument, inlineValue: inlineValue).lowercased()
+        let value = try requireValue(argument, inlineValue: inlineValue).lowercased()
         guard let level = LogLevel(rawValue: value) else {
             throw WatchmeError.invalidArgument("Invalid log level: \(value)")
         }
         config.logLevel = level
     }
 
-    private mutating func requireValue(for argument: String, inlineValue: String?) throws -> String {
-        if let inlineValue {
-            guard !inlineValue.isEmpty else {
-                throw WatchmeError.invalidArgument("Missing value for \(argument)")
-            }
-            return inlineValue
-        }
-        guard index + 1 < arguments.count else {
-            throw WatchmeError.invalidArgument("Missing value for \(argument)")
-        }
-        index += 1
-        return arguments[index]
+    private mutating func requireValue(_ argument: String, inlineValue: String?) throws -> String {
+        try requireOptionValue(arguments: arguments, index: &index, argument: argument, inlineValue: inlineValue)
     }
 }
 
@@ -168,11 +134,11 @@ func printSystemUsage() {
 }
 
 func systemUsageText() -> String {
-    let commands = systemUsageRows([
+    let commands = formatUsageRows([
         ("watchme system [options]", "Run the long-running system metrics agent."),
         ("watchme system once [options]", "Export one CPU, memory, and disk metrics snapshot."),
     ])
-    let options = systemUsageRows([
+    let options = formatUsageRows([
         ("--collector.url URL", "OTLP/HTTP collector endpoint. Default: http://127.0.0.1:4318"),
         ("--metrics.interval seconds", "System metric collection interval. Default: 5"),
         ("--log.level level", "debug, info, warn, or error. Default: debug"),
@@ -187,28 +153,4 @@ func systemUsageText() -> String {
     Options:
     \(options)
     """
-}
-
-private func systemUsageRows(_ rows: [(String, String)], leftColumnWidth: Int = 34) -> String {
-    rows
-        .map { left, right in
-            let separator = String(repeating: " ", count: max(leftColumnWidth - left.count, 2))
-            return "  \(left)\(separator)\(right)"
-        }
-        .joined(separator: "\n")
-}
-
-func systemCollectorEndpointURL(baseURL: URL, path: String) -> URL {
-    var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
-    let basePath = components.percentEncodedPath
-        .split(separator: "/", omittingEmptySubsequences: true)
-        .map(String.init)
-        .joined(separator: "/")
-    let endpointPath = path
-        .split(separator: "/", omittingEmptySubsequences: true)
-        .map(String.init)
-        .joined(separator: "/")
-    let joined = [basePath, endpointPath].filter { !$0.isEmpty }.joined(separator: "/")
-    components.percentEncodedPath = joined.isEmpty ? "" : "/\(joined)"
-    return components.url!
 }

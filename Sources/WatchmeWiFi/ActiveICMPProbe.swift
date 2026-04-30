@@ -13,61 +13,6 @@ struct ActiveICMPProbeResult {
     let error: String?
     let timing: ActiveProbeTiming
 
-    init(
-        target: String,
-        family: InternetAddressFamily,
-        remoteIP: String,
-        identifier: UInt16?,
-        sequence: UInt16?,
-        ok: Bool,
-        outcome: String,
-        error: String?,
-        timing: ActiveProbeTiming
-    ) {
-        self.target = target
-        self.family = family
-        self.remoteIP = remoteIP
-        self.identifier = identifier
-        self.sequence = sequence
-        self.ok = ok
-        self.outcome = outcome
-        self.error = error
-        self.timing = timing
-    }
-
-    init(
-        target: String,
-        family: InternetAddressFamily,
-        remoteIP: String,
-        identifier: UInt16?,
-        sequence: UInt16?,
-        ok: Bool,
-        outcome: String,
-        error: String?,
-        startWallNanos: UInt64,
-        finishedWallNanos: UInt64,
-        durationNanos _: UInt64,
-        timingSource: String,
-        timestampSource: String
-    ) {
-        self.init(
-            target: target,
-            family: family,
-            remoteIP: remoteIP,
-            identifier: identifier,
-            sequence: sequence,
-            ok: ok,
-            outcome: outcome,
-            error: error,
-            timing: ActiveProbeTiming(
-                startWallNanos: startWallNanos,
-                finishedWallNanos: finishedWallNanos,
-                timingSource: timingSource,
-                timestampSource: timestampSource
-            )
-        )
-    }
-
     var startWallNanos: UInt64 {
         timing.startWallNanos
     }

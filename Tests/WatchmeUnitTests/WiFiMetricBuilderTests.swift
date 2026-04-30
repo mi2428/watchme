@@ -257,11 +257,12 @@ private func recordDisconnectedActiveProbePlaceholders(in state: inout WiFiMetri
             answerCount: 0,
             addresses: [],
             error: "no resolver",
-            startWallNanos: 1_000_000_000,
-            finishedWallNanos: 1_000_001_000,
-            durationNanos: 1000,
-            timingSource: noAddressTimingSource,
-            timestampSource: wallClockTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 1_000_000_000,
+                finishedWallNanos: 1_000_001_000,
+                timingSource: noAddressTimingSource,
+                timestampSource: wallClockTimestampSource
+            )
         )
     )
     state.recordICMPProbe(
@@ -274,11 +275,12 @@ private func recordDisconnectedActiveProbePlaceholders(in state: inout WiFiMetri
             ok: false,
             outcome: "no_address",
             error: "no address",
-            startWallNanos: 1_100_000_000,
-            finishedWallNanos: 1_100_001_000,
-            durationNanos: 1000,
-            timingSource: noAddressTimingSource,
-            timestampSource: wallClockTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 1_100_000_000,
+                finishedWallNanos: 1_100_001_000,
+                timingSource: noAddressTimingSource,
+                timestampSource: wallClockTimestampSource
+            )
         )
     )
     state.recordInternetHTTPProbe(
@@ -290,11 +292,12 @@ private func recordDisconnectedActiveProbePlaceholders(in state: inout WiFiMetri
             outcome: "no_address",
             statusCode: nil,
             error: "no address",
-            startWallNanos: 1_200_000_000,
-            finishedWallNanos: 1_200_001_000,
-            durationNanos: 1000,
-            timingSource: noAddressTimingSource,
-            timestampSource: wallClockTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 1_200_000_000,
+                finishedWallNanos: 1_200_001_000,
+                timingSource: noAddressTimingSource,
+                timestampSource: wallClockTimestampSource
+            )
         )
     )
 }
@@ -312,11 +315,12 @@ private func recordReconnectedActiveProbeSuccesses(in state: inout WiFiMetricSta
             answerCount: 1,
             addresses: ["93.184.216.34"],
             error: nil,
-            startWallNanos: 2_000_000_000,
-            finishedWallNanos: 2_050_000_000,
-            durationNanos: 50_000_000,
-            timingSource: bpfPacketTimingSource,
-            timestampSource: bpfHeaderTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 2_000_000_000,
+                finishedWallNanos: 2_050_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
         )
     )
     state.recordICMPProbe(
@@ -329,11 +333,12 @@ private func recordReconnectedActiveProbeSuccesses(in state: inout WiFiMetricSta
             ok: true,
             outcome: "reply",
             error: nil,
-            startWallNanos: 2_100_000_000,
-            finishedWallNanos: 2_130_000_000,
-            durationNanos: 30_000_000,
-            timingSource: bpfPacketTimingSource,
-            timestampSource: bpfHeaderTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 2_100_000_000,
+                finishedWallNanos: 2_130_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
         )
     )
     state.recordInternetHTTPProbe(
@@ -345,11 +350,12 @@ private func recordReconnectedActiveProbeSuccesses(in state: inout WiFiMetricSta
             outcome: "response",
             statusCode: 200,
             error: nil,
-            startWallNanos: 2_200_000_000,
-            finishedWallNanos: 2_290_000_000,
-            durationNanos: 90_000_000,
-            timingSource: bpfPacketTimingSource,
-            timestampSource: bpfHeaderTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 2_200_000_000,
+                finishedWallNanos: 2_290_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
         )
     )
 }
@@ -364,11 +370,12 @@ private func recordSampleActiveProbes(in state: inout WiFiMetricState) throws {
             outcome: "response",
             statusCode: 200,
             error: nil,
-            startWallNanos: 1_000_000_000,
-            finishedWallNanos: 1_180_000_000,
-            durationNanos: 180_000_000,
-            timingSource: bpfPacketTimingSource,
-            timestampSource: bpfHeaderTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 1_000_000_000,
+                finishedWallNanos: 1_180_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
         )
     )
     state.recordDNSProbe(
@@ -383,11 +390,12 @@ private func recordSampleActiveProbes(in state: inout WiFiMetricState) throws {
             answerCount: 1,
             addresses: ["34.223.124.45"],
             error: nil,
-            startWallNanos: 2_000_000_000,
-            finishedWallNanos: 2_050_000_000,
-            durationNanos: 50_000_000,
-            timingSource: bpfPacketTimingSource,
-            timestampSource: bpfHeaderTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 2_000_000_000,
+                finishedWallNanos: 2_050_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
         )
     )
     state.recordICMPProbe(
@@ -400,24 +408,34 @@ private func recordSampleActiveProbes(in state: inout WiFiMetricState) throws {
             ok: true,
             outcome: "reply",
             error: nil,
-            startWallNanos: 2_100_000_000,
-            finishedWallNanos: 2_120_000_000,
-            durationNanos: 20_000_000,
-            timingSource: bpfPacketTimingSource,
-            timestampSource: bpfHeaderTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 2_100_000_000,
+                finishedWallNanos: 2_120_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
         )
     )
     state.recordGatewayProbe(
         ActiveGatewayProbeResult(
             gateway: "192.168.23.254",
-            reachable: true,
-            outcome: "reply",
-            error: nil,
-            startWallNanos: 3_000_000_000,
-            finishedWallNanos: 3_010_000_000,
-            durationNanos: 10_000_000,
-            timingSource: networkFrameworkTimingSource,
-            timestampSource: wallClockTimestampSource
+            attempts: [
+                ActiveGatewayProbeAttempt(
+                    sequence: 1,
+                    identifier: nil,
+                    icmpSequence: nil,
+                    reachable: true,
+                    outcome: "reply",
+                    error: nil,
+                    timing: ActiveProbeTiming(
+                        startWallNanos: 3_000_000_000,
+                        finishedWallNanos: 3_010_000_000,
+                        timingSource: networkFrameworkTimingSource,
+                        timestampSource: wallClockTimestampSource
+                    )
+                ),
+            ],
+            burstIntervalSeconds: 0
         )
     )
 }

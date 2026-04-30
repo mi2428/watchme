@@ -50,7 +50,7 @@ final class PacketParserTests: XCTestCase {
     }
 
     func testParseDNSPacketObservationExtractsActiveProbeCorrelationFields() throws {
-        let query = try XCTUnwrap(dnsAQueryPacket(host: "www.example.test", id: 0xCAFE))
+        let query = try XCTUnwrap(dnsQueryPacket(host: "www.example.test", recordType: .a, id: 0xCAFE))
         let queryBytes = [UInt8](query.data)
         let queryContext = TransportPacketContext(
             interfaceName: "en0",

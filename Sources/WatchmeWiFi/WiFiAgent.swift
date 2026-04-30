@@ -204,17 +204,6 @@ final class WiFiAgent {
     }
 }
 
-func defaultRouteTags() -> [String: String] {
-    let global = dynamicStoreDictionary("State:/Network/Global/IPv4")
-    var tags = [
-        "network.route_source": "system_configuration_dynamic_store",
-    ]
-    setTag(&tags, "network.primary_interface", stringValue(global["PrimaryInterface"]))
-    setTag(&tags, "network.primary_service", stringValue(global["PrimaryService"]))
-    setTag(&tags, "network.gateway", stringValue(global["Router"]))
-    return tags
-}
-
 func dynamicStoreDictionary(_ key: String) -> [String: Any] {
     (SCDynamicStoreCopyValue(nil, key as CFString) as? [String: Any]) ?? [:]
 }

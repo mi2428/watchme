@@ -17,7 +17,7 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
     }
 
     func testDNSQueryPacketAndResponseMetadata() throws {
-        let query = try XCTUnwrap(dnsAQueryPacket(host: "www.example.test", id: 0xCAFE))
+        let query = try XCTUnwrap(dnsQueryPacket(host: "www.example.test", recordType: .a, id: 0xCAFE))
 
         XCTAssertEqual(query.data.prefix(2), Data([0xCA, 0xFE]))
         XCTAssertTrue(query.data.contains(Data([3, 119, 119, 119, 7, 101, 120, 97, 109, 112, 108, 101, 4, 116, 101, 115, 116, 0])))
@@ -47,5 +47,29 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
 
     func testInternetChecksumUsesOnesComplementSum() {
         XCTAssertEqual(internetChecksum([8, 0, 0, 0, 0x12, 0x34, 0, 1]), 0xE5CA)
+    }
+
+    func testProbeResultTimingAccessorsExposeUnderlyingTiming() {
+        let result = ActiveInternetHTTPProbeResult(
+            target: "example.com",
+            family: .ipv4,
+            remoteIP: "93.184.216.34",
+            ok: true,
+            outcome: "response",
+            statusCode: 204,
+            error: nil,
+            timing: ActiveProbeTiming(
+                startWallNanos: 1_000_000,
+                finishedWallNanos: 1_075_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
+        )
+
+        XCTAssertEqual(result.startWallNanos, 1_000_000)
+        XCTAssertEqual(result.finishedWallNanos, 1_075_000)
+        XCTAssertEqual(result.durationNanos, 75000)
+        XCTAssertEqual(result.timingSource, bpfPacketTimingSource)
+        XCTAssertEqual(result.timestampSource, bpfHeaderTimestampSource)
     }
 }

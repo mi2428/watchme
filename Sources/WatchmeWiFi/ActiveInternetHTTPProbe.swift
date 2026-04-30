@@ -12,57 +12,6 @@ struct ActiveInternetHTTPProbeResult {
     let error: String?
     let timing: ActiveProbeTiming
 
-    init(
-        target: String,
-        family: InternetAddressFamily,
-        remoteIP: String,
-        ok: Bool,
-        outcome: String,
-        statusCode: Int?,
-        error: String?,
-        timing: ActiveProbeTiming
-    ) {
-        self.target = target
-        self.family = family
-        self.remoteIP = remoteIP
-        self.ok = ok
-        self.outcome = outcome
-        self.statusCode = statusCode
-        self.error = error
-        self.timing = timing
-    }
-
-    init(
-        target: String,
-        family: InternetAddressFamily,
-        remoteIP: String,
-        ok: Bool,
-        outcome: String,
-        statusCode: Int?,
-        error: String?,
-        startWallNanos: UInt64,
-        finishedWallNanos: UInt64,
-        durationNanos _: UInt64,
-        timingSource: String,
-        timestampSource: String
-    ) {
-        self.init(
-            target: target,
-            family: family,
-            remoteIP: remoteIP,
-            ok: ok,
-            outcome: outcome,
-            statusCode: statusCode,
-            error: error,
-            timing: ActiveProbeTiming(
-                startWallNanos: startWallNanos,
-                finishedWallNanos: finishedWallNanos,
-                timingSource: timingSource,
-                timestampSource: timestampSource
-            )
-        )
-    }
-
     var startWallNanos: UInt64 {
         timing.startWallNanos
     }

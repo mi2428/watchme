@@ -103,11 +103,12 @@ final class ActiveProbeTelemetryTests: XCTestCase {
             answerCount: 1,
             addresses: ["34.223.124.45"],
             error: nil,
-            startWallNanos: 1_000_000_000,
-            finishedWallNanos: 1_050_000_000,
-            durationNanos: 50_000_000,
-            timingSource: timingSource,
-            timestampSource: timestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 1_000_000_000,
+                finishedWallNanos: 1_050_000_000,
+                timingSource: timingSource,
+                timestampSource: timestampSource
+            )
         )
     }
 
@@ -121,11 +122,12 @@ final class ActiveProbeTelemetryTests: XCTestCase {
             ok: true,
             outcome: "reply",
             error: nil,
-            startWallNanos: 2_000_000_000,
-            finishedWallNanos: 2_012_000_000,
-            durationNanos: 12_000_000,
-            timingSource: bpfPacketTimingSource,
-            timestampSource: bpfHeaderTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 2_000_000_000,
+                finishedWallNanos: 2_012_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
         )
     }
 
@@ -138,25 +140,35 @@ final class ActiveProbeTelemetryTests: XCTestCase {
             outcome: "response",
             statusCode: 204,
             error: nil,
-            startWallNanos: 3_000_000_000,
-            finishedWallNanos: 3_080_000_000,
-            durationNanos: 80_000_000,
-            timingSource: bpfPacketTimingSource,
-            timestampSource: bpfHeaderTimestampSource
+            timing: ActiveProbeTiming(
+                startWallNanos: 3_000_000_000,
+                finishedWallNanos: 3_080_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
         )
     }
 
     private func gatewayResult() -> ActiveGatewayProbeResult {
         ActiveGatewayProbeResult(
             gateway: "192.168.23.254",
-            reachable: true,
-            outcome: "reply",
-            error: nil,
-            startWallNanos: 4_000_000_000,
-            finishedWallNanos: 4_004_000_000,
-            durationNanos: 4_000_000,
-            timingSource: bpfPacketTimingSource,
-            timestampSource: bpfHeaderTimestampSource
+            attempts: [
+                ActiveGatewayProbeAttempt(
+                    sequence: 1,
+                    identifier: nil,
+                    icmpSequence: nil,
+                    reachable: true,
+                    outcome: "reply",
+                    error: nil,
+                    timing: ActiveProbeTiming(
+                        startWallNanos: 4_000_000_000,
+                        finishedWallNanos: 4_004_000_000,
+                        timingSource: bpfPacketTimingSource,
+                        timestampSource: bpfHeaderTimestampSource
+                    )
+                ),
+            ],
+            burstIntervalSeconds: 0
         )
     }
 

@@ -59,11 +59,12 @@ private func gatewayAttempt(
         reachable: reachable,
         outcome: outcome,
         error: reachable ? nil : "ICMP echo reply was not observed before timeout",
-        startWallNanos: start,
-        finishedWallNanos: start + durationNanos,
-        durationNanos: durationNanos,
-        timingSource: bpfPacketTimingSource,
-        timestampSource: bpfHeaderTimestampSource
+        timing: ActiveProbeTiming(
+            startWallNanos: start,
+            finishedWallNanos: start + durationNanos,
+            timingSource: bpfPacketTimingSource,
+            timestampSource: bpfHeaderTimestampSource
+        )
     )
 }
 
