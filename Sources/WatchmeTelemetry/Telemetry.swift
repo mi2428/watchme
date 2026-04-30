@@ -4,6 +4,8 @@ import OpenTelemetryProtocolExporterHttp
 import OpenTelemetrySdk
 import WatchmeCore
 
+private let metricReaderIntervalSeconds: TimeInterval = 24 * 60 * 60
+
 public struct MetricSample {
     public enum MetricType: String {
         case gauge
@@ -71,7 +73,7 @@ final class OTelMetricExporter {
         self.endpoint = endpoint
         exporter = OtlpHttpMetricExporter(endpoint: endpoint, httpClient: BlockingHTTPClient(timeout: timeout))
         let reader = PeriodicMetricReaderBuilder(exporter: exporter)
-            .setInterval(timeInterval: 86_400)
+            .setInterval(timeInterval: metricReaderIntervalSeconds)
             .build()
         let resource = Resource(attributes: [
             "service.name": AttributeValue.string(serviceName),

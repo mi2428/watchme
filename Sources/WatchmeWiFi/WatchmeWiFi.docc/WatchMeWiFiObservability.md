@@ -120,9 +120,8 @@ Running `.build/watchme-app/WatchMe.app/Contents/MacOS/watchme` directly can sti
 
 The options below apply to `watchme wifi` and `watchme wifi once`.
 
-- **`--metrics.url`:** OTLP/HTTP metrics endpoint.
+- **`--collector.url`:** OTLP/HTTP collector base endpoint. WatchMe derives `/v1/metrics` and `/v1/traces` from this URL.
 - **`--metrics.interval`:** Wi-Fi metric collection interval in seconds.
-- **`--traces.url`:** OTLP/HTTP trace endpoint.
 - **`--traces.interval`:** Active trace interval in seconds.
 - **`--traces.cooldown`:** Minimum seconds between non-forced event traces.
 - **`--probe.internet.target`:** Internet probe host; repeat to probe multiple hosts.
@@ -207,7 +206,7 @@ Trace root tags always include the snapshot fields below when available:
 
 ## Metrics
 
-Metrics are recorded as OpenTelemetry metric instruments and exported through OTLP/HTTP to `--metrics.url`.
+Metrics are recorded as OpenTelemetry metric instruments and exported through OTLP/HTTP to `<--collector.url>/v1/metrics`.
 `MetricSample` gauges become OTel gauge datapoints.
 `MetricSample` counters are tracked as monotonic OTel counters by adding source deltas; zero-valued first samples are recorded so expected series exist, and if a source counter decreases WatchMe treats it as a local source reset.
 
@@ -277,8 +276,7 @@ The root span name is derived from the trace reason:
 Common root tags include every tag listed in the snapshot model section, plus:
 
 - **`reason`:** Trace reason before normalization.
-- **`traces.url`:** OTLP/HTTP endpoint.
-- **`metrics.url`:** OTLP/HTTP metrics endpoint.
+- **`collector.url`:** OTLP/HTTP collector base endpoint.
 - **`bpf.enabled`:** `true` or `false`.
 - **`bpf.filter`:** BPF filter profile name when the monitor is active.
 - **`bpf.packets_received`:** `BIOCGSTATS` accepted packet count when available.

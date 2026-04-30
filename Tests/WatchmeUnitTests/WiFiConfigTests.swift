@@ -6,8 +6,7 @@ final class WiFiConfigTests: XCTestCase {
     func testParseOnceAndTelemetryOptions() throws {
         let config = try WiFiConfig.parse([
             "once",
-            "--traces.url", "http://collector.example:4318/v1/traces",
-            "--metrics.url=http://collector.example:4318/v1/metrics",
+            "--collector.url", "http://collector.example:4318/otlp",
             "--metrics.interval", "2.5",
             "--traces.interval=30",
             "--traces.cooldown", "0",
@@ -26,8 +25,9 @@ final class WiFiConfigTests: XCTestCase {
         ])
 
         XCTAssertTrue(config.once)
-        XCTAssertEqual(config.tracesURL.absoluteString, "http://collector.example:4318/v1/traces")
-        XCTAssertEqual(config.metricsURL.absoluteString, "http://collector.example:4318/v1/metrics")
+        XCTAssertEqual(config.collectorURL.absoluteString, "http://collector.example:4318/otlp")
+        XCTAssertEqual(config.traceEndpointURL.absoluteString, "http://collector.example:4318/otlp/v1/traces")
+        XCTAssertEqual(config.metricEndpointURL.absoluteString, "http://collector.example:4318/otlp/v1/metrics")
         XCTAssertEqual(config.metricsInterval, 2.5)
         XCTAssertEqual(config.activeInterval, 30)
         XCTAssertEqual(config.triggerCooldown, 0)
@@ -49,9 +49,22 @@ final class WiFiConfigTests: XCTestCase {
 
         XCTAssertFalse(config.once)
         XCTAssertFalse(config.authorizeLocation)
+        XCTAssertEqual(config.collectorURL.absoluteString, "http://127.0.0.1:4318")
+        XCTAssertEqual(config.traceEndpointURL.absoluteString, "http://127.0.0.1:4318/v1/traces")
+        XCTAssertEqual(config.metricEndpointURL.absoluteString, "http://127.0.0.1:4318/v1/metrics")
         XCTAssertEqual(config.probeInternetTargets, ["example.com", "www.cloudflare.com"])
         XCTAssertEqual(config.probeInternetFamily, .dual)
         XCTAssertEqual(config.logLevel, .warn)
+    }
+
+    func testUsageShowsOnlyCollectorURLTelemetryOption() {
+        let usage = wiFiUsageText()
+
+        XCTAssertTrue(usage.contains("--collector.url URL"))
+        XCTAssertFalse(usage.contains("--metrics.push.url"))
+        XCTAssertFalse(usage.contains("--metrics.push.prefix"))
+        XCTAssertFalse(usage.contains("--metrics.url"))
+        XCTAssertFalse(usage.contains("--traces.url"))
     }
 
     func testParseLocationAuthorizationMode() throws {
@@ -63,6 +76,11 @@ final class WiFiConfigTests: XCTestCase {
     }
 
     func testParseRejectsInvalidArguments() {
+        XCTAssertThrowsError(try WiFiConfig.parse(["--metrics.push.url", "http://127.0.0.1:9091"]))
+        XCTAssertThrowsError(try WiFiConfig.parse(["--metrics.push.prefix", "/base"]))
+        XCTAssertThrowsError(try WiFiConfig.parse(["--metrics.url", "http://127.0.0.1:4318/v1/metrics"]))
+        XCTAssertThrowsError(try WiFiConfig.parse(["--traces.url", "http://127.0.0.1:4318/v1/traces"]))
+        XCTAssertThrowsError(try WiFiConfig.parse(["--collector.url", "http://127.0.0.1:4318?debug=1"]))
         XCTAssertThrowsError(try WiFiConfig.parse(["--metrics.interval", "0"]))
         XCTAssertThrowsError(try WiFiConfig.parse(["--probe.internet.target"]))
         XCTAssertThrowsError(try WiFiConfig.parse(["--probe.internet.family", "both"]))

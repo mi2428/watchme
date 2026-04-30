@@ -137,8 +137,7 @@ extension WiFiAgent {
         var rootTags = snapshot.traceTags
         rootTags.merge(eventTags) { _, new in new }
         rootTags["reason"] = reason
-        rootTags["traces.url"] = config.tracesURL.absoluteString
-        rootTags["metrics.url"] = config.metricsURL.absoluteString
+        rootTags["collector.url"] = config.collectorURL.absoluteString
         rootTags["bpf.enabled"] = config.bpfEnabled ? "true" : "false"
 
         let networkState = currentWiFiServiceNetworkState(interfaceName: snapshot.interfaceName)
@@ -175,7 +174,7 @@ extension WiFiAgent {
                 "local_trace_id": recorder.traceId,
                 "reason": reason,
                 "spans": "\(batch.spans.count + 1)",
-                "traces_url": config.tracesURL.absoluteString,
+                "collector_url": config.collectorURL.absoluteString,
             ]
         )
     }

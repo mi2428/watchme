@@ -22,8 +22,8 @@ public struct WiFiCommand: WatchmeSubcommand {
 
         let telemetry = TelemetryClient(
             serviceName: "watchme-macos",
-            tracesEndpoint: config.tracesURL,
-            metricsEndpoint: config.metricsURL,
+            tracesEndpoint: config.traceEndpointURL,
+            metricsEndpoint: config.metricEndpointURL,
             metricsTimeout: config.probeInternetTimeout
         )
         let agent = WiFiAgent(config: config, telemetry: telemetry)
@@ -42,8 +42,7 @@ public struct WiFiCommand: WatchmeSubcommand {
 struct WiFiConfig {
     var once = false
     var authorizeLocation = false
-    var tracesURL = URL(string: "http://127.0.0.1:4318/v1/traces")!
-    var metricsURL = URL(string: "http://127.0.0.1:4318/v1/metrics")!
+    var collectorURL = defaultCollectorURL
     var metricsInterval: TimeInterval = 5
     var activeInterval: TimeInterval = 60
     var triggerCooldown: TimeInterval = 2
@@ -63,7 +62,17 @@ struct WiFiConfig {
         var parser = WiFiConfigParser(arguments: arguments)
         return try parser.parse()
     }
+
+    var traceEndpointURL: URL {
+        collectorEndpointURL(baseURL: collectorURL, path: "v1/traces")
+    }
+
+    var metricEndpointURL: URL {
+        collectorEndpointURL(baseURL: collectorURL, path: "v1/metrics")
+    }
 }
+
+private let defaultCollectorURL = URL(string: "http://127.0.0.1:4318")!
 
 private struct WiFiConfigParser {
     let arguments: [String]
@@ -118,8 +127,8 @@ private struct WiFiConfigParser {
             try applyInternetFamily(argument, inlineValue: inlineValue)
         case "--probe.gateway.count":
             try applyGatewayBurstCount(argument, inlineValue: inlineValue)
-        case "--traces.url", "--metrics.url":
-            try applyURL(argument, inlineValue: inlineValue)
+        case "--collector.url":
+            try applyCollectorURL(argument, inlineValue: inlineValue)
         case "--metrics.interval", "--traces.interval", "--traces.cooldown", "--probe.internet.timeout", "--probe.gateway.interval",
              "--probe.bpf.span-max-age":
             try applyTimeInterval(argument, inlineValue: inlineValue)
@@ -149,24 +158,19 @@ private struct WiFiConfigParser {
         }
     }
 
-    private mutating func applyURL(_ argument: String, inlineValue: String?) throws {
+    private mutating func applyCollectorURL(_ argument: String, inlineValue: String?) throws {
         let value = try requireValue(for: argument, inlineValue: inlineValue)
         guard
             let url = URL(string: value),
             let scheme = url.scheme?.lowercased(),
             ["http", "https"].contains(scheme),
-            url.host != nil
+            url.host != nil,
+            url.query == nil,
+            url.fragment == nil
         else {
             throw WatchmeError.invalidArgument("Invalid URL for \(argument): \(value)")
         }
-        switch argument {
-        case "--traces.url":
-            config.tracesURL = url
-        case "--metrics.url":
-            config.metricsURL = url
-        default:
-            break
-        }
+        config.collectorURL = url
     }
 
     private mutating func applyTimeInterval(_ argument: String, inlineValue: String?) throws {
@@ -271,15 +275,18 @@ private struct WiFiConfigParser {
 }
 
 func printWiFiUsage() {
+    print(wiFiUsageText())
+}
+
+func wiFiUsageText() -> String {
     let commands = usageRows([
         ("watchme wifi [options]", "Run the long-running Wi-Fi observability agent."),
         ("watchme wifi once [options]", "Export one metrics snapshot and send one active trace."),
         ("watchme wifi authorize-only", "Request Location authorization for the app-bundled CLI."),
     ])
     let options = usageRows([
-        ("--metrics.url URL", "OTLP/HTTP metrics endpoint. Default: http://127.0.0.1:4318/v1/metrics"),
+        ("--collector.url URL", "OTLP/HTTP collector endpoint. Default: http://127.0.0.1:4318"),
         ("--metrics.interval seconds", "Wi-Fi metric collection interval. Default: 5"),
-        ("--traces.url URL", "OTLP/HTTP trace endpoint. Default: http://127.0.0.1:4318/v1/traces"),
         ("--traces.interval seconds", "Active trace interval. Default: 60"),
         ("--traces.cooldown seconds", "Minimum seconds between event traces. Default: 2"),
         ("--probe.internet.target host", "Internet probe host. Can be repeated. Default: example.com, www.cloudflare.com"),
@@ -295,24 +302,22 @@ func printWiFiUsage() {
         ("--log.level level", "debug, info, warn, or error. Default: debug"),
     ])
 
-    print(
-        """
-        WatchMe Wi-Fi - macOS observability agent
+    return """
+    WatchMe Wi-Fi - macOS observability agent
 
-        Commands:
-        \(commands)
+    Commands:
+    \(commands)
 
-        Options:
-        \(options)
+    Options:
+    \(options)
 
-        NOTE:
-          On first run, execute:
+    NOTE:
+      On first run, execute:
 
-            $ watchme wifi authorize-only
+        $ watchme wifi authorize-only
 
-          Press 'Allow' in the macOS Preferences popup.
-        """
-    )
+      Press 'Allow' in the macOS Preferences popup.
+    """
 }
 
 private func usageRows(_ rows: [(String, String)], leftColumnWidth: Int = 34) -> String {
@@ -322,4 +327,19 @@ private func usageRows(_ rows: [(String, String)], leftColumnWidth: Int = 34) ->
             return "  \(left)\(separator)\(right)"
         }
         .joined(separator: "\n")
+}
+
+func collectorEndpointURL(baseURL: URL, path: String) -> URL {
+    var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+    let basePath = components.percentEncodedPath
+        .split(separator: "/", omittingEmptySubsequences: true)
+        .map(String.init)
+        .joined(separator: "/")
+    let endpointPath = path
+        .split(separator: "/", omittingEmptySubsequences: true)
+        .map(String.init)
+        .joined(separator: "/")
+    let joined = [basePath, endpointPath].filter { !$0.isEmpty }.joined(separator: "/")
+    components.percentEncodedPath = joined.isEmpty ? "" : "/\(joined)"
+    return components.url!
 }
