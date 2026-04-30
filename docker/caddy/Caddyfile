@@ -17,11 +17,6 @@
 		reverse_proxy prometheus:9090
 	}
 
-	redir /pushgateway /pushgateway/ 302
-	handle_path /pushgateway/* {
-		reverse_proxy pushgateway:9091
-	}
-
 	redir /tempo /tempo/ 302
 	handle_path /tempo/* {
 		reverse_proxy tempo:3200
