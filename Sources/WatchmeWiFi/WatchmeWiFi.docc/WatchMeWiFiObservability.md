@@ -78,21 +78,21 @@ Those derived rules should live near the operational policy that gives them mean
 
 ## Implementation rationale
 
-The current feature boundary is intentionally narrow: OS snapshot metrics, raw event counters, Wi-Fi-bound internet DNS/ICMP/plain HTTP probes, Wi-Fi gateway TCP probing, and BPF packet timing.
+The current feature boundary is intentionally narrow: OS snapshot metrics, raw event counters, Wi-Fi-bound internet DNS/ICMP/plain HTTP probes, Wi-Fi gateway ICMP probing, and BPF packet timing.
 This keeps WatchMe focused on primary evidence rather than local interpretation.
 
 Active internet probing is split into DNS, ICMP, and plain HTTP because those checks answer different operational questions.
 DNS validates Wi-Fi-bound resolver reachability and produces the concrete remote addresses used by later probes.
 ICMP checks address-family reachability without depending on HTTP service behavior.
 Plain HTTP checks TCP/80 request-to-first-response timing with packet payloads that BPF can correlate.
-Gateway TCP probing is separate because first-hop reachability is a different failure domain from internet reachability.
+Gateway ICMP probing is separate because first-hop reachability is a different failure domain from internet reachability.
 
 DNS runs before ICMP and HTTP on purpose.
 ICMP and HTTP consume the DNS probe output rather than invoking another resolver path, so the active validation trace stays explainable end to end.
 After DNS, ICMP and HTTP run concurrently across targets and address families so dual-stack and multi-target results describe the same observation point.
 
 BPF timestamping is used only when a probe has registered a narrow packet identity in `PassivePacketStore`.
-The monitor then keeps just the packets needed to pair a DNS query/response, ICMP request/reply, HTTP request/first-response, or gateway SYN/response.
+The monitor then keeps just the packets needed to pair a DNS query/response, ICMP request/reply, HTTP request/first-response, or gateway ICMP request/reply.
 If correlation fails, WatchMe still emits the same span and metric with callback or deadline timing and marks the `timing_source` accordingly.
 
 HTTPS, TLS handshake timing, certificate validation, browser page fetch timing, and synthetic quality scores are deliberately out of scope for `watchme wifi`.
@@ -132,6 +132,8 @@ The options below apply to `watchme wifi` and `watchme wifi once`.
 - **`--probe.internet.dns`:** Boolean switch for internet DNS probes.
 - **`--probe.internet.icmp`:** Boolean switch for internet ICMP echo probes.
 - **`--probe.internet.http`:** Boolean switch for internet plain HTTP HEAD probes.
+- **`--probe.gateway.count`:** Gateway ICMP attempts per burst.
+- **`--probe.gateway.interval`:** Delay between gateway ICMP burst attempts in seconds.
 - **`--probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/ARP/RS/RA/NDP packets.
 - **`--probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds.
 - **`--log.level`:** Structured log minimum level.
@@ -148,7 +150,7 @@ The options below apply to `watchme wifi` and `watchme wifi once`.
 | Active internet DNS probe | `Sources/WatchmeWiFi/ActiveDNSProbe.swift` | `Network.framework` UDP `NWConnection` | DNS A and AAAA query latency through Wi-Fi-bound resolver traffic. |
 | Active internet ICMP probe | `Sources/WatchmeWiFi/ActiveICMPProbe.swift` | Darwin datagram ICMP sockets with `IP_BOUND_IF` / `IPV6_BOUND_IF` | IPv4 and IPv6 internet echo reachability through the Wi-Fi interface. |
 | Active internet HTTP probe | `Sources/WatchmeWiFi/ActiveInternetHTTPProbe.swift` | `Network.framework` TCP `NWConnection` | Plain HTTP HEAD reachability over TCP/80 through the Wi-Fi interface. |
-| Active gateway probe | `Sources/WatchmeWiFi/ActiveGatewayProbe.swift` | `Network.framework` TCP `NWConnection` | First-hop gateway TCP reachability through the Wi-Fi interface. |
+| Active gateway probe | `Sources/WatchmeWiFi/ActiveGatewayProbe.swift` | Darwin datagram ICMP sockets with `IP_BOUND_IF` | First-hop gateway ICMP reachability, loss, and jitter through the Wi-Fi interface. |
 | Wi-Fi service network state | `Sources/WatchmeWiFi/WiFiServiceNetworkState.swift` | `SCDynamicStoreCopyValue`, `SCDynamicStoreCopyKeyList` | DNS resolvers and router for the network service bound to the Wi-Fi interface. |
 | Location grant | `Sources/WatchmeWiFi/LocationAuthorization.swift` | `CoreLocation.CLLocationManager` | User authorization needed for CoreWLAN SSID/BSSID. |
 
@@ -256,10 +258,13 @@ Those can be defined in Prometheus or Grafana if an operator wants a site-specif
 | `watchme_wifi_probe_internet_http_duration_seconds` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `scheme`, `outcome`, `timing_source` | Wi-Fi-bound active internet plain HTTP probe | Request-to-first-response-byte duration, using BPF packet timestamps when correlation succeeds. |
 | `watchme_wifi_probe_internet_http_status_code` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `scheme`, `outcome`, `timing_source` | Wi-Fi-bound active internet plain HTTP probe | HTTP status code from the latest probe when one was received. |
 | `watchme_wifi_probe_internet_http_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `scheme`, `outcome`, `timing_source` | Wi-Fi-bound active internet plain HTTP probe | Unix timestamp of the latest HTTP probe completion. |
-| `watchme_wifi_probe_gateway_tcp_reachable` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome`, `timing_source` | Wi-Fi-bound active gateway TCP probe | `1` when the gateway host was reached, including TCP refusal, otherwise `0`. |
-| `watchme_wifi_probe_gateway_tcp_connect_success` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome`, `timing_source` | Wi-Fi-bound active gateway TCP probe | `1` when TCP connect reached `.ready`, otherwise `0`. |
-| `watchme_wifi_probe_gateway_tcp_duration_seconds` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome`, `timing_source` | Wi-Fi-bound active gateway TCP probe | Duration of the latest gateway TCP probe, using BPF SYN-to-response packet timestamps when correlation succeeds and Network.framework callback time otherwise. |
-| `watchme_wifi_probe_gateway_tcp_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `gateway`, `port`, `outcome`, `timing_source` | Wi-Fi-bound active gateway TCP probe | Unix timestamp of the latest gateway TCP probe completion, using the BPF response packet timestamp when correlation succeeds. |
+| `watchme_wifi_probe_gateway_icmp_success` | `interface`, `essid`, `bssid`, `gateway`, `family`, `outcome`, `timing_source` | Wi-Fi-bound active gateway ICMP burst probe | `1` when at least one echo reply is received from the gateway, otherwise `0`. |
+| `watchme_wifi_probe_gateway_icmp_duration_seconds` | `interface`, `essid`, `bssid`, `gateway`, `family`, `outcome`, `timing_source` | Wi-Fi-bound active gateway ICMP burst probe | Mean request-to-reply duration for replies in the latest burst, falling back to the latest attempt duration when all attempts were lost. |
+| `watchme_wifi_probe_gateway_icmp_probe_count` | `interface`, `essid`, `bssid`, `gateway`, `family`, `outcome`, `timing_source` | Wi-Fi-bound active gateway ICMP burst probe | Number of ICMP echo requests sent in the latest gateway burst probe. |
+| `watchme_wifi_probe_gateway_icmp_reply_count` | `interface`, `essid`, `bssid`, `gateway`, `family`, `outcome`, `timing_source` | Wi-Fi-bound active gateway ICMP burst probe | Number of echo replies received from the gateway in the latest burst. |
+| `watchme_wifi_probe_gateway_icmp_loss_ratio` | `interface`, `essid`, `bssid`, `gateway`, `family`, `outcome`, `timing_source` | Wi-Fi-bound active gateway ICMP burst probe | Fraction of ICMP attempts that did not receive a gateway echo reply in the latest burst. |
+| `watchme_wifi_probe_gateway_icmp_jitter_seconds` | `interface`, `essid`, `bssid`, `gateway`, `family`, `outcome`, `timing_source` | Wi-Fi-bound active gateway ICMP burst probe | Mean absolute difference between consecutive gateway ICMP reply durations in the latest burst. |
+| `watchme_wifi_probe_gateway_icmp_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `gateway`, `family`, `outcome`, `timing_source` | Wi-Fi-bound active gateway ICMP burst probe | Unix timestamp of the latest gateway ICMP burst completion, using BPF response packet timestamps when correlation succeeds. |
 
 ## Trace lifecycle
 
@@ -323,11 +328,11 @@ Every trace currently includes active validation because all `emitTrace` call si
 
 | Span name | Parent | Timing | Status | Tags |
 | --- | --- | --- | --- | --- |
-| `phase.active_validation` | Root | Wall-clock time around all configured active targets. | OK | `phase.name=active_validation`, `phase.source=network_framework_active_probe`, `phase.validation_scope=internet_dns,internet_icmp,internet_http,gateway_tcp`, `probe.internet.targets`, `probe.internet.family`, enabled flags and span counts, `probe.dns_resolvers`, `probe.gateway`, `span.source=watchme`, `otel.status_code=OK`. |
+| `phase.active_validation` | Root | Wall-clock time around all configured active targets. | OK | `phase.name=active_validation`, `phase.source=network_framework_active_probe`, `phase.validation_scope=internet_dns,internet_icmp,internet_http,gateway_icmp`, `probe.internet.targets`, `probe.internet.family`, enabled flags and span counts, `probe.dns_resolvers`, `probe.gateway`, `probe.gateway.burst_count`, `probe.gateway.burst_interval_seconds`, `probe.gateway.span_count`, `span.source=watchme`, `otel.status_code=OK`. |
 | `probe.internet.dns.resolve` | `phase.active_validation` | UDP DNS query-to-response duration for each active target host, address family, and up to two Wi-Fi service DNS resolvers. BPF packet timestamps are used when the query and response can be correlated; Network.framework callback timing is the fallback. | OK when rcode is `0` and at least one address is present. | `span.source=network_framework_internet_dns_probe`, `probe.target`, `probe.internet.target`, `network.family`, `probe.timing_source`, `probe.timestamp_source`, `dns.resolver`, `dns.transport`, `dns.question.type`, `dns.address_count`, optional `dns.addresses`, optional `dns.rcode`, optional `dns.answer_count`, optional `packet.event=dns_query_to_response`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
 | `probe.internet.icmp.echo` | `phase.active_validation` | ICMP echo request-to-reply duration for each active target host and address family. BPF packet timestamps are used when the request and reply can be correlated. | OK when an echo reply is observed. | `span.source=darwin_icmp_socket`, `probe.target`, `probe.internet.target`, `network.family`, `network.peer.address`, `icmp.outcome`, optional `icmp.identifier`, optional `icmp.sequence`, `probe.timing_source`, `probe.timestamp_source`, optional `packet.event=icmp_echo_request_to_reply`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
 | `probe.internet.http.head` | `phase.active_validation` | Plain HTTP HEAD request-to-first-response-byte duration for each active target host and address family. BPF packet timestamps are used when the request packet and first response packet can be correlated; Network.framework callback timing is the fallback. | OK when HTTP status is `200..<500`. | `span.source=network_framework_plain_http_probe`, `probe.target`, `probe.internet.target`, `network.family`, `network.peer.address`, `net.peer.port=80`, `url.scheme=http`, `http.request.method=HEAD`, `http.outcome`, optional `http.response.status_code`, optional `packet.event=http_request_to_first_response_byte`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
-| `probe.gateway.tcp_connect` | `phase.active_validation` | TCP SYN-to-SYN/ACK or SYN-to-RST duration to the Wi-Fi service router on port 53. BPF packet timestamps are used when the packets can be correlated; Network.framework callback timing is the fallback. | OK when the gateway host is reachable; TCP refusal is reachable but not connect success. | `span.source=network_framework_gateway_probe`, `probe.timing_source`, `probe.timestamp_source`, `network.wifi_gateway`, `network.gateway_probe.port`, `network.gateway_probe.outcome`, `network.gateway_probe.reachable`, `network.gateway_probe.connect_success`, optional `packet.event=tcp_syn_to_response`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.gateway.icmp.echo` | `phase.active_validation` | Gateway ICMP burst duration around multiple echo request/reply attempts to the Wi-Fi service router. BPF packet timestamps are used per attempt when packets can be correlated; wall-clock deadline timing is the fallback. | OK when at least one echo reply is observed. | `span.source=darwin_icmp_gateway_probe`, `probe.timing_source`, `probe.timestamp_source`, `network.family=ipv4`, `network.wifi_gateway`, `network.gateway_probe.protocol=icmp`, `network.gateway_probe.outcome`, `network.gateway_probe.reachable`, `network.gateway_probe.probe_count`, `network.gateway_probe.reply_count`, `network.gateway_probe.lost_count`, `network.gateway_probe.loss_ratio`, `network.gateway_probe.jitter_seconds`, `network.gateway_probe.burst_interval_seconds`, optional `packet.event=icmp_echo_request_to_reply`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
 
 Wi-Fi service network tags:
 
@@ -336,11 +341,16 @@ This matters on Macs where Ethernet, VPN, or another service owns the default ro
 
 - **`probe.dns_resolvers`:** DNS resolvers from `State:/Network/Service/<service>/DNS`, attached to `phase.active_validation`.
 - **`probe.gateway`:** Router from `State:/Network/Service/<service>/IPv4`, attached to `phase.active_validation`.
-- **`network.wifi_gateway`:** Router used by `probe.gateway.tcp_connect`.
-- **`network.gateway_probe.port`:** Gateway TCP destination port used by `probe.gateway.tcp_connect`.
-- **`network.gateway_probe.outcome`:** Gateway probe outcome, such as `ready`, `refused`, `failed`, or `timeout`.
-- **`network.gateway_probe.reachable`:** `true` when the gateway replied, including TCP refusal.
-- **`network.gateway_probe.connect_success`:** `true` only when TCP reached `.ready`.
+- **`network.wifi_gateway`:** Router used by `probe.gateway.icmp.echo`.
+- **`network.gateway_probe.protocol`:** `icmp` for gateway probes.
+- **`network.gateway_probe.outcome`:** Gateway probe outcome, such as `reply`, `partial_loss`, `loss`, `send_failed`, or `timeout`.
+- **`network.gateway_probe.reachable`:** `true` when at least one gateway echo reply was observed.
+- **`network.gateway_probe.probe_count`:** Number of ICMP echo requests in the gateway burst.
+- **`network.gateway_probe.reply_count`:** Number of gateway echo replies observed in the burst.
+- **`network.gateway_probe.lost_count`:** Number of burst attempts that did not reach the gateway.
+- **`network.gateway_probe.loss_ratio`:** `lost_count / probe_count`.
+- **`network.gateway_probe.jitter_seconds`:** Mean absolute difference between consecutive reachable attempt durations.
+- **`network.gateway_probe.burst_interval_seconds`:** Configured delay between gateway burst attempts.
 
 ### Packet-window phase span
 
@@ -441,7 +451,7 @@ The reusable BPF layer is in `Sources/WatchmeBPF`.
 - Enables seeing sent packets.
 - Requires Ethernet datalink type.
 - Installs a classic BPF kernel filter with `BIOCSETF`.
-  The filter profile is `wifi_control_active_probe_v1` and accepts only ARP, DHCPv4, ICMP, ICMPv6, DNS UDP/53, gateway TCP/53, and plain HTTP TCP/80 traffic.
+  The filter profile is `wifi_control_active_probe_v1` and accepts only ARP, DHCPv4, ICMP, ICMPv6, DNS UDP/53, and plain HTTP TCP/80 traffic.
 - Reads `BIOCGSTATS` for accepted and dropped packet counters and exposes them as Prometheus counters and root trace tags.
 - Reads BPF buffers in a utility queue and walks `bpf_hdr + frame` records using BPF word alignment.
 - Converts BPF `timeval` timestamps to wall-clock nanoseconds.
@@ -454,7 +464,6 @@ The Wi-Fi BPF monitor only parses:
 - UDP DNS packets on port 53 that match a currently registered active DNS probe transaction ID, query type, resolver, and target host.
 - ICMP echo request/reply packets that match a currently registered active ICMP probe target address and address family.
 - TCP payload packets on port 80 that match a currently registered active plain HTTP probe target address.
-- TCP SYN/SYN-ACK/RST packets that match a currently registered active gateway probe destination and port.
 
 ## Active probe details
 
@@ -492,11 +501,11 @@ If packet correlation fails or BPF is disabled, the same span and metric fall ba
 HTTPS, TLS handshake timing, certificate validation, and encrypted HTTP response timing are intentionally out of scope for `watchme wifi`.
 
 Gateway active probes use the Wi-Fi service's IPv4 router, not `State:/Network/Global/IPv4`.
-The probe opens a TCP connection to gateway port 53 over the Wi-Fi interface.
-TCP refusal is treated as host reachable because the gateway replied, but `connect_success` remains `0`.
-Before opening the connection, WatchMe registers the gateway IP, port, and interface with `PassivePacketStore`.
-When BPF observes the outbound SYN and the corresponding inbound SYN/ACK or RST, `probe.gateway.tcp_connect` and the gateway duration metric use BPF packet timestamps.
-If packet correlation fails or BPF is disabled, the same span and metric fall back to Network.framework callback wall-clock timing.
+The probe sends a short burst of ICMP echo requests to the gateway over the Wi-Fi interface.
+Before each request, WatchMe registers the gateway IP, address family, interface, and attempt start time with `PassivePacketStore`.
+When BPF observes the outbound echo request and inbound echo reply, `probe.gateway.icmp.echo` and the gateway duration/jitter metrics use BPF packet timestamps for that attempt.
+Loss is the fraction of burst attempts that do not receive a gateway echo reply.
+If packet correlation fails or BPF is disabled, the same span and metric fall back to wall-clock deadline timing.
 
 ## Event classification
 
