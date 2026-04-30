@@ -10,6 +10,7 @@ It is meant to be checked against the source when instrumentation changes.
 ### Table of contents
 
 - [Scope](#scope)
+- [Signal design policy](#signal-design-policy)
 - [Runtime entry points](#runtime-entry-points)
   - [CLI options](#cli-options)
 - [Collection points](#collection-points)
@@ -39,6 +40,40 @@ It is meant to be checked against the source when instrumentation changes.
 
 The Wi-Fi module does not shell out to `ifconfig`, `networksetup`, `airport`, `curl`, or other CLI tools.
 Collection is implemented with macOS APIs and file descriptors inside the process.
+
+## Signal design policy
+
+WatchMe Wi-Fi emits primary observations rather than semantic or derived judgments.
+The agent should report values that come directly from macOS APIs, packet timestamps, or active probes that are explicitly bound to the Wi-Fi interface.
+It should avoid inventing quality scores or event categories whose meaning depends on a local policy.
+
+This is why WatchMe does not emit metrics such as:
+
+- `watchme_wifi_snr_db`
+- `watchme_wifi_signal_quality_percent`
+- `watchme_wifi_connection_score`
+- `watchme_wifi_roam_total`
+- `watchme_wifi_join_total`
+- `watchme_wifi_disconnect_total`
+- `watchme_wifi_channel_change_total`
+
+SNR, signal quality, and connection score are derived quality models.
+They are useful dashboard concepts, but the thresholds and weights depend on RF environment, client hardware, AP generation, application workload, and operator preference.
+Roam, join, disconnect, and channel-change counters are semantic summaries over lower-level events.
+Those summaries are also useful, but encoding them in the agent would make WatchMe's output less neutral and harder to reinterpret later.
+
+The agent instead exposes the primary signals needed to build those views downstream:
+
+- `watchme_wifi_corewlan_event_total` for raw CoreWLAN callback counts such as `power_did_change`, `ssid_did_change`, `bssid_did_change`, and `link_did_change`.
+- `watchme_wifi_snapshot_change_total` for observed snapshot field changes such as `associated`, `bssid`, `ssid`, `channel`, and `power_on`.
+- `watchme_wifi_info` for categorical OS state such as `phy_mode`, `channel_band`, `channel_width`, `security`, and `country_code`.
+- Root trace names such as `wifi.join`, `wifi.roam`, `wifi.power.changed`, `wifi.link.changed`, and `wifi.rejoin.packet_window`.
+- BPF packet spans for DHCPv4, router solicitation/advertisement, and neighbor discovery timing.
+- Active HTTP, DNS, and gateway probe metrics and spans for Wi-Fi-bound reachability.
+
+Grafana dashboards, Prometheus recording rules, or alert rules may define site-specific semantic views from these primary signals.
+For example, an operator can count BSSID changes from `watchme_wifi_snapshot_change_total{field="bssid"}` or define an SNR recording rule from RSSI and noise when that is appropriate for the environment.
+Those derived rules should live near the operational policy that gives them meaning, not inside the agent.
 
 ## Runtime entry points
 
