@@ -37,6 +37,14 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
         )
     }
 
+    func testRunProbeBurstReturnsSequenceOrderedResults() {
+        let results = runProbeBurst(count: 4, interval: 0) { sequence in
+            sequence * 10
+        }
+
+        XCTAssertEqual(results, [10, 20, 30, 40])
+    }
+
     func testInternetChecksumUsesOnesComplementSum() {
         XCTAssertEqual(internetChecksum([8, 0, 0, 0, 0x12, 0x34, 0, 1]), 0xE5CA)
     }

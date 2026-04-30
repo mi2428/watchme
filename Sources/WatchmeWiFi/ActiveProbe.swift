@@ -37,6 +37,34 @@ func networkInterface(named name: String?, timeout: TimeInterval) -> NWInterface
     return selected
 }
 
+func runProbeBurst<Value>(
+    count: Int,
+    interval: TimeInterval,
+    qos: DispatchQoS.QoSClass = .utility,
+    operation: @escaping (_ sequence: Int) -> Value
+) -> [Value] {
+    let normalizedCount = max(count, 1)
+    let normalizedInterval = max(interval, 0)
+    let queue = DispatchQueue.global(qos: qos)
+    let group = DispatchGroup()
+    let lock = NSLock()
+    var values: [(sequence: Int, value: Value)] = []
+
+    for sequence in 1 ... normalizedCount {
+        group.enter()
+        queue.asyncAfter(deadline: .now() + dispatchDelay(seconds: normalizedInterval * Double(sequence - 1))) {
+            let value = operation(sequence)
+            lock.lock()
+            values.append((sequence: sequence, value: value))
+            lock.unlock()
+            group.leave()
+        }
+    }
+
+    group.wait()
+    return values.sorted { $0.sequence < $1.sequence }.map(\.value)
+}
+
 func isConnectionRefused(_ error: NWError) -> Bool {
     if case let .posix(code) = error {
         return code == .ECONNREFUSED
@@ -57,4 +85,8 @@ func parseHTTPStatusCode(_ data: Data) -> Int? {
         return nil
     }
     return Int(parts[1])
+}
+
+private func dispatchDelay(seconds: TimeInterval) -> DispatchTimeInterval {
+    .nanoseconds(Int(max(seconds, 0) * 1_000_000_000))
 }

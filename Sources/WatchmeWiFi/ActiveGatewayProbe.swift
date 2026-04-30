@@ -230,32 +230,17 @@ func runGatewayICMPProbe(
 ) -> ActiveGatewayProbeResult {
     let count = max(burstCount, 1)
     let interval = max(burstInterval, 0)
-    let lock = NSLock()
-    let group = DispatchGroup()
-    var attempts: [ActiveGatewayProbeAttempt] = []
-
-    for sequence in 1 ... count {
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            if sequence > 1, interval > 0 {
-                Thread.sleep(forTimeInterval: interval * Double(sequence - 1))
-            }
-            let result = runInternetICMPProbe(
-                target: gateway,
-                family: .ipv4,
-                remoteIP: gateway,
-                timeout: timeout,
-                interfaceName: interfaceName,
-                packetStore: packetStore
-            )
-            let attempt = gatewayAttempt(sequence: sequence, result: result)
-            lock.lock()
-            attempts.append(attempt)
-            lock.unlock()
-            group.leave()
-        }
+    let attempts = runProbeBurst(count: count, interval: interval) { sequence in
+        let result = runInternetICMPProbe(
+            target: gateway,
+            family: .ipv4,
+            remoteIP: gateway,
+            timeout: timeout,
+            interfaceName: interfaceName,
+            packetStore: packetStore
+        )
+        return gatewayAttempt(sequence: sequence, result: result)
     }
-    group.wait()
 
     return ActiveGatewayProbeResult(
         gateway: gateway,
