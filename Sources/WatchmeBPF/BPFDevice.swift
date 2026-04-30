@@ -15,13 +15,13 @@ let bpfIOCGetDLT: UInt = 1_074_020_970
 let bpfIOCFlush: UInt = 536_887_912
 let bpfDLTEthernet: UInt32 = 1
 let bpfIfreqSize = 32
-let bpfHeaderCaplenOffset = 8
-let bpfHeaderHeaderLengthOffset = 16
+public let bpfHeaderCaplenOffset = 8
+public let bpfHeaderHeaderLengthOffset = 16
 
-struct BPFOpenResult {
-    let fd: Int32?
-    let path: String?
-    let error: String?
+public struct BPFOpenResult {
+    public let fd: Int32?
+    public let path: String?
+    public let error: String?
 }
 
 public struct BPFStats: Equatable {
@@ -53,7 +53,7 @@ struct RawBPFStats {
     var packetsDropped: UInt32 = 0
 }
 
-func openBPFDevice() -> BPFOpenResult {
+public func openBPFDevice() -> BPFOpenResult {
     // macOS exposes BPF devices as a small numbered pool. Opening the first
     // available descriptor is the stable API; there is no interface-specific
     // device path.
@@ -69,7 +69,7 @@ func openBPFDevice() -> BPFOpenResult {
     return BPFOpenResult(fd: nil, path: nil, error: lastError)
 }
 
-func configureBPF(fd: Int32, interfaceName: String, tags: inout [String: String]) -> Bool {
+public func configureBPF(fd: Int32, interfaceName: String, tags: inout [String: String]) -> Bool {
     var ifreq = [UInt8](repeating: 0, count: bpfIfreqSize)
     let nameBytes = Array(interfaceName.utf8.prefix(Int(IF_NAMESIZE) - 1))
     for index in nameBytes.indices {
@@ -204,7 +204,7 @@ func setNonBlocking(_ fd: Int32) {
     }
 }
 
-func bpfTimestampNanos(buffer: [UInt8], offset: Int) -> UInt64? {
+public func bpfTimestampNanos(buffer: [UInt8], offset: Int) -> UInt64? {
     guard offset + 8 <= buffer.count else {
         return nil
     }
@@ -219,23 +219,23 @@ func bpfTimestampNanos(buffer: [UInt8], offset: Int) -> UInt64? {
     return seconds * 1_000_000_000 + microseconds * 1000
 }
 
-func bpfWordAlign(_ value: Int) -> Int {
+public func bpfWordAlign(_ value: Int) -> Int {
     // BPF records in a read buffer are padded to 32-bit boundaries. Misalignment
     // corrupts every packet after the first multi-record read.
     (value + 3) & ~3
 }
 
-func readLittleUInt16(_ buffer: [UInt8], offset: Int) -> UInt16 {
+public func readLittleUInt16(_ buffer: [UInt8], offset: Int) -> UInt16 {
     UInt16(buffer[offset]) | (UInt16(buffer[offset + 1]) << 8)
 }
 
-func readLittleUInt32(_ buffer: [UInt8], offset: Int) -> UInt32 {
+public func readLittleUInt32(_ buffer: [UInt8], offset: Int) -> UInt32 {
     UInt32(buffer[offset])
         | (UInt32(buffer[offset + 1]) << 8)
         | (UInt32(buffer[offset + 2]) << 16)
         | (UInt32(buffer[offset + 3]) << 24)
 }
 
-func posixErrorString(_ code: Int32 = errno) -> String {
+public func posixErrorString(_ code: Int32 = errno) -> String {
     String(cString: strerror(code))
 }

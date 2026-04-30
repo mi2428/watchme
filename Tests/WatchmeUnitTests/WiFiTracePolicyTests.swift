@@ -21,12 +21,14 @@ final class WiFiTracePolicyTests: XCTestCase {
             interfaceName: "en0",
             serviceID: "wifi-service",
             routerIPv4: "192.168.23.254",
+            routerHardwareAddress: "b6:99:e5:2b:f8:cc",
             dnsServers: ["192.168.23.254"]
         )
         let noDNSState = WiFiServiceNetworkState(
             interfaceName: "en0",
             serviceID: "wifi-service",
             routerIPv4: "192.168.23.254",
+            routerHardwareAddress: "b6:99:e5:2b:f8:cc",
             dnsServers: []
         )
 
@@ -74,6 +76,7 @@ final class WiFiTracePolicyTests: XCTestCase {
             interfaceName: "en0",
             serviceID: "wifi-service",
             routerIPv4: "192.168.23.254",
+            routerHardwareAddress: nil,
             dnsServers: []
         )
 

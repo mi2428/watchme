@@ -6,6 +6,7 @@ struct WiFiServiceNetworkState {
     let interfaceName: String?
     let serviceID: String?
     let routerIPv4: String?
+    let routerHardwareAddress: String?
     let dnsServers: [String]
 
     var traceTags: [String: String] {
@@ -15,6 +16,7 @@ struct WiFiServiceNetworkState {
         setTag(&tags, "network.wifi_interface", interfaceName)
         setTag(&tags, "network.wifi_service", serviceID)
         setTag(&tags, "network.wifi_gateway", routerIPv4)
+        setTag(&tags, "network.wifi_gateway_hwaddr", routerHardwareAddress)
         return tags
     }
 }
@@ -30,7 +32,7 @@ func wifiServiceNetworkState(
     valueForKey: (String) -> [String: Any]
 ) -> WiFiServiceNetworkState {
     guard let interfaceName, !interfaceName.isEmpty else {
-        return WiFiServiceNetworkState(interfaceName: nil, serviceID: nil, routerIPv4: nil, dnsServers: [])
+        return WiFiServiceNetworkState(interfaceName: nil, serviceID: nil, routerIPv4: nil, routerHardwareAddress: nil, dnsServers: [])
     }
 
     let candidates = serviceIDs.compactMap { serviceID -> WiFiServiceNetworkState? in
@@ -52,13 +54,14 @@ func wifiServiceNetworkState(
             interfaceName: interfaceName,
             serviceID: serviceID,
             routerIPv4: stringValue(ipv4["Router"]),
+            routerHardwareAddress: stringValue(ipv4["ARPResolvedHardwareAddress"]),
             dnsServers: stringArrayValue(dns["ServerAddresses"])
         )
     }
 
     return candidates.first { $0.routerIPv4 != nil || !$0.dnsServers.isEmpty }
         ?? candidates.first
-        ?? WiFiServiceNetworkState(interfaceName: interfaceName, serviceID: nil, routerIPv4: nil, dnsServers: [])
+        ?? WiFiServiceNetworkState(interfaceName: interfaceName, serviceID: nil, routerIPv4: nil, routerHardwareAddress: nil, dnsServers: [])
 }
 
 func dynamicStoreNetworkServiceIDs() -> [String] {

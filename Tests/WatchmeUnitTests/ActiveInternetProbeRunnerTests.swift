@@ -17,6 +17,7 @@ final class ActiveInternetProbeRunnerTests: XCTestCase {
                 interfaceName: "en0",
                 serviceID: "wifi-service",
                 routerIPv4: "192.0.2.1",
+                routerHardwareAddress: nil,
                 dnsServers: []
             ),
             interfaceName: "en0",
@@ -63,6 +64,7 @@ final class ActiveInternetProbeRunnerTests: XCTestCase {
                 interfaceName: "en0",
                 serviceID: "wifi-service",
                 routerIPv4: "192.0.2.1",
+                routerHardwareAddress: nil,
                 dnsServers: ["192.0.2.53"]
             ),
             interfaceName: "en0",

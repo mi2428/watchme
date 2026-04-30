@@ -1,12 +1,14 @@
 import CoreWLAN
 import Darwin
 import Foundation
+import WatchmeBPF
 import WatchmeCore
 
 struct NativeInterfaceState {
     let isActive: Bool
     let ipv4Addresses: [String]
     let ipv6Addresses: [String]
+    let macAddress: String?
 }
 
 struct WiFiSnapshot {
@@ -142,7 +144,8 @@ struct WiFiSnapshot {
                 ?? NativeInterfaceState(
                     isActive: false,
                     ipv4Addresses: [],
-                    ipv6Addresses: []
+                    ipv6Addresses: [],
+                    macAddress: nil
                 )
         let ssid = interface?.ssid()
         let ssidData = interface?.ssidData()
@@ -217,7 +220,7 @@ func nativeWiFiInterfaceName() -> String? {
 func nativeInterfaceState(interfaceName: String) -> NativeInterfaceState {
     var addresses: UnsafeMutablePointer<ifaddrs>?
     guard getifaddrs(&addresses) == 0, let first = addresses else {
-        return NativeInterfaceState(isActive: false, ipv4Addresses: [], ipv6Addresses: [])
+        return NativeInterfaceState(isActive: false, ipv4Addresses: [], ipv6Addresses: [], macAddress: nil)
     }
     defer { freeifaddrs(addresses) }
 
@@ -225,6 +228,7 @@ func nativeInterfaceState(interfaceName: String) -> NativeInterfaceState {
     var flags: UInt32 = 0
     var ipv4: [String] = []
     var ipv6: [String] = []
+    var macAddress: String?
 
     var cursor: UnsafeMutablePointer<ifaddrs>? = first
     while let current = cursor {
@@ -240,6 +244,24 @@ func nativeInterfaceState(interfaceName: String) -> NativeInterfaceState {
             continue
         }
         let family = Int32(address.pointee.sa_family)
+        if family == AF_LINK {
+            address.withMemoryRebound(to: sockaddr_dl.self, capacity: 1) { pointer in
+                let linkAddress = pointer.pointee
+                let addressLength = Int(linkAddress.sdl_alen)
+                guard addressLength == 6 else {
+                    return
+                }
+                let dataOffset = MemoryLayout<sockaddr_dl>.offset(of: \.sdl_data)! + Int(linkAddress.sdl_nlen)
+                guard dataOffset + addressLength <= Int(linkAddress.sdl_len) else {
+                    return
+                }
+                let bytes = UnsafeRawPointer(pointer)
+                    .advanced(by: dataOffset)
+                    .assumingMemoryBound(to: UInt8.self)
+                macAddress = macAddressString(bytes: (0 ..< addressLength).map { bytes[$0] })
+            }
+            continue
+        }
         guard family == AF_INET || family == AF_INET6 else {
             continue
         }
@@ -270,6 +292,7 @@ func nativeInterfaceState(interfaceName: String) -> NativeInterfaceState {
     return NativeInterfaceState(
         isActive: sawInterface && isUp && isRunning,
         ipv4Addresses: ipv4,
-        ipv6Addresses: ipv6
+        ipv6Addresses: ipv6,
+        macAddress: macAddress
     )
 }

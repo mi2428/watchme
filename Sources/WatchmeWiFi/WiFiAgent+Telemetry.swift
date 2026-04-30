@@ -434,11 +434,13 @@ extension WiFiAgent {
         }
         return runGatewayICMPProbe(
             gateway: gateway,
+            gatewayHardwareAddress: networkState.routerHardwareAddress,
             timeout: min(config.probeInternetTimeout, 2.0),
             interfaceName: snapshot.interfaceName,
             packetStore: packetStore,
             burstCount: config.probeGatewayBurstCount,
-            burstInterval: config.probeGatewayBurstInterval
+            burstInterval: config.probeGatewayBurstInterval,
+            useDirectBPF: config.bpfEnabled
         )
     }
 }

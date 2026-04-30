@@ -1,4 +1,6 @@
+import Darwin
 import Foundation
+import WatchmeBPF
 import WatchmeCore
 
 struct ActiveGatewayProbeAttempt {
@@ -137,15 +139,26 @@ struct ActiveGatewayProbeResult {
 
 func runGatewayICMPProbe(
     gateway: String,
+    gatewayHardwareAddress: String? = nil,
     timeout: TimeInterval,
     interfaceName: String?,
     packetStore: PassivePacketStore? = nil,
     burstCount: Int = WiFiDefaults.gatewayProbeBurstCount,
-    burstInterval: TimeInterval = WiFiDefaults.gatewayProbeBurstInterval
+    burstInterval: TimeInterval = WiFiDefaults.gatewayProbeBurstInterval,
+    useDirectBPF: Bool = true
 ) -> ActiveGatewayProbeResult {
     let count = max(burstCount, 1)
     let interval = max(burstInterval, 0)
     let attempts = runProbeBurst(count: count, interval: interval) { sequence in
+        if useDirectBPF, let gatewayHardwareAddress, !gatewayHardwareAddress.isEmpty {
+            return runBPFGatewayICMPAttempt(
+                sequence: sequence,
+                gateway: gateway,
+                gatewayHardwareAddress: gatewayHardwareAddress,
+                timeout: timeout,
+                interfaceName: interfaceName
+            )
+        }
         let result = runInternetICMPProbe(
             target: gateway,
             family: .ipv4,
@@ -164,6 +177,145 @@ func runGatewayICMPProbe(
     )
 }
 
+private func runBPFGatewayICMPAttempt(
+    sequence: Int,
+    gateway: String,
+    gatewayHardwareAddress: String,
+    timeout: TimeInterval,
+    interfaceName: String?
+) -> ActiveGatewayProbeAttempt {
+    let startWallNanos = wallClockNanos()
+    let identifier = UInt16(ProcessInfo.processInfo.processIdentifier & 0xffff)
+    let icmpSequence = UInt16((wallClockNanos() + UInt64(sequence)) & UInt64(UInt16.max))
+    guard let interfaceName, !interfaceName.isEmpty else {
+        return failedGatewayAttempt(
+            sequence: sequence,
+            identifier: identifier,
+            icmpSequence: icmpSequence,
+            startWallNanos: startWallNanos,
+            outcome: "interface_unavailable",
+            timingSource: networkFrameworkTimingSource,
+            error: "Wi-Fi interface was not available for BPF gateway probe"
+        )
+    }
+    let interfaceState = nativeInterfaceState(interfaceName: interfaceName)
+    guard let localIP = interfaceState.ipv4Addresses.first else {
+        return failedGatewayAttempt(
+            sequence: sequence,
+            identifier: identifier,
+            icmpSequence: icmpSequence,
+            startWallNanos: startWallNanos,
+            outcome: "interface_unavailable",
+            timingSource: networkFrameworkTimingSource,
+            error: "Wi-Fi interface \(interfaceName) had no IPv4 address for BPF gateway probe"
+        )
+    }
+    guard let sourceMAC = interfaceState.macAddress,
+          let sourceMACBytes = parseMACAddress(sourceMAC),
+          let gatewayMACBytes = parseMACAddress(gatewayHardwareAddress),
+          let sourceIPBytes = parseIPv4Address(localIP),
+          let gatewayIPBytes = parseIPv4Address(gateway)
+    else {
+        return failedGatewayAttempt(
+            sequence: sequence,
+            identifier: identifier,
+            icmpSequence: icmpSequence,
+            startWallNanos: startWallNanos,
+            outcome: "preflight_failed",
+            timingSource: networkFrameworkTimingSource,
+            error: "BPF gateway probe could not parse interface or gateway addresses"
+        )
+    }
+
+    let openResult = openBPFDevice()
+    guard let fd = openResult.fd else {
+        return failedGatewayAttempt(
+            sequence: sequence,
+            identifier: identifier,
+            icmpSequence: icmpSequence,
+            startWallNanos: startWallNanos,
+            outcome: "bpf_unavailable",
+            timingSource: networkFrameworkTimingSource,
+            error: openResult.error ?? "could not open /dev/bpf for gateway probe"
+        )
+    }
+    defer {
+        close(fd)
+    }
+
+    var bpfTags: [String: String] = [:]
+    guard configureBPF(fd: fd, interfaceName: interfaceName, tags: &bpfTags) else {
+        return failedGatewayAttempt(
+            sequence: sequence,
+            identifier: identifier,
+            icmpSequence: icmpSequence,
+            startWallNanos: startWallNanos,
+            outcome: "bpf_unavailable",
+            timingSource: networkFrameworkTimingSource,
+            error: bpfTags["bpf.error"] ?? "could not configure BPF for gateway probe"
+        )
+    }
+
+    let frame = ethernetICMPEchoFrame(
+        sourceMAC: sourceMACBytes,
+        destinationMAC: gatewayMACBytes,
+        sourceIP: sourceIPBytes,
+        destinationIP: gatewayIPBytes,
+        identifier: identifier,
+        sequence: icmpSequence,
+        payloadSize: 56
+    )
+    let sent = frame.withUnsafeBytes { frameBuffer in
+        write(fd, frameBuffer.baseAddress, frameBuffer.count)
+    }
+    guard sent == frame.count else {
+        return failedGatewayAttempt(
+            sequence: sequence,
+            identifier: identifier,
+            icmpSequence: icmpSequence,
+            startWallNanos: startWallNanos,
+            outcome: "send_failed",
+            timingSource: networkFrameworkTimingSource,
+            error: "BPF gateway ICMP write failed: \(posixErrorString())"
+        )
+    }
+
+    let result = readBPFGatewayICMPReply(
+        fd: fd,
+        bufferLength: Int(bpfTags["bpf.buffer_length"] ?? "4096") ?? 4096,
+        timeout: timeout,
+        localIP: localIP,
+        gateway: gateway,
+        identifier: identifier,
+        sequence: icmpSequence,
+        startWallNanos: startWallNanos
+    )
+    guard result.ok, let replyNanos = result.replyWallNanos else {
+        return failedGatewayAttempt(
+            sequence: sequence,
+            identifier: identifier,
+            icmpSequence: icmpSequence,
+            startWallNanos: startWallNanos,
+            outcome: "timeout",
+            timingSource: wallClockDeadlineTimingSource,
+            error: result.error ?? "BPF gateway ICMP echo timed out"
+        )
+    }
+
+    let timing = result.requestWallNanos.map {
+        ActiveProbeTiming.bpfPacket(start: $0, finished: replyNanos)
+    } ?? .networkFramework(start: startWallNanos, finished: wallClockNanos())
+    return ActiveGatewayProbeAttempt(
+        sequence: sequence,
+        identifier: identifier,
+        icmpSequence: icmpSequence,
+        reachable: true,
+        outcome: "reply",
+        error: nil,
+        timing: timing
+    )
+}
+
 private func gatewayAttempt(sequence: Int, result: ActiveICMPProbeResult) -> ActiveGatewayProbeAttempt {
     ActiveGatewayProbeAttempt(
         sequence: sequence,
@@ -174,6 +326,258 @@ private func gatewayAttempt(sequence: Int, result: ActiveICMPProbeResult) -> Act
         error: result.error,
         timing: result.timing
     )
+}
+
+private func failedGatewayAttempt(
+    sequence: Int,
+    identifier: UInt16?,
+    icmpSequence: UInt16?,
+    startWallNanos: UInt64,
+    outcome: String,
+    timingSource: String,
+    error: String
+) -> ActiveGatewayProbeAttempt {
+    ActiveGatewayProbeAttempt(
+        sequence: sequence,
+        identifier: identifier,
+        icmpSequence: icmpSequence,
+        reachable: false,
+        outcome: outcome,
+        error: error,
+        timing: ActiveProbeTiming(
+            startWallNanos: startWallNanos,
+            finishedWallNanos: wallClockNanos(),
+            timingSource: timingSource,
+            timestampSource: wallClockTimestampSource
+        )
+    )
+}
+
+private struct BPFGatewayICMPReadResult {
+    let ok: Bool
+    let error: String?
+    let requestWallNanos: UInt64?
+    let replyWallNanos: UInt64?
+}
+
+struct BPFGatewayICMPPacket {
+    let type: UInt8
+    let code: UInt8
+    let sourceIP: String
+    let destinationIP: String
+    let identifier: UInt16
+    let sequence: UInt16
+}
+
+private func readBPFGatewayICMPReply(
+    fd: Int32,
+    bufferLength: Int,
+    timeout: TimeInterval,
+    localIP: String,
+    gateway: String,
+    identifier: UInt16,
+    sequence: UInt16,
+    startWallNanos: UInt64
+) -> BPFGatewayICMPReadResult {
+    let started = DispatchTime.now().uptimeNanoseconds
+    let timeoutNanos = UInt64(max(timeout, 0.001) * 1_000_000_000)
+    var requestWallNanos: UInt64?
+    var pollDescriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+    var readBuffer = [UInt8](repeating: 0, count: max(bufferLength, 4096))
+
+    while true {
+        let elapsedNanos = DispatchTime.now().uptimeNanoseconds - started
+        guard elapsedNanos < timeoutNanos else {
+            return BPFGatewayICMPReadResult(
+                ok: false,
+                error: "BPF gateway ICMP echo timed out",
+                requestWallNanos: requestWallNanos,
+                replyWallNanos: nil
+            )
+        }
+        let remainingMillis = max(1, Int((timeoutNanos - elapsedNanos) / 1_000_000))
+
+        let ready = poll(&pollDescriptor, 1, Int32(remainingMillis))
+        if ready == 0 {
+            return BPFGatewayICMPReadResult(
+                ok: false,
+                error: "BPF gateway ICMP echo timed out",
+                requestWallNanos: requestWallNanos,
+                replyWallNanos: nil
+            )
+        }
+        guard ready > 0 else {
+            return BPFGatewayICMPReadResult(
+                ok: false,
+                error: "BPF gateway ICMP poll failed: \(posixErrorString())",
+                requestWallNanos: requestWallNanos,
+                replyWallNanos: nil
+            )
+        }
+
+        let bytesRead = readBuffer.withUnsafeMutableBytes { rawBuffer in
+            read(fd, rawBuffer.baseAddress, rawBuffer.count)
+        }
+        guard bytesRead > 0 else {
+            return BPFGatewayICMPReadResult(
+                ok: false,
+                error: "BPF gateway ICMP read failed: \(posixErrorString())",
+                requestWallNanos: requestWallNanos,
+                replyWallNanos: nil
+            )
+        }
+
+        var offset = 0
+        while offset + 20 <= bytesRead {
+            let caplen = Int(readLittleUInt32(readBuffer, offset: offset + bpfHeaderCaplenOffset))
+            let headerLength = Int(readLittleUInt16(readBuffer, offset: offset + bpfHeaderHeaderLengthOffset))
+            guard headerLength > 0, caplen > 0 else {
+                break
+            }
+
+            let packetOffset = offset + headerLength
+            if packetOffset + caplen <= bytesRead,
+               let packet = parseBPFGatewayICMPPacket(buffer: readBuffer, offset: packetOffset, length: caplen),
+               packet.identifier == identifier,
+               packet.sequence == sequence {
+                let packetWallNanos = bpfTimestampNanos(buffer: readBuffer, offset: offset) ?? wallClockNanos()
+                if packet.type == 8, packet.sourceIP == localIP, packet.destinationIP == gateway {
+                    requestWallNanos = requestWallNanos ?? packetWallNanos
+                } else if packet.type == 0, packet.sourceIP == gateway, packet.destinationIP == localIP {
+                    return BPFGatewayICMPReadResult(
+                        ok: true,
+                        error: nil,
+                        requestWallNanos: requestWallNanos ?? startWallNanos,
+                        replyWallNanos: packetWallNanos
+                    )
+                } else if packet.sourceIP == gateway || packet.destinationIP == gateway {
+                    return BPFGatewayICMPReadResult(
+                        ok: false,
+                        error: "Unexpected gateway ICMP type \(packet.type) code \(packet.code)",
+                        requestWallNanos: requestWallNanos,
+                        replyWallNanos: packetWallNanos
+                    )
+                }
+            }
+
+            let advance = bpfWordAlign(headerLength + caplen)
+            guard advance > 0 else {
+                break
+            }
+            offset += advance
+        }
+    }
+}
+
+func parseBPFGatewayICMPPacket(buffer: [UInt8], offset: Int, length: Int) -> BPFGatewayICMPPacket? {
+    guard length >= 14 + 20 + 8,
+          offset + length <= buffer.count,
+          buffer[offset + 12] == 0x08,
+          buffer[offset + 13] == 0x00
+    else {
+        return nil
+    }
+
+    let ipOffset = offset + 14
+    guard buffer[ipOffset] >> 4 == 4 else {
+        return nil
+    }
+    let ipHeaderLength = Int(buffer[ipOffset] & 0x0f) * 4
+    guard ipHeaderLength >= 20, length >= 14 + ipHeaderLength + 8, buffer[ipOffset + 9] == UInt8(IPPROTO_ICMP) else {
+        return nil
+    }
+
+    let icmpOffset = ipOffset + ipHeaderLength
+    return BPFGatewayICMPPacket(
+        type: buffer[icmpOffset],
+        code: buffer[icmpOffset + 1],
+        sourceIP: ipv4String(bytes: Array(buffer[(ipOffset + 12) ..< (ipOffset + 16)])),
+        destinationIP: ipv4String(bytes: Array(buffer[(ipOffset + 16) ..< (ipOffset + 20)])),
+        identifier: readBigUInt16(buffer, offset: icmpOffset + 4),
+        sequence: readBigUInt16(buffer, offset: icmpOffset + 6)
+    )
+}
+
+func ethernetICMPEchoFrame(
+    sourceMAC: [UInt8],
+    destinationMAC: [UInt8],
+    sourceIP: [UInt8],
+    destinationIP: [UInt8],
+    identifier: UInt16,
+    sequence: UInt16,
+    payloadSize: Int
+) -> [UInt8] {
+    let ipLength = 20
+    let icmpLength = 8 + payloadSize
+    var frame = [UInt8](repeating: 0, count: 14 + ipLength + icmpLength)
+
+    frame.replaceSubrange(0 ..< 6, with: destinationMAC)
+    frame.replaceSubrange(6 ..< 12, with: sourceMAC)
+    frame[12] = 0x08
+    frame[13] = 0x00
+
+    let ipOffset = 14
+    frame[ipOffset] = 0x45
+    frame[ipOffset + 1] = 0
+    writeBigUInt16(UInt16(ipLength + icmpLength), to: &frame, offset: ipOffset + 2)
+    writeBigUInt16(UInt16(ProcessInfo.processInfo.processIdentifier & 0xffff), to: &frame, offset: ipOffset + 4)
+    writeBigUInt16(0, to: &frame, offset: ipOffset + 6)
+    frame[ipOffset + 8] = 64
+    frame[ipOffset + 9] = UInt8(IPPROTO_ICMP)
+    frame.replaceSubrange((ipOffset + 12) ..< (ipOffset + 16), with: sourceIP)
+    frame.replaceSubrange((ipOffset + 16) ..< (ipOffset + 20), with: destinationIP)
+    let ipChecksum = internetChecksum(Array(frame[ipOffset ..< (ipOffset + ipLength)]))
+    writeBigUInt16(ipChecksum, to: &frame, offset: ipOffset + 10)
+
+    let icmpOffset = ipOffset + ipLength
+    frame[icmpOffset] = 8
+    frame[icmpOffset + 1] = 0
+    writeBigUInt16(identifier, to: &frame, offset: icmpOffset + 4)
+    writeBigUInt16(sequence, to: &frame, offset: icmpOffset + 6)
+    if payloadSize > 0 {
+        for index in 0 ..< payloadSize {
+            frame[icmpOffset + 8 + index] = UInt8((index + 8) & 0xff)
+        }
+    }
+    let icmpChecksum = internetChecksum(Array(frame[icmpOffset ..< (icmpOffset + icmpLength)]))
+    writeBigUInt16(icmpChecksum, to: &frame, offset: icmpOffset + 2)
+
+    return frame
+}
+
+private func parseIPv4Address(_ value: String) -> [UInt8]? {
+    let parts = value.split(separator: ".")
+    guard parts.count == 4 else {
+        return nil
+    }
+    var bytes: [UInt8] = []
+    for part in parts {
+        guard let byte = UInt8(part) else {
+            return nil
+        }
+        bytes.append(byte)
+    }
+    return bytes
+}
+
+private func parseMACAddress(_ value: String) -> [UInt8]? {
+    let parts = value.split(separator: ":")
+    guard parts.count == 6 else {
+        return nil
+    }
+    var bytes: [UInt8] = []
+    for part in parts {
+        guard let byte = UInt8(part, radix: 16) else {
+            return nil
+        }
+        bytes.append(byte)
+    }
+    return bytes
+}
+
+private func writeBigUInt16(_ value: UInt16, to buffer: inout [UInt8], offset: Int) {
+    buffer[offset] = UInt8(value >> 8)
+    buffer[offset + 1] = UInt8(value & 0x00ff)
 }
 
 private func gatewayJitterNanos(attempts: [ActiveGatewayProbeAttempt]) -> UInt64 {
