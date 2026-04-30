@@ -11,7 +11,7 @@ bin="${bundle}/Contents/MacOS/watchme"
 [[ -x "${bin}" ]] || die "missing executable: ${bin}; run make app"
 
 case "${1:-}:${2:-}" in
-    : | help:* | -h:* | --help:* | agent:help | agent:-h | agent:--help) exec "${bin}" "$@" ;;
+    : | help:* | -h:* | --help:* | -V:* | --version:* | agent:help | agent:-h | agent:--help) exec "${bin}" "$@" ;;
 esac
 
 tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/watchme-app.XXXXXX")"

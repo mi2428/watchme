@@ -13,15 +13,48 @@ PREVIEW         ?= 0
 HELP_NAME_WIDTH := 15
 SWIFT_PATHS     := Package.swift Sources Tests
 
+WATCHME_PACKAGE_NAME    ?= watchme
+WATCHME_VERSION         ?= 0.1.0
+WATCHME_GIT_DESCRIBE    ?= $(shell git describe --tags --always --dirty=-dirty 2>/dev/null || printf unknown)
+WATCHME_GIT_COMMIT      ?= $(shell git rev-parse HEAD 2>/dev/null || printf unknown)
+WATCHME_GIT_COMMIT_DATE ?= $(shell git show -s --format=%cI HEAD 2>/dev/null || printf unknown)
+WATCHME_BUILD_DATE      ?= $(shell \
+	if [ -n "$${SOURCE_DATE_EPOCH:-}" ]; then \
+		if date -u -r "$${SOURCE_DATE_EPOCH}" '+%Y-%m-%dT%H:%M:%SZ' >/dev/null 2>&1; then \
+			date -u -r "$${SOURCE_DATE_EPOCH}" '+%Y-%m-%dT%H:%M:%SZ'; \
+		else \
+			date -u -d "@$${SOURCE_DATE_EPOCH}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u '+%Y-%m-%dT%H:%M:%SZ'; \
+		fi; \
+	else \
+		date -u '+%Y-%m-%dT%H:%M:%SZ'; \
+	fi)
+DETECTED_SWIFT_TARGET   := $(shell \
+	$(SWIFT) -print-target-info 2>/dev/null | \
+		sed -n 's/.*"triple"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | \
+		head -n 1)
+WATCHME_BUILD_TARGET    ?= $(or $(DETECTED_SWIFT_TARGET),unknown)
+WATCHME_BUILD_HOST      ?= $(WATCHME_BUILD_TARGET)
+WATCHME_BUILD_PROFILE   ?= $(CONFIG)
+SWIFT_BUILD_ENV         := \
+	WATCHME_PACKAGE_NAME="$(WATCHME_PACKAGE_NAME)" \
+	WATCHME_VERSION="$(WATCHME_VERSION)" \
+	WATCHME_GIT_DESCRIBE="$(WATCHME_GIT_DESCRIBE)" \
+	WATCHME_GIT_COMMIT="$(WATCHME_GIT_COMMIT)" \
+	WATCHME_GIT_COMMIT_DATE="$(WATCHME_GIT_COMMIT_DATE)" \
+	WATCHME_BUILD_DATE="$(WATCHME_BUILD_DATE)" \
+	WATCHME_BUILD_HOST="$(WATCHME_BUILD_HOST)" \
+	WATCHME_BUILD_TARGET="$(WATCHME_BUILD_TARGET)" \
+	WATCHME_BUILD_PROFILE="$(WATCHME_BUILD_PROFILE)"
+
 ##@ Development
 
 .PHONY: build
 build: ## Build the WatchMe executable
-	@$(SWIFT) build -c $(CONFIG)
+	@$(SWIFT_BUILD_ENV) $(SWIFT) build -c $(CONFIG)
 
 .PHONY: app
 app: ## Build WatchMe.app for Location authorization
-	@scripts/build-app -c $(CONFIG)
+	@$(SWIFT_BUILD_ENV) scripts/build-app -c $(CONFIG)
 
 .PHONY: fmt
 fmt: ## Format and modernize Swift sources
@@ -34,14 +67,18 @@ lint: ## Run Swift formatting and lint checks
 
 .PHONY: test
 test: ## Run unit tests
-	@$(SWIFT) test
+	@$(SWIFT_BUILD_ENV) $(SWIFT) test
 
 .PHONY: doc
 doc: ## Generate DocC documentation; set PREVIEW=1 to serve a local preview
 	@if [[ "$(PREVIEW)" == "1" ]]; then \
-		$(SWIFT) package --disable-sandbox preview-documentation --target $(DOC_TARGET); \
+		$(SWIFT_BUILD_ENV) $(SWIFT) package --disable-sandbox preview-documentation --target $(DOC_TARGET); \
 	else \
-		$(SWIFT) package --allow-writing-to-directory $(DOC_OUTPUT) generate-documentation --target $(DOC_TARGET) --output-path $(DOC_OUTPUT); \
+		$(SWIFT_BUILD_ENV) $(SWIFT) package \
+			--allow-writing-to-directory $(DOC_OUTPUT) \
+			generate-documentation \
+			--target $(DOC_TARGET) \
+			--output-path $(DOC_OUTPUT); \
 	fi
 
 .PHONY: quality
@@ -78,5 +115,6 @@ help: ## Show this help message
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "DOC_TARGET" "DocC target, defaults to $(DOC_TARGET)"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "PREVIEW" "Set to 1 to preview DocC documentation, defaults to $(PREVIEW)"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "SWIFT" "Swift executable, defaults to $(SWIFT)"
+	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "WATCHME_VERSION" "Embedded package version, defaults to $(WATCHME_VERSION)"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "SWIFTFORMAT" "SwiftFormat executable, defaults to $(SWIFTFORMAT)"
 	@printf "  \033[36m%-*s\033[0m%s\n" "$(HELP_NAME_WIDTH)" "SWIFTLINT" "SwiftLint executable, defaults to $(SWIFTLINT)"

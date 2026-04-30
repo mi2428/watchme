@@ -10,6 +10,7 @@ WatchMe Agent exports OpenTelemetry metrics and traces from macOS.
   - `watchme agent authorize-location`: request Location authorization for app-bundled Wi-Fi labels.
 - `watchme agent --collector.system`: CPU, memory, and disk metrics.
   - `watchme agent once --collector.system`: one-shot CPU, memory, and disk metrics export.
+- `watchme --version`: embedded version, git revision, and build metadata.
 
 ## App bundle wrapper
 
@@ -24,6 +25,11 @@ $ scripts/watchme-app agent once --collector.system
 ```
 
 `scripts/watchme-app` runs `watchme agent` through the app bundle. The app bundle is required for Location-gated Wi-Fi identity labels; system metrics do not require Location authorization.
+
+## Build metadata
+
+`make build`, `make test`, and `make app` embed `watchme --version` metadata from git and the local Swift target.
+Set `WATCHME_VERSION`, `WATCHME_GIT_DESCRIBE`, `WATCHME_GIT_COMMIT`, `WATCHME_GIT_COMMIT_DATE`, `WATCHME_BUILD_DATE`, `WATCHME_BUILD_HOST`, `WATCHME_BUILD_TARGET`, or `WATCHME_BUILD_PROFILE` to override the embedded values.
 
 ## OTLP delivery
 

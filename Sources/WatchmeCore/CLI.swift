@@ -47,6 +47,8 @@ public enum WatchmeCLI {
     public enum Option {
         public static let help = "--help"
         public static let shortHelp = "-h"
+        public static let version = "--version"
+        public static let shortVersion = "-V"
         public static let otlpURL = CLIOption(
             "--otlp.url",
             valueName: "URL",

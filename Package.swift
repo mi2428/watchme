@@ -1,6 +1,48 @@
 // swift-tools-version: 5.9
 
+import Foundation
 import PackageDescription
+
+let environment = ProcessInfo.processInfo.environment
+
+func watchmeEnvironmentValue(_ name: String, default defaultValue: String) -> String {
+    guard let value = environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else {
+        return defaultValue
+    }
+    return value
+}
+
+func cStringLiteral(_ value: String) -> String {
+    let escaped = value.map { character in
+        switch character {
+        case "\\":
+            "\\\\"
+        case "\"":
+            "\\\""
+        case "\n":
+            "\\n"
+        case "\r":
+            "\\r"
+        case "\t":
+            "\\t"
+        default:
+            String(character)
+        }
+    }.joined()
+    return "\"\(escaped)\""
+}
+
+let watchmeBuildInfoCSettings: [CSetting] = [
+    .define("WATCHME_PACKAGE_NAME", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_PACKAGE_NAME", default: "watchme"))),
+    .define("WATCHME_PACKAGE_VERSION", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_VERSION", default: "0.1.0"))),
+    .define("WATCHME_GIT_DESCRIBE", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_GIT_DESCRIBE", default: "unknown"))),
+    .define("WATCHME_GIT_COMMIT", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_GIT_COMMIT", default: "unknown"))),
+    .define("WATCHME_GIT_COMMIT_DATE", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_GIT_COMMIT_DATE", default: "unknown"))),
+    .define("WATCHME_BUILD_DATE", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_BUILD_DATE", default: "unknown"))),
+    .define("WATCHME_BUILD_HOST", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_BUILD_HOST", default: "unknown"))),
+    .define("WATCHME_BUILD_TARGET", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_BUILD_TARGET", default: "unknown"))),
+    .define("WATCHME_BUILD_PROFILE", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_BUILD_PROFILE", default: "debug"))),
+]
 
 let package = Package(
     name: "watchme",
@@ -17,7 +59,14 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "WatchmeCore"
+            name: "WatchmeBuildInfoC",
+            cSettings: watchmeBuildInfoCSettings
+        ),
+        .target(
+            name: "WatchmeCore",
+            dependencies: [
+                "WatchmeBuildInfoC",
+            ]
         ),
         .target(
             name: "WatchmeTelemetry",

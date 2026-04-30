@@ -23,8 +23,13 @@ public struct CommandRegistry {
         }
 
         let commandName = arguments[1]
-        if commandName == "help" || commandName == "--help" || commandName == "-h" {
+        if commandName == WatchmeCLI.Command.help || commandName == WatchmeCLI.Option.help || commandName == WatchmeCLI.Option.shortHelp {
             printUsage()
+            exit(0)
+        }
+
+        if commandName == WatchmeCLI.Option.version || commandName == WatchmeCLI.Option.shortVersion {
+            print(WatchmeVersion.versionLine, terminator: "")
             exit(0)
         }
 
@@ -46,6 +51,7 @@ public struct CommandRegistry {
             Usage:
               watchme <command> [options]
               watchme <command> --help
+              watchme --version
 
             Commands:
             \(commandList)

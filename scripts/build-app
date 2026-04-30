@@ -6,6 +6,13 @@ usage() { cat <<'USAGE'
 usage: scripts/build-app [-c debug|release] [-o WatchMe.app]
 
 Builds a macOS .app bundle whose executable is watchme.
+
+Environment:
+  CONFIG                     Fallback build configuration.
+  WATCHME_BUILD_CONFIG       Preferred fallback build configuration.
+  WATCHME_APP_BUNDLE         Preferred fallback app bundle path.
+  WATCHME_VERSION            Embedded package version.
+  WATCHME_*                  Embedded git and build metadata overrides.
 USAGE
 }
 
@@ -41,6 +48,7 @@ printf 'APPL????' >"${bundle}/Contents/PkgInfo"
 command -v codesign >/dev/null 2>&1 && codesign --force --sign - "${bundle}" >/dev/null
 printf 'bundle=%s\n' "${bundle}"
 printf 'authorize=%q %q --args agent authorize-location\n' open "${bundle}"
+printf 'version=%q --version\n' "${repo_root}/scripts/watchme-app"
 printf 'run-all=%q agent\n' "${repo_root}/scripts/watchme-app"
 printf 'run-wifi=%q agent once --collector.wifi\n' "${repo_root}/scripts/watchme-app"
 printf 'run-system=%q agent once --collector.system\n' "${repo_root}/scripts/watchme-app"
