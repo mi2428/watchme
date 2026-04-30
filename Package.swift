@@ -58,12 +58,19 @@ let package = Package(
                 .linkedFramework("IOKit"),
             ]
         ),
-        .executableTarget(
-            name: "watchme",
+        .target(
+            name: "WatchmeAgent",
             dependencies: [
                 "WatchmeCore",
                 "WatchmeSystem",
                 "WatchmeWiFi",
+            ]
+        ),
+        .executableTarget(
+            name: "watchme",
+            dependencies: [
+                "WatchmeAgent",
+                "WatchmeCore",
             ],
             exclude: ["Info.plist"],
             linkerSettings: [
@@ -83,6 +90,7 @@ let package = Package(
             name: "WatchmeUnitTests",
             dependencies: [
                 "WatchmeBPF",
+                "WatchmeAgent",
                 "WatchmeTelemetry",
                 "WatchmeSystem",
                 "WatchmeWiFi",

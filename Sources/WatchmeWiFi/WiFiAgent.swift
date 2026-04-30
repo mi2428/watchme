@@ -4,7 +4,7 @@ import SystemConfiguration
 import WatchmeCore
 import WatchmeTelemetry
 
-final class WiFiAgent {
+final class WiFiAgent: WatchmeCollector {
     let config: WiFiConfig
     let telemetry: TelemetryClient
     let packetStore = PassivePacketStore()
@@ -26,6 +26,10 @@ final class WiFiAgent {
         self.telemetry = telemetry
     }
 
+    var name: String {
+        WiFiCollectorFactory.name
+    }
+
     func runOnce() -> Int32 {
         let snapshot = WiFiSnapshot.capture()
         startBPFIfNeeded(interfaceName: snapshot.interfaceName)
@@ -40,14 +44,14 @@ final class WiFiAgent {
         return 0
     }
 
-    func run() {
+    func start() {
         logEvent(
             .info, "wifi_agent_started",
             fields: [
                 "pid": "\(getpid())",
                 "metrics_interval_seconds": "\(Int(config.metricsInterval))",
                 "active_interval_seconds": "\(Int(config.activeInterval))",
-                "collector_url": config.collectorURL.absoluteString,
+                "otlp_url": config.otlpURL.absoluteString,
                 "bpf_enabled": config.bpfEnabled ? "true" : "false",
             ]
         )
@@ -88,28 +92,21 @@ final class WiFiAgent {
             self?.handleSystemNetworkEvent(reason: reason, tags: tags)
         }
         systemNetworkMonitor?.start(queue: DispatchQueue(label: "watchme.wifi.systemconfiguration"))
-
-        let signalQueue = DispatchQueue(label: "watchme.signals")
-        let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: signalQueue)
-        let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: signalQueue)
-        signal(SIGINT, SIG_IGN)
-        signal(SIGTERM, SIG_IGN)
-        sigint.setEventHandler { [weak self] in self?.stop(signal: "SIGINT") }
-        sigterm.setEventHandler { [weak self] in self?.stop(signal: "SIGTERM") }
-        sigint.resume()
-        sigterm.resume()
-
-        RunLoop.current.run()
     }
 
-    private func stop(signal: String) {
-        logEvent(.info, "wifi_agent_stopped", fields: ["signal": signal])
+    func stop() {
+        logEvent(.info, "wifi_agent_stopped")
         coreWLANMonitor?.stop()
         systemNetworkMonitor?.stop()
         metricsTimer?.cancel()
         activeTimer?.cancel()
         bpfMonitor?.stop()
-        exit(0)
+        coreWLANMonitor = nil
+        systemNetworkMonitor = nil
+        metricsTimer = nil
+        activeTimer = nil
+        bpfMonitor = nil
+        bpfInterface = nil
     }
 
     private func handleWiFiEvent(_ event: WiFiEvent) {

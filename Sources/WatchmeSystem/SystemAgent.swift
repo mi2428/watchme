@@ -3,7 +3,7 @@ import Foundation
 import WatchmeCore
 import WatchmeTelemetry
 
-final class SystemAgent {
+final class SystemAgent: WatchmeCollector {
     let config: SystemConfig
     let telemetry: TelemetryClient
     let queue = DispatchQueue(label: "watchme.system.metrics")
@@ -14,18 +14,22 @@ final class SystemAgent {
         self.telemetry = telemetry
     }
 
+    var name: String {
+        SystemCollectorFactory.name
+    }
+
     func runOnce() -> Int32 {
         _ = exportMetrics()
         return 0
     }
 
-    func run() {
+    func start() {
         logEvent(
             .info, "system_agent_started",
             fields: [
                 "pid": "\(getpid())",
                 "metrics_interval_seconds": "\(Int(config.metricsInterval))",
-                "collector_url": config.collectorURL.absoluteString,
+                "otlp_url": config.otlpURL.absoluteString,
             ]
         )
 
@@ -38,24 +42,12 @@ final class SystemAgent {
         }
         metricsTimer.resume()
         self.metricsTimer = metricsTimer
-
-        let signalQueue = DispatchQueue(label: "watchme.system.signals")
-        let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: signalQueue)
-        let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: signalQueue)
-        signal(SIGINT, SIG_IGN)
-        signal(SIGTERM, SIG_IGN)
-        sigint.setEventHandler { [weak self] in self?.stop(signal: "SIGINT") }
-        sigterm.setEventHandler { [weak self] in self?.stop(signal: "SIGTERM") }
-        sigint.resume()
-        sigterm.resume()
-
-        RunLoop.current.run()
     }
 
-    private func stop(signal: String) {
-        logEvent(.info, "system_agent_stopped", fields: ["signal": signal])
+    func stop() {
+        logEvent(.info, "system_agent_stopped")
         metricsTimer?.cancel()
-        exit(0)
+        metricsTimer = nil
     }
 
     func exportMetrics() -> Bool {
@@ -63,7 +55,7 @@ final class SystemAgent {
         return telemetry.exportMetrics(
             name: "watchme_system",
             fields: [
-                "collector_url": config.collectorURL.absoluteString,
+                "otlp_url": config.otlpURL.absoluteString,
                 "metrics_scope": "system",
             ],
             metrics: SystemMetricBuilder.metrics(snapshot: snapshot)

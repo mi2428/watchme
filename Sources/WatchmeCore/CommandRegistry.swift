@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
 
-public protocol WatchmeSubcommand {
+public protocol WatchmeCommand {
     static var name: String { get }
     static var summary: String { get }
     init(arguments: [String]) throws
@@ -10,13 +10,13 @@ public protocol WatchmeSubcommand {
 }
 
 public struct CommandRegistry {
-    private let commands: [any WatchmeSubcommand.Type]
+    private let commands: [any WatchmeCommand.Type]
 
-    public init(commands: [any WatchmeSubcommand.Type]) {
+    public init(commands: [any WatchmeCommand.Type]) {
         self.commands = commands
     }
 
-    public func parse(_ arguments: [String]) throws -> any WatchmeSubcommand {
+    public func parse(_ arguments: [String]) throws -> any WatchmeCommand {
         guard arguments.count >= 2 else {
             printUsage()
             exit(0)

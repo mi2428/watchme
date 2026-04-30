@@ -75,7 +75,7 @@ public func requireOptionValue(
     return arguments[index]
 }
 
-public func validatedCollectorURL(_ value: String, argument: String) throws -> URL {
+public func validatedOTLPURL(_ value: String, argument: String) throws -> URL {
     guard
         let url = URL(string: value),
         let scheme = url.scheme?.lowercased(),
@@ -98,7 +98,7 @@ public func formatUsageRows(_ rows: [(String, String)], leftColumnWidth: Int = 3
         .joined(separator: "\n")
 }
 
-public func collectorEndpointURL(baseURL: URL, path: String) -> URL {
+public func otlpEndpointURL(baseURL: URL, path: String) -> URL {
     var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
     let basePath = components.percentEncodedPath
         .split(separator: "/", omittingEmptySubsequences: true)

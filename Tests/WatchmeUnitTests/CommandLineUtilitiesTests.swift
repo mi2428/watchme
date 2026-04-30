@@ -3,8 +3,8 @@ import XCTest
 
 final class CommandLineUtilitiesTests: XCTestCase {
     func testSplitInlineValueSeparatesOnlyTheFirstEqualsSign() {
-        XCTAssertEqual(splitInlineValue("--collector.url=http://host:4318").option, "--collector.url")
-        XCTAssertEqual(splitInlineValue("--collector.url=http://host:4318").inlineValue, "http://host:4318")
+        XCTAssertEqual(splitInlineValue("--otlp.url=http://host:4318").option, "--otlp.url")
+        XCTAssertEqual(splitInlineValue("--otlp.url=http://host:4318").inlineValue, "http://host:4318")
         XCTAssertEqual(splitInlineValue("--flag").option, "--flag")
         XCTAssertNil(splitInlineValue("--flag").inlineValue)
         XCTAssertEqual(splitInlineValue("--label=a=b").inlineValue, "a=b")
@@ -14,9 +14,9 @@ final class CommandLineUtilitiesTests: XCTestCase {
         var index = 0
         XCTAssertEqual(
             try requireOptionValue(
-                arguments: ["--metrics.interval", "2.5"],
+                arguments: ["--system.metrics.interval", "2.5"],
                 index: &index,
-                argument: "--metrics.interval",
+                argument: "--system.metrics.interval",
                 inlineValue: nil
             ),
             "2.5"
@@ -26,9 +26,9 @@ final class CommandLineUtilitiesTests: XCTestCase {
         var inlineIndex = 0
         XCTAssertEqual(
             try requireOptionValue(
-                arguments: ["--metrics.interval=2.5"],
+                arguments: ["--system.metrics.interval=2.5"],
                 index: &inlineIndex,
-                argument: "--metrics.interval",
+                argument: "--system.metrics.interval",
                 inlineValue: "2.5"
             ),
             "2.5"
@@ -40,34 +40,39 @@ final class CommandLineUtilitiesTests: XCTestCase {
         var missingIndex = 0
         XCTAssertThrowsError(
             try requireOptionValue(
-                arguments: ["--metrics.interval"],
+                arguments: ["--system.metrics.interval"],
                 index: &missingIndex,
-                argument: "--metrics.interval",
+                argument: "--system.metrics.interval",
                 inlineValue: nil
             )
         )
 
         var emptyIndex = 0
         XCTAssertThrowsError(
-            try requireOptionValue(arguments: ["--metrics.interval="], index: &emptyIndex, argument: "--metrics.interval", inlineValue: "")
+            try requireOptionValue(
+                arguments: ["--system.metrics.interval="],
+                index: &emptyIndex,
+                argument: "--system.metrics.interval",
+                inlineValue: ""
+            )
         )
     }
 
-    func testValidatedCollectorURLAcceptsHTTPCollectorsWithoutQueryOrFragment() throws {
+    func testValidatedOTLPURLAcceptsHTTPCollectorsWithoutQueryOrFragment() throws {
         XCTAssertEqual(
-            try validatedCollectorURL("https://collector.example:4318/otlp", argument: "--collector.url").absoluteString,
+            try validatedOTLPURL("https://collector.example:4318/otlp", argument: "--otlp.url").absoluteString,
             "https://collector.example:4318/otlp"
         )
-        XCTAssertThrowsError(try validatedCollectorURL("ftp://collector.example/otlp", argument: "--collector.url"))
-        XCTAssertThrowsError(try validatedCollectorURL("http://collector.example/otlp?debug=1", argument: "--collector.url"))
-        XCTAssertThrowsError(try validatedCollectorURL("http://collector.example/otlp#debug", argument: "--collector.url"))
+        XCTAssertThrowsError(try validatedOTLPURL("ftp://collector.example/otlp", argument: "--otlp.url"))
+        XCTAssertThrowsError(try validatedOTLPURL("http://collector.example/otlp?debug=1", argument: "--otlp.url"))
+        XCTAssertThrowsError(try validatedOTLPURL("http://collector.example/otlp#debug", argument: "--otlp.url"))
     }
 
-    func testCollectorEndpointURLAppendsEndpointPathToBasePath() throws {
+    func testOTLPEndpointURLAppendsEndpointPathToBasePath() throws {
         let baseURL = try XCTUnwrap(URL(string: "http://collector.example:4318/otlp/"))
 
         XCTAssertEqual(
-            collectorEndpointURL(baseURL: baseURL, path: "/v1/metrics").absoluteString,
+            otlpEndpointURL(baseURL: baseURL, path: "/v1/metrics").absoluteString,
             "http://collector.example:4318/otlp/v1/metrics"
         )
     }

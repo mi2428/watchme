@@ -2,7 +2,7 @@ import CoreLocation
 import Foundation
 import WatchmeCore
 
-func requestWiFiLocationAuthorization(timeout: TimeInterval) -> Int32 {
+public func requestWiFiLocationAuthorization(timeout: TimeInterval) -> Int32 {
     guard CLLocationManager.locationServicesEnabled() else {
         logEvent(.error, "location_services_disabled")
         return 2
