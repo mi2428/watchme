@@ -65,13 +65,34 @@ final class PassivePacketStoreTests: XCTestCase {
         store.appendDHCP(dhcp(now, xid: 0xAABB_CCDD, type: 3))
         store.appendDHCP(dhcp(now + 1_000_000, xid: 0xAABB_CCDD, type: 5, yiaddr: "10.0.0.20"))
 
-        let first = store.recentPacketSpans(interfaceName: "en0", maxAge: 60, consume: true)
-        let second = store.recentPacketSpans(interfaceName: "en0", maxAge: 60, consume: true)
-        let nonConsumed = store.recentPacketSpans(interfaceName: "en0", maxAge: 60, consume: false)
+        let first = store.recentPacketSpans(interfaceName: "en0", ipv4Gateway: nil, maxAge: 60, consume: true)
+        let second = store.recentPacketSpans(interfaceName: "en0", ipv4Gateway: nil, maxAge: 60, consume: true)
+        let nonConsumed = store.recentPacketSpans(interfaceName: "en0", ipv4Gateway: nil, maxAge: 60, consume: false)
 
         XCTAssertEqual(first.map(\.name), ["packet.dhcp.request_to_ack"])
         XCTAssertTrue(second.isEmpty)
         XCTAssertEqual(nonConsumed.map(\.name), ["packet.dhcp.request_to_ack"])
+    }
+
+    func testBuildARPSpansPairsGatewayResolutionAndRetries() {
+        let base: UInt64 = 7_000_000_000
+        let observations = [
+            arpRequest(base, targetIP: "192.168.1.1"),
+            arpRequest(base + 1_000_000_000, targetIP: "192.168.1.1"),
+            arpReply(base + 1_300_000_000, senderIP: "192.168.1.1", senderMAC: "aa:bb:cc:dd:ee:ff"),
+            arpRequest(base + 1_400_000_000, targetIP: "192.168.1.200"),
+            arpReply(base + 1_500_000_000, senderIP: "192.168.1.200", senderMAC: "11:22:33:44:55:66"),
+        ]
+
+        let spans = buildARPSpans(observations, ipv4Gateway: "192.168.1.1")
+        let names = spans.map(\.name)
+
+        XCTAssertEqual(names, ["packet.arp.request_retry_gap", "packet.arp.request_to_reply"])
+        let resolution = spans.first { $0.name == "packet.arp.request_to_reply" }
+        XCTAssertEqual(resolution?.tags["arp.target_ip"], "192.168.1.1")
+        XCTAssertEqual(resolution?.tags["arp.target_role"], "gateway")
+        XCTAssertEqual(resolution?.tags["network.gateway"], "192.168.1.1")
+        XCTAssertEqual(resolution?.tags["arp.sender_mac"], "aa:bb:cc:dd:ee:ff")
     }
 
     private func dhcp(
@@ -114,6 +135,30 @@ final class PassivePacketStoreTests: XCTestCase {
             routerLifetimeSeconds: routerLifetime,
             sourceLinkLayerAddress: sourceLLA,
             targetLinkLayerAddress: targetLLA
+        )
+    }
+
+    private func arpRequest(_ nanos: UInt64, targetIP: String) -> ARPObservation {
+        ARPObservation(
+            interfaceName: "en0",
+            wallNanos: nanos,
+            operation: 1,
+            senderHardwareAddress: "de:ad:be:ef:00:01",
+            senderProtocolAddress: "192.168.1.44",
+            targetHardwareAddress: "00:00:00:00:00:00",
+            targetProtocolAddress: targetIP
+        )
+    }
+
+    private func arpReply(_ nanos: UInt64, senderIP: String, senderMAC: String) -> ARPObservation {
+        ARPObservation(
+            interfaceName: "en0",
+            wallNanos: nanos,
+            operation: 2,
+            senderHardwareAddress: senderMAC,
+            senderProtocolAddress: senderIP,
+            targetHardwareAddress: "de:ad:be:ef:00:01",
+            targetProtocolAddress: "192.168.1.44"
         )
     }
 }

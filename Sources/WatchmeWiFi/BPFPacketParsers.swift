@@ -9,6 +9,38 @@ struct TransportPacketContext {
     let destinationIP: String
 }
 
+struct ARPPacket {
+    let operation: UInt16
+    let senderHardwareAddress: String
+    let senderProtocolAddress: String
+    let targetHardwareAddress: String
+    let targetProtocolAddress: String
+}
+
+func parseARPPacket(buffer: [UInt8], offset: Int, packetEnd: Int) -> ARPPacket? {
+    guard offset + 28 <= packetEnd else {
+        return nil
+    }
+    let hardwareType = readBigUInt16(buffer, offset: offset)
+    let protocolType = readBigUInt16(buffer, offset: offset + 2)
+    let hardwareLength = buffer[offset + 4]
+    let protocolLength = buffer[offset + 5]
+    guard hardwareType == 1, protocolType == 0x0800, hardwareLength == 6, protocolLength == 4 else {
+        return nil
+    }
+    let operation = readBigUInt16(buffer, offset: offset + 6)
+    guard operation == 1 || operation == 2 else {
+        return nil
+    }
+    return ARPPacket(
+        operation: operation,
+        senderHardwareAddress: macAddressString(bytes: Array(buffer[(offset + 8) ..< (offset + 14)])),
+        senderProtocolAddress: ipv4String(bytes: Array(buffer[(offset + 14) ..< (offset + 18)])),
+        targetHardwareAddress: macAddressString(bytes: Array(buffer[(offset + 18) ..< (offset + 24)])),
+        targetProtocolAddress: ipv4String(bytes: Array(buffer[(offset + 24) ..< (offset + 28)]))
+    )
+}
+
 func parseDNSPacketObservation(
     buffer: [UInt8],
     offset: Int,

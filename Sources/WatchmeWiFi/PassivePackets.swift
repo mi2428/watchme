@@ -25,6 +25,24 @@ struct ICMPv6Observation {
     let targetLinkLayerAddress: String?
 }
 
+struct ARPObservation {
+    let interfaceName: String
+    let wallNanos: UInt64
+    let operation: UInt16
+    let senderHardwareAddress: String
+    let senderProtocolAddress: String
+    let targetHardwareAddress: String
+    let targetProtocolAddress: String
+
+    var isRequest: Bool {
+        operation == 1
+    }
+
+    var isReply: Bool {
+        operation == 2
+    }
+}
+
 struct DNSPacketObservation {
     let interfaceName: String
     let wallNanos: UInt64
@@ -209,6 +227,7 @@ final class PassivePacketStore {
     let lock = NSLock()
     var dhcp: [DHCPObservation] = []
     var icmpv6: [ICMPv6Observation] = []
+    var arp: [ARPObservation] = []
     var dns: [DNSPacketObservation] = []
     var tcp: [TCPPacketObservation] = []
     var icmp: [ICMPPacketObservation] = []
@@ -228,6 +247,13 @@ final class PassivePacketStore {
     func appendICMPv6(_ observation: ICMPv6Observation) {
         lock.lock()
         icmpv6.append(observation)
+        pruneLocked()
+        lock.unlock()
+    }
+
+    func appendARP(_ observation: ARPObservation) {
+        lock.lock()
+        arp.append(observation)
         pruneLocked()
         lock.unlock()
     }
@@ -455,30 +481,6 @@ final class PassivePacketStore {
             }
             Thread.sleep(forTimeInterval: 0.005)
         }
-    }
-
-    func recentPacketSpans(interfaceName: String?, maxAge: TimeInterval, consume: Bool) -> [SpanEvent] {
-        let cutoff = wallClockNanos() - UInt64(maxAge * 1_000_000_000)
-        lock.lock()
-        let dhcpSnapshot = dhcp.filter { $0.wallNanos >= cutoff && (interfaceName == nil || $0.interfaceName == interfaceName) }
-        let icmpv6Snapshot = icmpv6.filter { $0.wallNanos >= cutoff && (interfaceName == nil || $0.interfaceName == interfaceName) }
-        var spans = buildDHCPSpans(dhcpSnapshot) + buildICMPv6Spans(icmpv6Snapshot)
-        spans.sort { $0.startWallNanos < $1.startWallNanos }
-        if consume {
-            // Event-triggered traces should not repeatedly attach the same
-            // packet-derived spans. Active interval traces can still inspect the
-            // full recent window by calling with consume=false.
-            spans = spans.filter { span in
-                let key = spanKey(span)
-                if emittedKeys.contains(key) {
-                    return false
-                }
-                emittedKeys.insert(key)
-                return true
-            }
-        }
-        lock.unlock()
-        return spans
     }
 }
 

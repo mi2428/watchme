@@ -69,5 +69,6 @@ func spanKey(_ span: SpanEvent) -> String {
         span.tags["packet.event"] ?? "",
         span.tags["dhcp.xid"] ?? "",
         span.tags["icmpv6.nd.target_address"] ?? "",
+        span.tags["arp.target_ip"] ?? "",
     ].joined(separator: "|")
 }

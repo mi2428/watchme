@@ -54,10 +54,43 @@ final class PassiveBPFMonitor {
         // Full packet capture would add noise and privacy risk without improving
         // join/roam observability.
         let etherType = readBigUInt16(buffer, offset: offset + 12)
-        if etherType == 0x0800 {
+        if etherType == 0x0806 {
+            handleARPPacket(buffer: buffer, offset: offset + 14, packetEnd: offset + length, timestampNanos: timestampNanos)
+        } else if etherType == 0x0800 {
             handleIPv4Packet(buffer: buffer, offset: offset + 14, packetEnd: offset + length, timestampNanos: timestampNanos)
         } else if etherType == 0x86DD {
             handleIPv6Packet(buffer: buffer, offset: offset + 14, packetEnd: offset + length, timestampNanos: timestampNanos)
+        }
+    }
+
+    private func handleARPPacket(buffer: [UInt8], offset: Int, packetEnd: Int, timestampNanos: UInt64) {
+        guard let packet = parseARPPacket(buffer: buffer, offset: offset, packetEnd: packetEnd) else {
+            return
+        }
+        let observation = ARPObservation(
+            interfaceName: interfaceName,
+            wallNanos: timestampNanos,
+            operation: packet.operation,
+            senderHardwareAddress: packet.senderHardwareAddress,
+            senderProtocolAddress: packet.senderProtocolAddress,
+            targetHardwareAddress: packet.targetHardwareAddress,
+            targetProtocolAddress: packet.targetProtocolAddress
+        )
+        store.appendARP(observation)
+
+        var fields: [String: String] = [
+            "interface": interfaceName,
+            "arp.operation": arpOperationName(packet.operation),
+            "arp.sender_mac": packet.senderHardwareAddress,
+            "arp.sender_ip": packet.senderProtocolAddress,
+            "arp.target_mac": packet.targetHardwareAddress,
+            "arp.target_ip": packet.targetProtocolAddress,
+            "packet.timestamp_epoch_ns": "\(timestampNanos)",
+        ]
+        logEvent(.debug, "arp_packet_observed", fields: fields)
+        if packet.operation == 2 {
+            fields["packet.event"] = "arp_reply"
+            onPacketEvent("wifi.rejoin.arp_reply", fields)
         }
     }
 

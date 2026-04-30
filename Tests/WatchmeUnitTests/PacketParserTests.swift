@@ -97,6 +97,28 @@ final class PacketParserTests: XCTestCase {
         XCTAssertEqual(parsedResponse?.queryName, "www.example.test")
     }
 
+    func testParseARPPacketExtractsIPv4ResolutionFields() {
+        let packet: [UInt8] = [
+            0x00, 0x01,
+            0x08, 0x00,
+            0x06,
+            0x04,
+            0x00, 0x02,
+            0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+            192, 168, 1, 1,
+            0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01,
+            192, 168, 1, 44,
+        ]
+
+        let parsed = parseARPPacket(buffer: packet, offset: 0, packetEnd: packet.count)
+
+        XCTAssertEqual(parsed?.operation, 2)
+        XCTAssertEqual(parsed?.senderHardwareAddress, "aa:bb:cc:dd:ee:ff")
+        XCTAssertEqual(parsed?.senderProtocolAddress, "192.168.1.1")
+        XCTAssertEqual(parsed?.targetHardwareAddress, "de:ad:be:ef:00:01")
+        XCTAssertEqual(parsed?.targetProtocolAddress, "192.168.1.44")
+    }
+
     func testParseTCPPacketObservationExtractsPortsAndFlags() {
         var packet = [UInt8](repeating: 0, count: 20)
         packet[0] = 0xD2

@@ -141,8 +141,10 @@ extension WiFiAgent {
         rootTags["metrics.push.prefix"] = config.metricsPushPrefix
         rootTags["bpf.enabled"] = config.bpfEnabled ? "true" : "false"
 
+        let networkState = currentWiFiServiceNetworkState(interfaceName: snapshot.interfaceName)
         let packetSpans = packetStore.recentPacketSpans(
             interfaceName: snapshot.interfaceName,
+            ipv4Gateway: networkState.routerIPv4,
             maxAge: config.bpfSpanMaxAge,
             consume: consumePacketSpans
         )
@@ -151,7 +153,7 @@ extension WiFiAgent {
         }
 
         if includeActive {
-            recordActiveValidation(recorder: recorder, snapshot: snapshot)
+            recordActiveValidation(recorder: recorder, snapshot: snapshot, networkState: networkState)
             _ = pushMetrics(snapshot: snapshot)
         }
 
@@ -209,10 +211,9 @@ extension WiFiAgent {
         )
     }
 
-    private func recordActiveValidation(recorder: TraceRecorder, snapshot: WiFiSnapshot) {
+    private func recordActiveValidation(recorder: TraceRecorder, snapshot: WiFiSnapshot, networkState: WiFiServiceNetworkState) {
         let phaseId = recorder.newSpanId()
         let phaseStart = wallClockNanos()
-        let networkState = currentWiFiServiceNetworkState(interfaceName: snapshot.interfaceName)
         let internetResults = runActiveInternetProbes(
             config: config,
             networkState: networkState,

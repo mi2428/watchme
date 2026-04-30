@@ -104,6 +104,66 @@ func buildICMPv6Spans(_ observations: [ICMPv6Observation]) -> [SpanEvent] {
     return spans
 }
 
+func buildARPSpans(_ observations: [ARPObservation], ipv4Gateway: String?) -> [SpanEvent] {
+    var spans: [SpanEvent] = []
+    let requestsByTarget = Dictionary(grouping: observations.filter(\.isRequest), by: \.targetProtocolAddress)
+    let repliesBySender = Dictionary(grouping: observations.filter(\.isReply), by: \.senderProtocolAddress)
+
+    for (target, requests) in requestsByTarget where !target.isEmpty {
+        if let ipv4Gateway, target != ipv4Gateway {
+            continue
+        }
+        let sortedRequests = requests.sorted { $0.wallNanos < $1.wallNanos }
+        for gap in retryGaps(sortedRequests.map(\.wallNanos)) {
+            spans.append(
+                packetSpan(
+                    "packet.arp.request_retry_gap",
+                    start: gap.start,
+                    end: gap.end,
+                    tags: arpTags(target: target, event: "request_retry_gap", ipv4Gateway: ipv4Gateway, observation: sortedRequests.first)
+                )
+            )
+        }
+        guard let reply = repliesBySender[target]?.sorted(by: { $0.wallNanos < $1.wallNanos }).first,
+              let request = latestARPRequest(beforeOrAt: reply.wallNanos, in: sortedRequests)
+        else {
+            continue
+        }
+        spans.append(
+            packetSpan(
+                "packet.arp.request_to_reply",
+                start: request.wallNanos,
+                end: reply.wallNanos,
+                tags: arpTags(target: target, event: "request_to_reply", ipv4Gateway: ipv4Gateway, observation: reply)
+            )
+        )
+    }
+    return spans
+}
+
+private func arpTags(target: String, event: String, ipv4Gateway: String?, observation: ARPObservation?) -> [String: String] {
+    var tags: [String: String] = [
+        "packet.protocol": "arp",
+        "packet.event": event,
+        "arp.target_ip": target,
+    ]
+    setTag(&tags, "network.interface", observation?.interfaceName)
+    setTag(&tags, "arp.sender_ip", observation?.senderProtocolAddress)
+    setTag(&tags, "arp.sender_mac", observation?.senderHardwareAddress)
+    setTag(&tags, "arp.target_mac", observation?.targetHardwareAddress)
+    if let ipv4Gateway, target == ipv4Gateway {
+        tags["network.gateway"] = ipv4Gateway
+        tags["arp.target_role"] = "gateway"
+    } else {
+        tags["arp.target_role"] = "ipv4_neighbor"
+    }
+    return tags
+}
+
+private func latestARPRequest(beforeOrAt end: UInt64, in values: [ARPObservation]) -> ARPObservation? {
+    values.last { $0.wallNanos <= end }
+}
+
 func buildNeighborDiscoverySpans(
     solicitations: [ICMPv6Observation],
     advertisements: [ICMPv6Observation]

@@ -234,6 +234,7 @@ extension PassivePacketStore {
         let cutoff = now - UInt64(600 * 1_000_000_000)
         dhcp.removeAll { $0.wallNanos < cutoff }
         icmpv6.removeAll { $0.wallNanos < cutoff }
+        arp.removeAll { $0.wallNanos < cutoff }
         dns.removeAll { $0.wallNanos < cutoff }
         tcp.removeAll { $0.wallNanos < cutoff }
         icmp.removeAll { $0.wallNanos < cutoff }

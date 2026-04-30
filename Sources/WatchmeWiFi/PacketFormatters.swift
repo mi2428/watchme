@@ -35,6 +35,14 @@ func dhcpMessageTypeName(_ value: UInt8) -> String {
     }
 }
 
+func arpOperationName(_ value: UInt16) -> String {
+    switch value {
+    case 1: "request"
+    case 2: "reply"
+    default: "operation_\(value)"
+    }
+}
+
 func icmpv6TypeName(_ value: UInt8) -> String {
     switch value {
     case 133: "router_solicitation"
