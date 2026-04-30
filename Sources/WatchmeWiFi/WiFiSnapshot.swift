@@ -38,7 +38,7 @@ struct WiFiSnapshot {
     }
 
     var metricLabels: [String: String] {
-        // Keep label cardinality stable for Prometheus. When macOS redacts
+        // Keep metric attribute cardinality stable. When macOS redacts
         // identity fields, the label keys remain present with "unknown" values.
         [
             "interface": interfaceName ?? "unknown",
@@ -133,7 +133,7 @@ struct WiFiSnapshot {
 
     static func capture() -> WiFiSnapshot {
         // Keep this snapshot limited to OS-reported state. Derived quality
-        // scores belong in Prometheus/Grafana rules where operators can own
+        // scores belong in downstream rules where operators can own
         // the scoring policy instead of baking one into the agent.
         let interface = CWWiFiClient.shared().interface()
         let interfaceName = interface?.interfaceName ?? nativeWiFiInterfaceName()

@@ -34,9 +34,9 @@ It is meant to be checked against the source when instrumentation changes.
 
 ## Scope
 
-`watchme wifi` turns macOS Wi-Fi state into two observability signal families:
+`watchme wifi` turns macOS Wi-Fi state into two OpenTelemetry signal families:
 
-- Prometheus text-format metrics pushed to Pushgateway.
+- Metrics exported through OTLP/HTTP.
 - OpenTelemetry traces exported through OTLP/HTTP.
 
 The Wi-Fi module does not shell out to `ifconfig`, `networksetup`, `airport`, `curl`, or other CLI tools.
@@ -72,7 +72,7 @@ The agent instead exposes the primary signals needed to build those views downst
 - BPF packet spans for DHCPv4, IPv4 ARP, router solicitation/advertisement, and neighbor discovery timing.
 - Active internet DNS, ICMP, plain HTTP, and gateway probe metrics and spans for Wi-Fi-bound reachability.
 
-Grafana dashboards, Prometheus recording rules, or alert rules may define site-specific semantic views from these primary signals.
+Grafana dashboards, recording rules, or alert rules may define site-specific semantic views from these primary signals.
 For example, an operator can count BSSID changes from `watchme_wifi_snapshot_change_total{field="bssid"}` or define an SNR recording rule from RSSI and noise when that is appropriate for the environment.
 Those derived rules should live near the operational policy that gives them meaning, not inside the agent.
 
@@ -97,12 +97,12 @@ If correlation fails, WatchMe still emits the same span and metric with callback
 
 HTTPS, TLS handshake timing, certificate validation, browser page fetch timing, and synthetic quality scores are deliberately out of scope for `watchme wifi`.
 Those features need either encrypted-stream instrumentation, browser/application-level probes, or site-specific scoring policy.
-They should be added as a separate monitor or downstream Prometheus/Grafana logic unless they can be measured with the same Wi-Fi-bound precision as the current probes.
+They should be added as a separate monitor or downstream dashboard/rule logic unless they can be measured with the same Wi-Fi-bound precision as the current probes.
 
 ## Runtime entry points
 
 - **`watchme wifi`:** Long-running agent that starts metrics, active trace, CoreWLAN/SystemConfiguration event monitors, and BPF packet monitor.
-- **`watchme wifi once`:** One-shot metrics push and one active trace.
+- **`watchme wifi once`:** One-shot metrics export and one active trace.
 - **`watchme wifi authorize-only`:** Requests Core Location authorization so CoreWLAN can return SSID/BSSID.
 - **`scripts/watchme-app wifi ...`:** Runs the `.app` bundle through LaunchServices so macOS TCC applies the app's Location grant; use this path when SSID/BSSID are required.
 
@@ -120,8 +120,7 @@ Running `.build/watchme-app/WatchMe.app/Contents/MacOS/watchme` directly can sti
 
 The options below apply to `watchme wifi` and `watchme wifi once`.
 
-- **`--metrics.push.url`:** Pushgateway base URL.
-- **`--metrics.push.prefix`:** Pushgateway path prefix for reverse proxies.
+- **`--metrics.url`:** OTLP/HTTP metrics endpoint.
 - **`--metrics.interval`:** Wi-Fi metric collection interval in seconds.
 - **`--traces.url`:** OTLP/HTTP trace endpoint.
 - **`--traces.interval`:** Active trace interval in seconds.
@@ -156,7 +155,7 @@ The options below apply to `watchme wifi` and `watchme wifi once`.
 
 ## Snapshot model
 
-Every metric push and trace starts from a `WiFiSnapshot`.
+Every metric export and trace starts from a `WiFiSnapshot`.
 
 Snapshot fields:
 
@@ -208,26 +207,24 @@ Trace root tags always include the snapshot fields below when available:
 
 ## Metrics
 
-Metrics are encoded as Prometheus text format 0.0.4 and pushed with HTTP `PUT` to:
+Metrics are recorded as OpenTelemetry metric instruments and exported through OTLP/HTTP to `--metrics.url`.
+`MetricSample` gauges become OTel gauge datapoints.
+`MetricSample` counters are tracked as monotonic OTel counters by adding source deltas; zero-valued first samples are recorded so expected series exist, and if a source counter decreases WatchMe treats it as a local source reset.
 
-```text
-/metrics/job/watchme_wifi/instance/<Host.current().localizedName>
-```
-
-Metrics are pushed:
+Metrics are exported:
 
 - once immediately in `watchme wifi once`, then again at trace start;
 - at agent startup, then again at startup trace start;
 - every `--metrics.interval` seconds in agent mode;
 - after CoreWLAN or SystemConfiguration events before event traces;
 - at every trace start;
-- after active validation, so the latest internet DNS, ICMP, HTTP, and gateway probe samples are available to Prometheus.
+- after active validation, so the latest internet DNS, ICMP, HTTP, and gateway probe samples are available to the OTel collector or backend.
 
 Most metrics are gauges.
 CoreWLAN event and snapshot change metrics are counters.
 Optional CoreWLAN fields are omitted when the OS API does not return a value.
 WatchMe does not emit derived Wi-Fi quality scores such as SNR, signal quality percent, or connection score.
-Those can be defined in Prometheus or Grafana if an operator wants a site-specific scoring policy.
+Those can be defined downstream if an operator wants a site-specific scoring policy.
 
 | Metric | Labels | Source | Meaning |
 | --- | --- | --- | --- |
@@ -241,7 +238,7 @@ Those can be defined in Prometheus or Grafana if an operator wants a site-specif
 | `watchme_wifi_service_active` | `interface`, `essid`, `bssid` | `CWInterface.serviceActive()` | `1` when the Wi-Fi network service is active, otherwise `0`. |
 | `watchme_wifi_associated` | `interface`, `essid`, `bssid` | Snapshot association heuristic | `1` when Wi-Fi appears associated, otherwise `0`. |
 | `watchme_wifi_info` | `interface`, `essid`, `bssid`, `identity_status`, `essid_encoding`, optional `channel`, `channel_band`, `channel_width`, `phy_mode`, `security`, `interface_mode`, `country_code` | CoreWLAN snapshot categorical fields | Constant `1` info metric carrying current identity and categorical OS labels. |
-| `watchme_wifi_metrics_push_timestamp_seconds` | `interface`, `essid`, `bssid` | `Date().timeIntervalSince1970` | Unix timestamp of metric generation. |
+| `watchme_wifi_metrics_export_timestamp_seconds` | `interface`, `essid`, `bssid` | `Date().timeIntervalSince1970` | Unix timestamp of metric generation. |
 | `watchme_wifi_bpf_packets_received_total` | `interface`, `essid`, `bssid`, `filter` | `BIOCGSTATS.bs_recv` | Packets accepted by the WatchMe Wi-Fi BPF descriptor since it was opened. |
 | `watchme_wifi_bpf_packets_dropped_total` | `interface`, `essid`, `bssid`, `filter` | `BIOCGSTATS.bs_drop` | Packets dropped by the WatchMe Wi-Fi BPF descriptor since it was opened. |
 | `watchme_wifi_corewlan_event_total` | `interface`, `essid`, `bssid`, `event` | `CWEventDelegate` callback receipt | Count of CoreWLAN event callbacks observed in this process. |
@@ -281,8 +278,7 @@ Common root tags include every tag listed in the snapshot model section, plus:
 
 - **`reason`:** Trace reason before normalization.
 - **`traces.url`:** OTLP/HTTP endpoint.
-- **`metrics.push.url`:** Pushgateway base URL.
-- **`metrics.push.prefix`:** Pushgateway path prefix.
+- **`metrics.url`:** OTLP/HTTP metrics endpoint.
 - **`bpf.enabled`:** `true` or `false`.
 - **`bpf.filter`:** BPF filter profile name when the monitor is active.
 - **`bpf.packets_received`:** `BIOCGSTATS` accepted packet count when available.
@@ -452,7 +448,7 @@ The reusable BPF layer is in `Sources/WatchmeBPF`.
 - Requires Ethernet datalink type.
 - Installs a classic BPF kernel filter with `BIOCSETF`.
   The filter profile is `wifi_control_active_probe_v1` and accepts only ARP, DHCPv4, ICMP, ICMPv6, DNS UDP/53, and plain HTTP TCP/80 traffic.
-- Reads `BIOCGSTATS` for accepted and dropped packet counters and exposes them as Prometheus counters and root trace tags.
+- Reads `BIOCGSTATS` for accepted and dropped packet counters and exposes them as OTel counters and root trace tags.
 - Reads BPF buffers in a utility queue and walks `bpf_hdr + frame` records using BPF word alignment.
 - Converts BPF `timeval` timestamps to wall-clock nanoseconds.
 
