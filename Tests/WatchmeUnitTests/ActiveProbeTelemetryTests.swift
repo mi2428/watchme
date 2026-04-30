@@ -99,6 +99,110 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(path?.tags["probe.gateway.icmp.span_count"], "1")
     }
 
+    func testConnectivityProbeCaptureRunsInternetWhenGatewayICMPLosses() {
+        var internetProbeRan = false
+
+        let capture = collectConnectivityProbeResults(
+            gatewayProbe: {
+                self.gatewayLossResult()
+            },
+            internetProbes: {
+                internetProbeRan = true
+                return ActiveInternetProbeResults(lanes: [self.internetLaneResult()])
+            }
+        )
+
+        XCTAssertTrue(internetProbeRan)
+        XCTAssertEqual(capture.gatewayResult?.reachable, false)
+        XCTAssertEqual(capture.internetResults.lanes.count, 1)
+        XCTAssertEqual(capture.internetResults.tcp.count, 1)
+    }
+
+    func testAssociationTraceReplaysConsumedNetworkAttachmentPacketSpans() {
+        let packetNames = [
+            "packet.dhcp.request_to_ack",
+            "packet.icmpv6.router_solicitation_to_advertisement",
+            "packet.arp.request_to_reply",
+        ]
+
+        for name in packetNames {
+            XCTAssertTrue(
+                shouldReplayConsumedNetworkAttachmentSpan(
+                    reason: "wifi.join",
+                    span: packetSpanEvent(name: name, startWallNanos: 1_000_000_000),
+                    replayStart: 900_000_000
+                )
+            )
+        }
+        XCTAssertFalse(
+            shouldReplayConsumedNetworkAttachmentSpan(
+                reason: "wifi.power.changed",
+                span: packetSpanEvent(name: "packet.arp.request_to_reply", startWallNanos: 1_000_000_000),
+                replayStart: 900_000_000
+            )
+        )
+        XCTAssertFalse(
+            shouldReplayConsumedNetworkAttachmentSpan(
+                reason: "wifi.join",
+                span: packetSpanEvent(name: "probe.internet.path", startWallNanos: 1_000_000_000),
+                replayStart: 900_000_000
+            )
+        )
+        XCTAssertFalse(
+            shouldReplayConsumedNetworkAttachmentSpan(
+                reason: "wifi.join",
+                span: packetSpanEvent(name: "packet.arp.request_to_reply", startWallNanos: 800_000_000),
+                replayStart: 900_000_000
+            )
+        )
+    }
+
+    func testAssociationPacketWindowUsesEventTimestampLookback() {
+        let start = associationPacketSpanWindowStart(
+            reason: "wifi.join",
+            eventTags: ["wifi.event_received_epoch_ns": "10_000".replacingOccurrences(of: "_", with: "")],
+            traceStarted: 20_000,
+            lookback: 0.000002
+        )
+
+        XCTAssertEqual(start, 8_000)
+        XCTAssertNil(
+            associationPacketSpanWindowStart(
+                reason: "wifi.power.changed",
+                eventTags: ["wifi.event_received_epoch_ns": "10000"],
+                traceStarted: 20_000,
+                lookback: 0.000002
+            )
+        )
+    }
+
+    func testStaleAssociationTraceIsSuppressedWhenWiFiIsGone() {
+        XCTAssertTrue(
+            shouldSuppressStaleAssociationTrace(
+                reason: "wifi.join",
+                readiness: .skip("wifi_not_associated")
+            )
+        )
+        XCTAssertTrue(
+            shouldSuppressStaleAssociationTrace(
+                reason: "wifi.join",
+                readiness: .skip("wifi_power_off")
+            )
+        )
+        XCTAssertFalse(
+            shouldSuppressStaleAssociationTrace(
+                reason: "wifi.join",
+                readiness: .skip("wifi_dns_unavailable")
+            )
+        )
+        XCTAssertFalse(
+            shouldSuppressStaleAssociationTrace(
+                reason: "wifi.power.changed",
+                readiness: .skip("wifi_not_associated")
+            )
+        )
+    }
+
     func testActiveProbeTagsCarryWiFiIdentityContext() {
         let snapshot = makeSnapshot(ssid: "lab-wifi", bssid: "aa:bb:cc:dd:ee:ff")
         let tags = makeAgent().activeInternetHTTPTags(result: httpResult(), snapshot: snapshot)
@@ -216,6 +320,52 @@ final class ActiveProbeTelemetryTests: XCTestCase {
                 ),
             ],
             burstIntervalSeconds: 0
+        )
+    }
+
+    private func gatewayLossResult() -> ActiveGatewayProbeResult {
+        ActiveGatewayProbeResult(
+            gateway: "192.168.23.254",
+            attempts: [
+                ActiveGatewayProbeAttempt(
+                    sequence: 1,
+                    identifier: nil,
+                    icmpSequence: nil,
+                    reachable: false,
+                    outcome: "loss",
+                    error: "ICMP echo reply was not observed before timeout",
+                    timing: ActiveProbeTiming(
+                        startWallNanos: 4_000_000_000,
+                        finishedWallNanos: 4_200_000_000,
+                        timingSource: networkFrameworkTimingSource,
+                        timestampSource: wallClockTimestampSource
+                    )
+                ),
+            ],
+            burstIntervalSeconds: 0
+        )
+    }
+
+    private func internetLaneResult() -> ActiveInternetProbeLaneResult {
+        ActiveInternetProbeLaneResult(
+            target: "neverssl.com",
+            family: .ipv4,
+            dns: [dnsResult(timingSource: networkFrameworkTimingSource, timestampSource: wallClockTimestampSource)],
+            icmp: nil,
+            tcp: tcpResult(),
+            http: httpResult(),
+            startWallNanos: 1_000_000_000,
+            finishedWallNanos: 3_080_000_000
+        )
+    }
+
+    private func packetSpanEvent(name: String, startWallNanos: UInt64 = 1_000_000_000) -> SpanEvent {
+        SpanEvent(
+            name: name,
+            startWallNanos: startWallNanos,
+            durationNanos: 1_000,
+            tags: [:],
+            statusOK: true
         )
     }
 

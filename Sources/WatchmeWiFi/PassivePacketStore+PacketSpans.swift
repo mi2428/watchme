@@ -7,10 +7,14 @@ extension PassivePacketStore {
         interfaceName: String?,
         ipv4Gateway: String?,
         maxAge: TimeInterval,
+        since: UInt64? = nil,
         consume: Bool,
         includeConsumed: ((SpanEvent) -> Bool)? = nil
     ) -> [SpanEvent] {
-        let cutoff = wallClockNanos() - UInt64(maxAge * 1_000_000_000)
+        let now = wallClockNanos()
+        let maxAgeNanos = UInt64(maxAge * 1_000_000_000)
+        let ageCutoff = now > maxAgeNanos ? now - maxAgeNanos : 0
+        let cutoff = max(ageCutoff, since ?? 0)
         lock.lock()
         let dhcpSnapshot = dhcp.filter { $0.wallNanos >= cutoff && (interfaceName == nil || $0.interfaceName == interfaceName) }
         let icmpv6Snapshot = icmpv6.filter { $0.wallNanos >= cutoff && (interfaceName == nil || $0.interfaceName == interfaceName) }

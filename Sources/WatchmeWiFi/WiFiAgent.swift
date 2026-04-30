@@ -10,6 +10,7 @@ final class WiFiAgent: WatchmeCollector {
     let packetStore = PassivePacketStore()
     let triggerQueue = DispatchQueue(label: "watchme.wifi.trigger")
     var lastSnapshot = WiFiSnapshot.capture()
+    var lastEventSnapshot = WiFiSnapshot.capture()
     var lastTrigger = Date.distantPast
     var bpfMonitor: PassiveBPFMonitor?
     var bpfInterface: String?
@@ -80,7 +81,24 @@ final class WiFiAgent: WatchmeCollector {
             guard let self else {
                 return
             }
+            let previous = self.lastEventSnapshot
             let snapshot = captureLatestSnapshot()
+            if !previous.isAssociated, snapshot.isAssociated {
+                self.scheduleAssociationTrace(
+                    sourceReason: "metrics.snapshot",
+                    reason: "wifi.join",
+                    eventTags: self.snapshotTransitionTags(previous: previous, current: snapshot, observation: "metrics_snapshot"),
+                    delay: self.config.associationTraceDelay
+                )
+            } else if WiFiTracePolicy.isAddressAcquisition(previous: previous, current: snapshot) {
+                self.scheduleAssociationTrace(
+                    sourceReason: "metrics.snapshot",
+                    reason: "wifi.join",
+                    eventTags: self.snapshotTransitionTags(previous: previous, current: snapshot, observation: "metrics_snapshot"),
+                    delay: self.config.associationTraceDelay
+                )
+            }
+            self.lastEventSnapshot = snapshot
             startBPFIfNeeded(interfaceName: snapshot.interfaceName)
             logIdentityStatus(snapshot)
             _ = exportMetrics(snapshot: snapshot)
@@ -129,8 +147,9 @@ final class WiFiAgent: WatchmeCollector {
 
     private func handleWiFiEvent(_ event: WiFiEvent) {
         triggerQueue.async {
-            let previous = self.lastSnapshot
+            let previous = self.lastEventSnapshot
             let current = self.captureLatestSnapshot()
+            self.lastEventSnapshot = current
             self.metricState.recordCoreWLANEvent(event.name)
             self.startBPFIfNeeded(interfaceName: current.interfaceName)
             self.logIdentityStatus(current)
@@ -172,8 +191,9 @@ final class WiFiAgent: WatchmeCollector {
 
     private func handleSystemNetworkEvent(reason: String, tags: [String: String]) {
         triggerQueue.async {
-            let previous = self.lastSnapshot
+            let previous = self.lastEventSnapshot
             let current = self.captureLatestSnapshot()
+            self.lastEventSnapshot = current
             self.startBPFIfNeeded(interfaceName: current.interfaceName)
             self.logIdentityStatus(current)
             _ = self.exportMetrics(snapshot: current)
@@ -198,6 +218,16 @@ final class WiFiAgent: WatchmeCollector {
                 )
             }
         }
+    }
+
+    private func snapshotTransitionTags(previous: WiFiSnapshot, current: WiFiSnapshot, observation: String) -> [String: String] {
+        [
+            "agent.observation": observation,
+            "previous_associated": previous.isAssociated ? "true" : "false",
+            "current_associated": current.isAssociated ? "true" : "false",
+            "previous_local_ip": previous.primaryIPv4 ?? "",
+            "current_local_ip": current.primaryIPv4 ?? "",
+        ]
     }
 
     private func classifyWiFiTransition(event: String, previous: WiFiSnapshot, current: WiFiSnapshot) -> String {
