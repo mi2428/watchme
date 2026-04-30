@@ -11,11 +11,74 @@ struct ActiveGatewayProbeAttempt {
     let reachable: Bool
     let outcome: String
     let error: String?
-    let startWallNanos: UInt64
-    let finishedWallNanos: UInt64
-    let durationNanos: UInt64
-    let timingSource: String
-    let timestampSource: String
+    let timing: ActiveProbeTiming
+
+    init(
+        sequence: Int,
+        identifier: UInt16?,
+        icmpSequence: UInt16?,
+        reachable: Bool,
+        outcome: String,
+        error: String?,
+        timing: ActiveProbeTiming
+    ) {
+        self.sequence = sequence
+        self.identifier = identifier
+        self.icmpSequence = icmpSequence
+        self.reachable = reachable
+        self.outcome = outcome
+        self.error = error
+        self.timing = timing
+    }
+
+    init(
+        sequence: Int,
+        identifier: UInt16?,
+        icmpSequence: UInt16?,
+        reachable: Bool,
+        outcome: String,
+        error: String?,
+        startWallNanos: UInt64,
+        finishedWallNanos: UInt64,
+        durationNanos _: UInt64,
+        timingSource: String,
+        timestampSource: String
+    ) {
+        self.init(
+            sequence: sequence,
+            identifier: identifier,
+            icmpSequence: icmpSequence,
+            reachable: reachable,
+            outcome: outcome,
+            error: error,
+            timing: ActiveProbeTiming(
+                startWallNanos: startWallNanos,
+                finishedWallNanos: finishedWallNanos,
+                timingSource: timingSource,
+                timestampSource: timestampSource
+            )
+        )
+    }
+
+    var startWallNanos: UInt64 {
+        timing.startWallNanos
+    }
+
+    var finishedWallNanos: UInt64 {
+        timing.finishedWallNanos
+    }
+
+    var durationNanos: UInt64 {
+        timing.durationNanos
+    }
+
+    var timingSource: String {
+        timing.timingSource
+    }
+
+    var timestampSource: String {
+        timing.timestampSource
+    }
 }
 
 struct ActiveGatewayProbeResult {
@@ -44,7 +107,7 @@ struct ActiveGatewayProbeResult {
         error: String?,
         startWallNanos: UInt64,
         finishedWallNanos: UInt64,
-        durationNanos: UInt64,
+        durationNanos _: UInt64,
         timingSource: String,
         timestampSource: String
     ) {
@@ -59,11 +122,12 @@ struct ActiveGatewayProbeResult {
                     reachable: reachable,
                     outcome: outcome,
                     error: error,
-                    startWallNanos: startWallNanos,
-                    finishedWallNanos: finishedWallNanos,
-                    durationNanos: durationNanos,
-                    timingSource: timingSource,
-                    timestampSource: timestampSource
+                    timing: ActiveProbeTiming(
+                        startWallNanos: startWallNanos,
+                        finishedWallNanos: finishedWallNanos,
+                        timingSource: timingSource,
+                        timestampSource: timestampSource
+                    )
                 ),
             ],
             burstIntervalSeconds: 0
@@ -208,11 +272,7 @@ private func gatewayAttempt(sequence: Int, result: ActiveICMPProbeResult) -> Act
         reachable: result.ok,
         outcome: result.ok ? "reply" : result.outcome,
         error: result.error,
-        startWallNanos: result.startWallNanos,
-        finishedWallNanos: result.finishedWallNanos,
-        durationNanos: result.durationNanos,
-        timingSource: result.timingSource,
-        timestampSource: result.timestampSource
+        timing: result.timing
     )
 }
 

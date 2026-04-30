@@ -14,11 +14,90 @@ struct ActiveDNSProbeResult {
     let answerCount: Int?
     let addresses: [String]
     let error: String?
-    let startWallNanos: UInt64
-    let finishedWallNanos: UInt64
-    let durationNanos: UInt64
-    let timingSource: String
-    let timestampSource: String
+    let timing: ActiveProbeTiming
+
+    init(
+        target: String,
+        family: InternetAddressFamily,
+        recordType: DNSRecordType,
+        resolver: String,
+        transport: String,
+        ok: Bool,
+        rcode: Int?,
+        answerCount: Int?,
+        addresses: [String],
+        error: String?,
+        timing: ActiveProbeTiming
+    ) {
+        self.target = target
+        self.family = family
+        self.recordType = recordType
+        self.resolver = resolver
+        self.transport = transport
+        self.ok = ok
+        self.rcode = rcode
+        self.answerCount = answerCount
+        self.addresses = addresses
+        self.error = error
+        self.timing = timing
+    }
+
+    init(
+        target: String,
+        family: InternetAddressFamily,
+        recordType: DNSRecordType,
+        resolver: String,
+        transport: String,
+        ok: Bool,
+        rcode: Int?,
+        answerCount: Int?,
+        addresses: [String],
+        error: String?,
+        startWallNanos: UInt64,
+        finishedWallNanos: UInt64,
+        durationNanos _: UInt64,
+        timingSource: String,
+        timestampSource: String
+    ) {
+        self.init(
+            target: target,
+            family: family,
+            recordType: recordType,
+            resolver: resolver,
+            transport: transport,
+            ok: ok,
+            rcode: rcode,
+            answerCount: answerCount,
+            addresses: addresses,
+            error: error,
+            timing: ActiveProbeTiming(
+                startWallNanos: startWallNanos,
+                finishedWallNanos: finishedWallNanos,
+                timingSource: timingSource,
+                timestampSource: timestampSource
+            )
+        )
+    }
+
+    var startWallNanos: UInt64 {
+        timing.startWallNanos
+    }
+
+    var finishedWallNanos: UInt64 {
+        timing.finishedWallNanos
+    }
+
+    var durationNanos: UInt64 {
+        timing.durationNanos
+    }
+
+    var timingSource: String {
+        timing.timingSource
+    }
+
+    var timestampSource: String {
+        timing.timestampSource
+    }
 }
 
 private struct DNSExchangeResult {
@@ -102,11 +181,7 @@ func runInternetDNSProbe(
         answerCount: answerCount,
         addresses: exchange.addresses,
         error: exchange.error,
-        startWallNanos: timing.startWallNanos,
-        finishedWallNanos: timing.finishedWallNanos,
-        durationNanos: timing.durationNanos,
-        timingSource: timing.timingSource,
-        timestampSource: timing.timestampSource
+        timing: timing
     )
 }
 
@@ -127,11 +202,7 @@ private func failedDNSProbe(
         answerCount: nil,
         addresses: [],
         error: error,
-        startWallNanos: startWallNanos,
-        finishedWallNanos: finishedWallNanos,
-        durationNanos: max(finishedWallNanos - startWallNanos, 1000),
-        timingSource: networkFrameworkTimingSource,
-        timestampSource: wallClockTimestampSource
+        timing: .networkFramework(start: startWallNanos, finished: finishedWallNanos)
     )
 }
 

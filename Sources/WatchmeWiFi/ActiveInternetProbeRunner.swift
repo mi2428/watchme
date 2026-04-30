@@ -240,11 +240,12 @@ private func noResolverDNSProbeResult(target: String, family: InternetAddressFam
         answerCount: nil,
         addresses: [],
         error: "no Wi-Fi DNS resolver was available",
-        startWallNanos: now,
-        finishedWallNanos: now + 1000,
-        durationNanos: 1000,
-        timingSource: noAddressTimingSource,
-        timestampSource: wallClockTimestampSource
+        timing: ActiveProbeTiming(
+            startWallNanos: now,
+            finishedWallNanos: now + 1000,
+            timingSource: noAddressTimingSource,
+            timestampSource: wallClockTimestampSource
+        )
     )
 }
 

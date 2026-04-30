@@ -11,11 +11,82 @@ struct ActiveICMPProbeResult {
     let ok: Bool
     let outcome: String
     let error: String?
-    let startWallNanos: UInt64
-    let finishedWallNanos: UInt64
-    let durationNanos: UInt64
-    let timingSource: String
-    let timestampSource: String
+    let timing: ActiveProbeTiming
+
+    init(
+        target: String,
+        family: InternetAddressFamily,
+        remoteIP: String,
+        identifier: UInt16?,
+        sequence: UInt16?,
+        ok: Bool,
+        outcome: String,
+        error: String?,
+        timing: ActiveProbeTiming
+    ) {
+        self.target = target
+        self.family = family
+        self.remoteIP = remoteIP
+        self.identifier = identifier
+        self.sequence = sequence
+        self.ok = ok
+        self.outcome = outcome
+        self.error = error
+        self.timing = timing
+    }
+
+    init(
+        target: String,
+        family: InternetAddressFamily,
+        remoteIP: String,
+        identifier: UInt16?,
+        sequence: UInt16?,
+        ok: Bool,
+        outcome: String,
+        error: String?,
+        startWallNanos: UInt64,
+        finishedWallNanos: UInt64,
+        durationNanos _: UInt64,
+        timingSource: String,
+        timestampSource: String
+    ) {
+        self.init(
+            target: target,
+            family: family,
+            remoteIP: remoteIP,
+            identifier: identifier,
+            sequence: sequence,
+            ok: ok,
+            outcome: outcome,
+            error: error,
+            timing: ActiveProbeTiming(
+                startWallNanos: startWallNanos,
+                finishedWallNanos: finishedWallNanos,
+                timingSource: timingSource,
+                timestampSource: timestampSource
+            )
+        )
+    }
+
+    var startWallNanos: UInt64 {
+        timing.startWallNanos
+    }
+
+    var finishedWallNanos: UInt64 {
+        timing.finishedWallNanos
+    }
+
+    var durationNanos: UInt64 {
+        timing.durationNanos
+    }
+
+    var timingSource: String {
+        timing.timingSource
+    }
+
+    var timestampSource: String {
+        timing.timestampSource
+    }
 }
 
 private struct ICMPFailureContext {
@@ -97,11 +168,7 @@ func runInternetICMPProbe(
             ok: true,
             outcome: "reply",
             error: nil,
-            startWallNanos: timing.startWallNanos,
-            finishedWallNanos: timing.finishedWallNanos,
-            durationNanos: timing.durationNanos,
-            timingSource: timing.timingSource,
-            timestampSource: timing.timestampSource
+            timing: timing
         )
     }
 
@@ -136,11 +203,12 @@ private func failedICMPProbe(
         ok: false,
         outcome: outcome,
         error: error,
-        startWallNanos: context.startWallNanos,
-        finishedWallNanos: finishedWallNanos,
-        durationNanos: max(finishedWallNanos - context.startWallNanos, 1000),
-        timingSource: timingSource,
-        timestampSource: wallClockTimestampSource
+        timing: ActiveProbeTiming(
+            startWallNanos: context.startWallNanos,
+            finishedWallNanos: finishedWallNanos,
+            timingSource: timingSource,
+            timestampSource: wallClockTimestampSource
+        )
     )
 }
 
