@@ -5,7 +5,7 @@ import WatchmeSystem
 import WatchmeWiFi
 
 public struct AgentCommand: WatchmeCommand {
-    public static let name = "agent"
+    public static let name = WatchmeCLI.Command.agent
     public static let summary = "Run one or more observability collectors."
 
     private static let collectorFactories: [any WatchmeCollectorFactory.Type] = [
@@ -91,11 +91,11 @@ enum AgentMode: Equatable {
 
 struct AgentConfig {
     var mode: AgentMode = .longRunning
-    var otlpURL = URL(string: "http://127.0.0.1:4318")!
-    var logLevel: LogLevel = .debug
+    var otlpURL = WatchmeDefaults.otlpURL
+    var logLevel = WatchmeDefaults.logLevel
     var enabledCollectors: [String] = []
     var collectorArguments: [String: [String]] = [:]
-    var wifiAuthorizationTimeout: TimeInterval = 5
+    var wifiAuthorizationTimeout: TimeInterval = 0
 
     static func parse(_ arguments: [String], factories: [any WatchmeCollectorFactory.Type]) throws -> AgentConfig {
         var parser = AgentConfigParser(arguments: arguments, factories: factories)
@@ -146,13 +146,13 @@ private struct AgentConfigParser {
             return
         }
         switch arguments[index] {
-        case "once":
+        case WatchmeCLI.Mode.once:
             config.mode = .once
             index += 1
-        case "authorize-location":
+        case WatchmeCLI.Mode.authorizeLocation:
             config.mode = .authorizeLocation
             index += 1
-        case "help", "--help", "-h":
+        case WatchmeCLI.Command.help, WatchmeCLI.Option.help, WatchmeCLI.Option.shortHelp:
             print(agentUsageText())
             exit(0)
         default:
@@ -163,16 +163,16 @@ private struct AgentConfigParser {
     private mutating func consumeOption() throws {
         let (argument, inlineValue) = splitInlineValue(arguments[index])
         switch argument {
-        case "--otlp.url":
+        case WatchmeCLI.Option.otlpURL.name:
             try applyOTLPURL(argument, inlineValue: inlineValue)
-        case "--log.level":
+        case WatchmeCLI.Option.logLevel.name:
             try applyLogLevel(argument, inlineValue: inlineValue)
-        case "--help", "-h":
+        case WatchmeCLI.Option.help, WatchmeCLI.Option.shortHelp:
             try rejectInlineValue(argument, inlineValue)
             print(agentUsageText())
             exit(0)
         default:
-            if argument.hasPrefix("--collector.") {
+            if argument.hasPrefix(WatchmeCLI.Collector.prefix) {
                 try enableCollector(argument, inlineValue: inlineValue)
             } else if let collectorName = collectorName(forNamespacedOption: argument) {
                 try appendCollectorOption(collectorName: collectorName)
@@ -196,7 +196,7 @@ private struct AgentConfigParser {
 
     private mutating func enableCollector(_ argument: String, inlineValue: String?) throws {
         try rejectInlineValue(argument, inlineValue)
-        let name = String(argument.dropFirst("--collector.".count))
+        let name = String(argument.dropFirst(WatchmeCLI.Collector.prefix.count))
         guard collectorNames.contains(name) else {
             throw WatchmeError.invalidArgument("Unknown collector: \(name)")
         }
@@ -235,10 +235,10 @@ private struct AgentConfigParser {
             return
         }
         if config.enabledCollectors.isEmpty {
-            config.enabledCollectors = ["system"]
+            config.enabledCollectors = [SystemCollectorFactory.name]
         }
         for collectorName in config.collectorArguments.keys where !config.enabledCollectors.contains(collectorName) {
-            throw WatchmeError.invalidArgument("--\(collectorName).* options require --collector.\(collectorName)")
+            throw WatchmeError.invalidArgument("--\(collectorName).* options require \(WatchmeCLI.Collector.option(collectorName))")
         }
         if explicitlySelectedCollectors, config.enabledCollectors.isEmpty {
             throw WatchmeError.invalidArgument("At least one collector must be enabled")
@@ -250,7 +250,8 @@ private struct AgentConfigParser {
             return
         }
         if explicitlySelectedCollectors {
-            throw WatchmeError.invalidArgument("authorize-location does not accept --collector.* options")
+            throw WatchmeError
+                .invalidArgument("\(WatchmeCLI.Mode.authorizeLocation) does not accept \(WatchmeCLI.Collector.wildcard) options")
         }
         let nonWiFiArguments = config.collectorArguments.keys.filter { $0 != WiFiCollectorFactory.name }
         guard nonWiFiArguments.isEmpty else {
@@ -272,12 +273,12 @@ public func agentUsageText() -> String {
         WiFiCollectorFactory.self,
     ]
     let collectorRows = formatUsageRows(
-        factories.map { ("--collector.\($0.name)", $0.summary) },
+        factories.map { (WatchmeCLI.Collector.option($0.name), $0.summary) },
         leftColumnWidth: 38
     )
     let commonOptions = formatUsageRows([
-        ("--otlp.url URL", "OTLP/HTTP collector endpoint. Default: http://127.0.0.1:4318"),
-        ("--log.level level", "debug, info, warn, or error. Default: debug"),
+        WatchmeCLI.Option.otlpURL.usageRow,
+        WatchmeCLI.Option.logLevel.usageRow,
     ], leftColumnWidth: 38)
     let systemOptions = formatUsageRows(SystemCollectorFactory.usageRows(), leftColumnWidth: 38)
     let wifiOptions = formatUsageRows(WiFiCollectorFactory.usageRows(), leftColumnWidth: 38)
@@ -286,10 +287,10 @@ public func agentUsageText() -> String {
     WatchMe - macOS observability agent
 
     Usage:
-      watchme agent [options]
-      watchme agent once [options]
-      watchme agent authorize-location [options]
-      watchme agent --help
+      \(WatchmeCLI.Command.executable) \(AgentCommand.name) [options]
+      \(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.once) [options]
+      \(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.authorizeLocation) [options]
+      \(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Option.help)
 
     Collectors:
     \(collectorRows)
@@ -304,7 +305,8 @@ public func agentUsageText() -> String {
     \(wifiOptions)
 
     Defaults:
-      watchme agent enables only --collector.system unless any --collector.* option is provided.
-      Enable Wi-Fi explicitly with --collector.wifi.
+      \(WatchmeCLI.Command.executable) \(AgentCommand.name) enables only \(WatchmeCLI.Collector
+        .option(SystemCollectorFactory.name)) unless any \(WatchmeCLI.Collector.wildcard) option is provided.
+      Enable Wi-Fi explicitly with \(WatchmeCLI.Collector.option(WiFiCollectorFactory.name)).
     """
 }

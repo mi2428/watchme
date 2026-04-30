@@ -1,9 +1,6 @@
 import Foundation
 import WatchmeCore
 
-let defaultGatewayProbeBurstCount = 4
-let defaultGatewayProbeBurstInterval: TimeInterval = 0.05
-
 struct ActiveGatewayProbeAttempt {
     let sequence: Int
     let identifier: UInt16?
@@ -143,8 +140,8 @@ func runGatewayICMPProbe(
     timeout: TimeInterval,
     interfaceName: String?,
     packetStore: PassivePacketStore? = nil,
-    burstCount: Int = defaultGatewayProbeBurstCount,
-    burstInterval: TimeInterval = defaultGatewayProbeBurstInterval
+    burstCount: Int = WiFiDefaults.gatewayProbeBurstCount,
+    burstInterval: TimeInterval = WiFiDefaults.gatewayProbeBurstInterval
 ) -> ActiveGatewayProbeResult {
     let count = max(burstCount, 1)
     let interval = max(burstInterval, 0)

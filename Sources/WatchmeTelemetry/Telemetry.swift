@@ -42,7 +42,12 @@ public final class TelemetryClient {
     private let traces: OTelTraceExporter
     private let metrics: OTelMetricExporter
 
-    public init(serviceName: String, tracesEndpoint: URL, metricsEndpoint: URL, metricsTimeout: TimeInterval = 5) {
+    public init(
+        serviceName: String,
+        tracesEndpoint: URL,
+        metricsEndpoint: URL,
+        metricsTimeout: TimeInterval = WatchmeDefaults.metricsTimeout
+    ) {
         traces = OTelTraceExporter(serviceName: serviceName, endpoint: tracesEndpoint)
         metrics = OTelMetricExporter(serviceName: serviceName, endpoint: metricsEndpoint, timeout: metricsTimeout)
     }

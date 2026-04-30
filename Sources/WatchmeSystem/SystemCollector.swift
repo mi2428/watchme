@@ -3,7 +3,19 @@ import Foundation
 import WatchmeCore
 import WatchmeTelemetry
 
-private let defaultSystemOTLPURL = URL(string: "http://127.0.0.1:4318")!
+enum SystemDefaults {
+    static let metricsInterval: TimeInterval = 5
+}
+
+enum SystemCLI {
+    enum Option {
+        static let metricsInterval = CLIOption(
+            "--system.metrics.interval",
+            valueName: "seconds",
+            help: "System metric collection interval. Default: \(formatCLIDefault(SystemDefaults.metricsInterval))"
+        )
+    }
+}
 
 public enum SystemCollectorFactory: WatchmeCollectorFactory {
     public static let name = "system"
@@ -21,14 +33,14 @@ public enum SystemCollectorFactory: WatchmeCollectorFactory {
 
     public static func usageRows() -> [(String, String)] {
         [
-            ("--system.metrics.interval seconds", "System metric collection interval. Default: 5"),
+            SystemCLI.Option.metricsInterval.usageRow,
         ]
     }
 }
 
 struct SystemConfig {
-    var otlpURL: URL = defaultSystemOTLPURL
-    var metricsInterval: TimeInterval = 5
+    var otlpURL = WatchmeDefaults.otlpURL
+    var metricsInterval = SystemDefaults.metricsInterval
 
     static func parse(_ arguments: [String], otlpURL: URL) throws -> SystemConfig {
         var parser = SystemConfigParser(arguments: arguments, config: SystemConfig(otlpURL: otlpURL))
@@ -60,7 +72,7 @@ private struct SystemConfigParser {
     private mutating func consumeOption() throws {
         let (argument, inlineValue) = splitInlineValue(arguments[index])
         switch argument {
-        case "--system.metrics.interval":
+        case SystemCLI.Option.metricsInterval.name:
             try applyMetricsInterval(argument, inlineValue: inlineValue)
         default:
             throw WatchmeError.invalidArgument("Unknown system collector argument: \(argument)")

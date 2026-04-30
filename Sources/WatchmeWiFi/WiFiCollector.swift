@@ -3,7 +3,107 @@ import Foundation
 import WatchmeCore
 import WatchmeTelemetry
 
-private let defaultWiFiOTLPURL = URL(string: "http://127.0.0.1:4318")!
+enum WiFiCLI {
+    enum Option {
+        static let metricsInterval = CLIOption(
+            "--wifi.metrics.interval",
+            valueName: "seconds",
+            help: "Wi-Fi metric collection interval. Default: \(formatCLIDefault(WiFiDefaults.metricsInterval))"
+        )
+        static let activeInterval = CLIOption(
+            "--wifi.traces.interval",
+            valueName: "seconds",
+            help: "Active trace interval. Default: \(formatCLIDefault(WiFiDefaults.activeInterval))"
+        )
+        static let triggerCooldown = CLIOption(
+            "--wifi.traces.cooldown",
+            valueName: "seconds",
+            help: "Minimum seconds between event traces. Default: \(formatCLIDefault(WiFiDefaults.triggerCooldown))"
+        )
+        static let bpfEnabled = CLIOption(
+            "--wifi.probe.bpf.enabled",
+            valueName: "bool",
+            help: "Enable passive BPF probe for DHCP/RS/RA/NDP. Default: \(WiFiDefaults.bpfEnabled)"
+        )
+        static let bpfSpanMaxAge = CLIOption(
+            "--wifi.probe.bpf.span-max-age",
+            valueName: "sec",
+            help: "Passive probe packet span lookback window. Default: \(formatCLIDefault(WiFiDefaults.bpfSpanMaxAge))"
+        )
+        static let gatewayCount = CLIOption(
+            "--wifi.probe.gateway.count",
+            valueName: "n",
+            help: "Gateway ICMP probes per burst. Default: \(WiFiDefaults.gatewayProbeBurstCount)"
+        )
+        static let gatewayInterval = CLIOption(
+            "--wifi.probe.gateway.interval",
+            valueName: "sec",
+            help: "Delay between gateway burst probes. Default: \(formatCLIDefault(WiFiDefaults.gatewayProbeBurstInterval))"
+        )
+        static let internetTarget = CLIOption(
+            "--wifi.probe.internet.target",
+            valueName: "host",
+            help: "Internet probe host. Can be repeated. Default: \(WiFiDefaults.probeInternetTargets.joined(separator: ", "))"
+        )
+        static let internetFamily = CLIOption(
+            "--wifi.probe.internet.family",
+            valueName: "value",
+            help: "ipv4, ipv6, or dual. Default: \(WiFiDefaults.probeInternetFamily.rawValue)"
+        )
+        static let internetTimeout = CLIOption(
+            "--wifi.probe.internet.timeout",
+            valueName: "sec",
+            help: "Internet probe timeout. Default: \(formatCLIDefault(WiFiDefaults.probeInternetTimeout))"
+        )
+        static let internetDNS = CLIOption(
+            "--wifi.probe.internet.dns",
+            valueName: "bool",
+            help: "Enable internet DNS probe. Default: \(WiFiDefaults.probeInternetDNS)"
+        )
+        static let internetICMP = CLIOption(
+            "--wifi.probe.internet.icmp",
+            valueName: "bool",
+            help: "Enable internet ICMP probe. Default: \(WiFiDefaults.probeInternetICMP)"
+        )
+        static let internetHTTP = CLIOption(
+            "--wifi.probe.internet.http",
+            valueName: "bool",
+            help: "Enable internet plain HTTP probe. Default: \(WiFiDefaults.probeInternetHTTP)"
+        )
+    }
+
+    static let usageOptions = [
+        Option.metricsInterval,
+        Option.activeInterval,
+        Option.triggerCooldown,
+        Option.bpfEnabled,
+        Option.bpfSpanMaxAge,
+        Option.gatewayCount,
+        Option.gatewayInterval,
+        Option.internetTarget,
+        Option.internetFamily,
+        Option.internetTimeout,
+        Option.internetDNS,
+        Option.internetICMP,
+        Option.internetHTTP,
+    ]
+
+    static let timeIntervalOptionNames = Set([
+        Option.metricsInterval.name,
+        Option.activeInterval.name,
+        Option.triggerCooldown.name,
+        Option.internetTimeout.name,
+        Option.gatewayInterval.name,
+        Option.bpfSpanMaxAge.name,
+    ])
+
+    static let boolOptionNames = Set([
+        Option.internetDNS.name,
+        Option.internetICMP.name,
+        Option.internetHTTP.name,
+        Option.bpfEnabled.name,
+    ])
+}
 
 public enum WiFiCollectorFactory: WatchmeCollectorFactory {
     public static let name = "wifi"
@@ -25,12 +125,12 @@ public enum WiFiCollectorFactory: WatchmeCollectorFactory {
     }
 
     public static func authorizationTimeout(arguments: [String]) throws -> TimeInterval {
-        var timeout: TimeInterval = 5
+        var timeout = WiFiDefaults.probeInternetTimeout
         var index = 0
         while index < arguments.count {
             let (argument, inlineValue) = splitInlineValue(arguments[index])
-            guard argument == "--wifi.probe.internet.timeout" else {
-                throw WatchmeError.invalidArgument("authorize-location only accepts --wifi.probe.internet.timeout")
+            guard argument == WiFiCLI.Option.internetTimeout.name else {
+                throw WatchmeError.invalidArgument("authorize-location only accepts \(WiFiCLI.Option.internetTimeout.name)")
             }
             let rawValue = try requireOptionValue(arguments: arguments, index: &index, argument: argument, inlineValue: inlineValue)
             guard let value = TimeInterval(rawValue), value > 0 else {
@@ -43,39 +143,25 @@ public enum WiFiCollectorFactory: WatchmeCollectorFactory {
     }
 
     public static func usageRows() -> [(String, String)] {
-        [
-            ("--wifi.metrics.interval seconds", "Wi-Fi metric collection interval. Default: 5"),
-            ("--wifi.traces.interval seconds", "Active trace interval. Default: 60"),
-            ("--wifi.traces.cooldown seconds", "Minimum seconds between event traces. Default: 2"),
-            ("--wifi.probe.bpf.enabled bool", "Enable passive BPF probe for DHCP/RS/RA/NDP. Default: true"),
-            ("--wifi.probe.bpf.span-max-age sec", "Passive probe packet span lookback window. Default: 180"),
-            ("--wifi.probe.gateway.count n", "Gateway ICMP probes per burst. Default: 4"),
-            ("--wifi.probe.gateway.interval sec", "Delay between gateway burst probes. Default: 0.05"),
-            ("--wifi.probe.internet.target host", "Internet probe host. Can be repeated. Default: example.com, www.cloudflare.com"),
-            ("--wifi.probe.internet.family value", "ipv4, ipv6, or dual. Default: dual"),
-            ("--wifi.probe.internet.timeout sec", "Internet probe timeout. Default: 5"),
-            ("--wifi.probe.internet.dns bool", "Enable internet DNS probe. Default: true"),
-            ("--wifi.probe.internet.icmp bool", "Enable internet ICMP probe. Default: true"),
-            ("--wifi.probe.internet.http bool", "Enable internet plain HTTP probe. Default: true"),
-        ]
+        WiFiCLI.usageOptions.map(\.usageRow)
     }
 }
 
 struct WiFiConfig {
-    var otlpURL: URL = defaultWiFiOTLPURL
-    var metricsInterval: TimeInterval = 5
-    var activeInterval: TimeInterval = 60
-    var triggerCooldown: TimeInterval = 2
-    var probeInternetTimeout: TimeInterval = 5
-    var probeInternetFamily: InternetProbeFamily = .dual
-    var probeInternetDNS = true
-    var probeInternetICMP = true
-    var probeInternetHTTP = true
-    var probeInternetTargets = ["example.com", "www.cloudflare.com"]
-    var probeGatewayBurstCount = defaultGatewayProbeBurstCount
-    var probeGatewayBurstInterval = defaultGatewayProbeBurstInterval
-    var bpfEnabled = true
-    var bpfSpanMaxAge: TimeInterval = 180
+    var otlpURL = WatchmeDefaults.otlpURL
+    var metricsInterval = WiFiDefaults.metricsInterval
+    var activeInterval = WiFiDefaults.activeInterval
+    var triggerCooldown = WiFiDefaults.triggerCooldown
+    var probeInternetTimeout = WiFiDefaults.probeInternetTimeout
+    var probeInternetFamily = WiFiDefaults.probeInternetFamily
+    var probeInternetDNS = WiFiDefaults.probeInternetDNS
+    var probeInternetICMP = WiFiDefaults.probeInternetICMP
+    var probeInternetHTTP = WiFiDefaults.probeInternetHTTP
+    var probeInternetTargets = WiFiDefaults.probeInternetTargets
+    var probeGatewayBurstCount = WiFiDefaults.gatewayProbeBurstCount
+    var probeGatewayBurstInterval = WiFiDefaults.gatewayProbeBurstInterval
+    var bpfEnabled = WiFiDefaults.bpfEnabled
+    var bpfSpanMaxAge = WiFiDefaults.bpfSpanMaxAge
 
     static func parse(_ arguments: [String], otlpURL: URL) throws -> WiFiConfig {
         var parser = WiFiConfigParser(arguments: arguments, config: WiFiConfig(otlpURL: otlpURL))
@@ -112,16 +198,15 @@ private struct WiFiConfigParser {
     private mutating func consumeOption() throws {
         let (argument, inlineValue) = splitInlineValue(arguments[index])
         switch argument {
-        case "--wifi.probe.internet.target":
+        case WiFiCLI.Option.internetTarget.name:
             try explicitInternetTargets.append(requireValue(argument, inlineValue: inlineValue))
-        case "--wifi.probe.internet.family":
+        case WiFiCLI.Option.internetFamily.name:
             try applyInternetFamily(argument, inlineValue: inlineValue)
-        case "--wifi.probe.gateway.count":
+        case WiFiCLI.Option.gatewayCount.name:
             try applyGatewayBurstCount(argument, inlineValue: inlineValue)
-        case "--wifi.metrics.interval", "--wifi.traces.interval", "--wifi.traces.cooldown", "--wifi.probe.internet.timeout",
-             "--wifi.probe.gateway.interval", "--wifi.probe.bpf.span-max-age":
+        case _ where WiFiCLI.timeIntervalOptionNames.contains(argument):
             try applyTimeInterval(argument, inlineValue: inlineValue)
-        case "--wifi.probe.internet.dns", "--wifi.probe.internet.icmp", "--wifi.probe.internet.http", "--wifi.probe.bpf.enabled":
+        case _ where WiFiCLI.boolOptionNames.contains(argument):
             try applyBoolOption(argument, inlineValue: inlineValue)
         default:
             throw WatchmeError.invalidArgument("Unknown wifi collector argument: \(argument)")
@@ -134,17 +219,17 @@ private struct WiFiConfigParser {
             throw WatchmeError.invalidArgument("Invalid value for \(argument): \(rawValue)")
         }
         switch argument {
-        case "--wifi.metrics.interval":
+        case WiFiCLI.Option.metricsInterval.name:
             config.metricsInterval = try positive(value, name: "Wi-Fi metrics interval")
-        case "--wifi.traces.interval":
+        case WiFiCLI.Option.activeInterval.name:
             config.activeInterval = try positive(value, name: "Wi-Fi active interval")
-        case "--wifi.traces.cooldown":
+        case WiFiCLI.Option.triggerCooldown.name:
             config.triggerCooldown = try nonNegative(value, name: "Wi-Fi trigger cooldown")
-        case "--wifi.probe.internet.timeout":
+        case WiFiCLI.Option.internetTimeout.name:
             config.probeInternetTimeout = try positive(value, name: "internet probe timeout")
-        case "--wifi.probe.gateway.interval":
+        case WiFiCLI.Option.gatewayInterval.name:
             config.probeGatewayBurstInterval = try nonNegative(value, name: "gateway probe burst interval")
-        case "--wifi.probe.bpf.span-max-age":
+        case WiFiCLI.Option.bpfSpanMaxAge.name:
             config.bpfSpanMaxAge = try positive(value, name: "BPF span max age")
         default:
             break
@@ -179,13 +264,13 @@ private struct WiFiConfigParser {
             throw WatchmeError.invalidArgument("Invalid boolean for \(argument): \(rawValue)")
         }
         switch argument {
-        case "--wifi.probe.internet.dns":
+        case WiFiCLI.Option.internetDNS.name:
             config.probeInternetDNS = value
-        case "--wifi.probe.internet.icmp":
+        case WiFiCLI.Option.internetICMP.name:
             config.probeInternetICMP = value
-        case "--wifi.probe.internet.http":
+        case WiFiCLI.Option.internetHTTP.name:
             config.probeInternetHTTP = value
-        case "--wifi.probe.bpf.enabled":
+        case WiFiCLI.Option.bpfEnabled.name:
             config.bpfEnabled = value
         default:
             break
