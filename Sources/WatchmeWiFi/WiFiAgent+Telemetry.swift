@@ -255,7 +255,8 @@ extension WiFiAgent {
                 "probe.gateway": networkState.routerIPv4 ?? "",
                 "probe.gateway.burst_count": "\(config.probeGatewayBurstCount)",
                 "probe.gateway.burst_interval_seconds": formatGatewayProbeDouble(config.probeGatewayBurstInterval),
-                "probe.gateway.span_count": gatewayResult.map { "\($0.probeCount)" } ?? "0",
+                "probe.gateway.probe_count": gatewayResult.map { "\($0.probeCount)" } ?? "0",
+                "probe.gateway.span_count": gatewayResult == nil ? "0" : "1",
             ]
         )
     }
