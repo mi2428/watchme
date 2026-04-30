@@ -122,7 +122,7 @@ extension WiFiAgent {
         let traceStarted = wallClockNanos()
         let snapshot = captureLatestSnapshot()
         logIdentityStatus(snapshot)
-        _ = pushMetrics(snapshot: snapshot)
+        _ = exportMetrics(snapshot: snapshot)
         let recorder = TraceRecorder()
 
         logEvent(
@@ -138,8 +138,7 @@ extension WiFiAgent {
         rootTags.merge(eventTags) { _, new in new }
         rootTags["reason"] = reason
         rootTags["traces.url"] = config.tracesURL.absoluteString
-        rootTags["metrics.push.url"] = config.metricsPushURL.absoluteString
-        rootTags["metrics.push.prefix"] = config.metricsPushPrefix
+        rootTags["metrics.url"] = config.metricsURL.absoluteString
         rootTags["bpf.enabled"] = config.bpfEnabled ? "true" : "false"
 
         let networkState = currentWiFiServiceNetworkState(interfaceName: snapshot.interfaceName)
@@ -161,7 +160,7 @@ extension WiFiAgent {
 
         if includeActive {
             recordActiveValidation(recorder: recorder, snapshot: snapshot, networkState: networkState)
-            _ = pushMetrics(snapshot: snapshot)
+            _ = exportMetrics(snapshot: snapshot)
         }
 
         let rootName = traceRootName(reason)
@@ -181,9 +180,9 @@ extension WiFiAgent {
         )
     }
 
-    func pushMetrics(snapshot: WiFiSnapshot) -> Bool {
-        telemetry.pushMetrics(
-            job: "watchme_wifi",
+    func exportMetrics(snapshot: WiFiSnapshot) -> Bool {
+        telemetry.exportMetrics(
+            name: "watchme_wifi",
             fields: snapshot.traceTags,
             metrics: WiFiMetricBuilder.metrics(snapshot: snapshot, state: metricState, bpfStats: bpfMonitor?.stats())
         )

@@ -4,7 +4,7 @@ import OpenTelemetryProtocolExporterHttp
 import OpenTelemetrySdk
 import WatchmeCore
 
-public struct PrometheusMetric {
+public struct MetricSample {
     public enum MetricType: String {
         case gauge
         case counter
@@ -25,138 +25,123 @@ public struct PrometheusMetric {
     }
 }
 
-public enum PrometheusTextEncoder {
-    public static func encode(_ metrics: [PrometheusMetric]) -> String {
-        var lines: [String] = []
-        var described = Set<String>()
-        for metric in metrics {
-            // Pushgateway accepts the Prometheus 0.0.4 text format; HELP/TYPE
-            // must be emitted once per metric family, before the first sample.
-            if !described.contains(metric.name) {
-                lines.append("# HELP \(metric.name) \(metric.help)")
-                lines.append("# TYPE \(metric.name) \(metric.type.rawValue)")
-                described.insert(metric.name)
-            }
-            lines.append("\(metric.name)\(prometheusLabels(metric.labels)) \(formatPrometheusValue(metric.value))")
-        }
-        lines.append("")
-        return lines.joined(separator: "\n")
-    }
-
-    private static func formatPrometheusValue(_ value: Double) -> String {
-        // Keep integer gauges readable while still emitting deterministic
-        // decimal text for rates and timestamps. Prometheus accepts either
-        // spelling, but stable formatting keeps tests and diffs meaningful.
-        if value.rounded() == value {
-            return String(Int64(value))
-        }
-        return String(format: "%.6f", value)
-    }
-}
-
-public struct MetricPushResult {
+public struct MetricExportResult {
     public let ok: Bool
     public let endpoint: URL
-    public let statusCode: Int
     public let error: String?
 }
 
-public protocol MetricSink {
-    func push(job: String, instance: String, body: String, timeout: TimeInterval) -> MetricPushResult
-}
-
-public final class PushgatewayMetricSink: MetricSink {
-    private let baseURL: URL
-    private let pathPrefix: String
-
-    public init(baseURL: URL, pathPrefix: String = "") {
-        self.baseURL = baseURL
-        self.pathPrefix = pathPrefix
-    }
-
-    public func push(job: String, instance: String, body: String, timeout: TimeInterval) -> MetricPushResult {
-        let endpoint = pushgatewayEndpointURL(baseURL: baseURL, pathPrefix: pathPrefix, job: job, instance: instance)
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "PUT"
-        request.timeoutInterval = timeout
-        request.setValue("text/plain; version=0.0.4; charset=utf-8", forHTTPHeaderField: "Content-Type")
-        request.httpBody = body.data(using: .utf8)
-
-        let semaphore = DispatchSemaphore(value: 0)
-        var ok = false
-        var statusCode = 0
-        var errorMessage: String?
-
-        URLSession.shared.dataTask(with: request) { _, response, error in
-            if let error {
-                errorMessage = error.localizedDescription
-            }
-            if let http = response as? HTTPURLResponse {
-                statusCode = http.statusCode
-                ok = (200 ..< 300).contains(http.statusCode)
-            }
-            semaphore.signal()
-        }.resume()
-
-        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
-            errorMessage = "push timed out"
-        }
-
-        return MetricPushResult(ok: ok, endpoint: endpoint, statusCode: statusCode, error: errorMessage)
-    }
-}
-
-func pushgatewayEndpointURL(baseURL: URL, pathPrefix: String = "", job: String, instance: String) -> URL {
-    let encodedJob = pathEscape(job)
-    let encodedInstance = pathEscape(instance)
-    var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
-    let basePrefix = components.percentEncodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    let configuredPrefix = pushgatewayPathPrefix(pathPrefix)
-    let prefix = [basePrefix, configuredPrefix].filter { !$0.isEmpty }.joined(separator: "/")
-    // Use percentEncodedPath because Pushgateway grouping keys are path
-    // segments. A job or instance can legally contain "/", and that slash must
-    // stay encoded as data rather than being interpreted as a path separator.
-    let pathPrefix = prefix.isEmpty ? "" : "/\(prefix)"
-    components.percentEncodedPath = "\(pathPrefix)/metrics/job/\(encodedJob)/instance/\(encodedInstance)"
-    return components.url!
-}
-
-private func pushgatewayPathPrefix(_ rawPrefix: String) -> String {
-    rawPrefix
-        .split(separator: "/", omittingEmptySubsequences: true)
-        .map { pathEscape(String($0)) }
-        .joined(separator: "/")
-}
-
 public final class TelemetryClient {
-    private let serviceName: String
-    private let metricsSink: MetricSink
     private let traces: OTelTraceExporter
-    private let metricsTimeout: TimeInterval
+    private let metrics: OTelMetricExporter
 
-    public init(serviceName: String, tracesEndpoint: URL, metricsSink: MetricSink, metricsTimeout: TimeInterval = 5) {
-        self.serviceName = serviceName
-        self.metricsSink = metricsSink
-        self.metricsTimeout = metricsTimeout
+    public init(serviceName: String, tracesEndpoint: URL, metricsEndpoint: URL, metricsTimeout: TimeInterval = 5) {
         traces = OTelTraceExporter(serviceName: serviceName, endpoint: tracesEndpoint)
+        metrics = OTelMetricExporter(serviceName: serviceName, endpoint: metricsEndpoint, timeout: metricsTimeout)
     }
 
-    public func pushMetrics(job: String, fields: [String: String], metrics: [PrometheusMetric]) -> Bool {
-        let instance = Host.current().localizedName ?? "macos"
-        let body = PrometheusTextEncoder.encode(metrics)
-        let result = metricsSink.push(job: job, instance: instance, body: body, timeout: metricsTimeout)
+    public func exportMetrics(name: String, fields: [String: String], metrics samples: [MetricSample]) -> Bool {
+        let result = metrics.export(samples)
         var logFields = fields
-        logFields["metrics_push_endpoint_url"] = result.endpoint.absoluteString
-        logFields["status_code"] = "\(result.statusCode)"
+        logFields["metrics_endpoint_url"] = result.endpoint.absoluteString
+        logFields["metric_sample_count"] = "\(samples.count)"
         if let error = result.error {
             logFields["error"] = error
         }
-        logEvent(result.ok ? .debug : .warn, result.ok ? "\(job)_metrics_pushed" : "\(job)_metrics_push_failed", fields: logFields)
+        logEvent(result.ok ? .debug : .warn, result.ok ? "\(name)_metrics_exported" : "\(name)_metrics_export_failed", fields: logFields)
         return result.ok
     }
 
     public func exportTrace(records: TraceBatch) -> String {
         traces.export(records)
+    }
+}
+
+final class OTelMetricExporter {
+    private let endpoint: URL
+    private let exporter: OtlpHttpMetricExporter
+    private let provider: MeterProviderSdk
+    private let meter: MeterSdk
+    private let lock = NSLock()
+    private var gauges: [String: DoubleGaugeSdk] = [:]
+    private var counters: [String: DoubleCounterSdk] = [:]
+    private var previousCounterValues: [String: Double] = [:]
+
+    init(serviceName: String, endpoint: URL, timeout: TimeInterval) {
+        self.endpoint = endpoint
+        exporter = OtlpHttpMetricExporter(endpoint: endpoint, httpClient: BlockingHTTPClient(timeout: timeout))
+        let reader = PeriodicMetricReaderBuilder(exporter: exporter)
+            .setInterval(timeInterval: 86_400)
+            .build()
+        let resource = Resource(attributes: [
+            "service.name": AttributeValue.string(serviceName),
+            "host.name": AttributeValue.string(Host.current().localizedName ?? "unknown"),
+            "os.type": AttributeValue.string("macOS"),
+        ])
+        provider = MeterProviderSdk.builder()
+            .setResource(resource: resource)
+            .registerMetricReader(reader: reader)
+            .build()
+        meter = provider.get(name: "watchme")
+    }
+
+    func export(_ samples: [MetricSample]) -> MetricExportResult {
+        lock.lock()
+        defer { lock.unlock() }
+
+        for sample in samples {
+            switch sample.type {
+            case .gauge:
+                recordGauge(sample)
+            case .counter:
+                recordCounter(sample)
+            }
+        }
+
+        let providerResult = provider.forceFlush()
+        let exporterResult = exporter.flush()
+        let ok = providerResult == .success && exporterResult == .success
+        return MetricExportResult(
+            ok: ok,
+            endpoint: endpoint,
+            error: ok ? nil : "OTLP metric export failed"
+        )
+    }
+
+    private func recordGauge(_ sample: MetricSample) {
+        let gauge = gauges[sample.name] ?? meter.gaugeBuilder(name: sample.name)
+            .setDescription(sample.help)
+            .build()
+        gauges[sample.name] = gauge
+        gauge.record(value: sample.value, attributes: metricAttributes(sample.labels))
+    }
+
+    private func recordCounter(_ sample: MetricSample) {
+        let key = metricSeriesKey(name: sample.name, labels: sample.labels)
+        let previous = previousCounterValues[key]
+        let delta = previous.map { sample.value >= $0 ? sample.value - $0 : sample.value } ?? sample.value
+        previousCounterValues[key] = sample.value
+        guard delta > 0 || previous == nil else {
+            return
+        }
+
+        var counter = counters[sample.name] ?? meter.counterBuilder(name: sample.name)
+            .ofDoubles()
+            .setDescription(sample.help)
+            .build()
+        counter.add(value: delta, attributes: metricAttributes(sample.labels))
+        counters[sample.name] = counter
+    }
+}
+
+func metricSeriesKey(name: String, labels: [String: String]) -> String {
+    let labelKey = labels.keys.sorted().map { "\($0)=\(labels[$0] ?? "")" }.joined(separator: "\u{1f}")
+    return "\(name)\u{1e}\(labelKey)"
+}
+
+func metricAttributes(_ labels: [String: String]) -> [String: AttributeValue] {
+    labels.reduce(into: [:]) { result, entry in
+        result[entry.key] = .string(entry.value)
     }
 }
 
@@ -414,7 +399,11 @@ final class BlockingHTTPClient: HTTPClient {
             if let error {
                 output = .failure(error)
             } else if let http = response as? HTTPURLResponse {
-                output = .success(http)
+                if (200 ..< 300).contains(http.statusCode) {
+                    output = .success(http)
+                } else {
+                    output = .failure(WatchmeError.invalidArgument("OTLP HTTP export failed with status \(http.statusCode)"))
+                }
             } else {
                 output = .failure(
                     WatchmeError
@@ -430,29 +419,6 @@ final class BlockingHTTPClient: HTTPClient {
         }
         completion(output ?? .failure(WatchmeError.invalidArgument("OTLP HTTP export did not complete")))
     }
-}
-
-func prometheusLabels(_ labels: [String: String]) -> String {
-    guard !labels.isEmpty else {
-        return ""
-    }
-    return "{"
-        + labels.keys.sorted().map { key in
-            "\(key)=\"\(prometheusEscape(labels[key] ?? ""))\""
-        }.joined(separator: ",") + "}"
-}
-
-func prometheusEscape(_ value: String) -> String {
-    value
-        .replacingOccurrences(of: "\\", with: "\\\\")
-        .replacingOccurrences(of: "\n", with: "\\n")
-        .replacingOccurrences(of: "\"", with: "\\\"")
-}
-
-func pathEscape(_ value: String) -> String {
-    var allowed = CharacterSet.urlPathAllowed
-    allowed.remove(charactersIn: "/")
-    return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
 }
 
 func attributeValues(_ tags: [String: String]) -> [String: AttributeValue] {

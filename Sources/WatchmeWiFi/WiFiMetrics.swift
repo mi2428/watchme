@@ -7,23 +7,23 @@ enum WiFiMetricBuilder {
         snapshot: WiFiSnapshot,
         state: WiFiMetricState = WiFiMetricState(),
         bpfStats: BPFStats? = nil
-    ) -> [PrometheusMetric] {
+    ) -> [MetricSample] {
         let labels = snapshot.metricLabels
         var metrics = quantitativeMetrics(snapshot: snapshot, labels: labels)
         metrics.append(contentsOf: interfaceStateMetrics(snapshot: snapshot, labels: labels))
         metrics.append(associatedMetric(snapshot: snapshot, labels: labels))
         metrics.append(infoMetric(snapshot: snapshot))
-        metrics.append(pushTimestampMetric(labels: labels))
+        metrics.append(exportTimestampMetric(labels: labels))
         metrics.append(contentsOf: bpfMetrics(labels: labels, stats: bpfStats))
         metrics.append(contentsOf: state.metrics(labels: labels))
         return metrics
     }
 
-    private static func quantitativeMetrics(snapshot: WiFiSnapshot, labels: [String: String]) -> [PrometheusMetric] {
-        var metrics: [PrometheusMetric] = []
+    private static func quantitativeMetrics(snapshot: WiFiSnapshot, labels: [String: String]) -> [MetricSample] {
+        var metrics: [MetricSample] = []
         if let value = snapshot.rssiDBM {
             metrics.append(
-                PrometheusMetric(
+                MetricSample(
                     name: "watchme_wifi_rssi_dbm",
                     help: "Received signal strength indicator in dBm.",
                     type: .gauge,
@@ -34,7 +34,7 @@ enum WiFiMetricBuilder {
         }
         if let value = snapshot.noiseDBM {
             metrics.append(
-                PrometheusMetric(
+                MetricSample(
                     name: "watchme_wifi_noise_dbm",
                     help: "Noise floor in dBm.",
                     type: .gauge,
@@ -45,7 +45,7 @@ enum WiFiMetricBuilder {
         }
         if let value = snapshot.txRateMbps {
             metrics.append(
-                PrometheusMetric(
+                MetricSample(
                     name: "watchme_wifi_tx_rate_mbps",
                     help: "Current transmit rate in Mbps.",
                     type: .gauge,
@@ -56,7 +56,7 @@ enum WiFiMetricBuilder {
         }
         if let value = snapshot.channel {
             metrics.append(
-                PrometheusMetric(
+                MetricSample(
                     name: "watchme_wifi_channel_number",
                     help: "Current Wi-Fi channel number.",
                     type: .gauge,
@@ -67,7 +67,7 @@ enum WiFiMetricBuilder {
         }
         if let value = snapshot.channelWidthMHz {
             metrics.append(
-                PrometheusMetric(
+                MetricSample(
                     name: "watchme_wifi_channel_width_mhz",
                     help: "Current Wi-Fi channel width in MHz.",
                     type: .gauge,
@@ -79,11 +79,11 @@ enum WiFiMetricBuilder {
         return metrics
     }
 
-    private static func interfaceStateMetrics(snapshot: WiFiSnapshot, labels: [String: String]) -> [PrometheusMetric] {
-        var metrics: [PrometheusMetric] = []
+    private static func interfaceStateMetrics(snapshot: WiFiSnapshot, labels: [String: String]) -> [MetricSample] {
+        var metrics: [MetricSample] = []
         if let value = snapshot.transmitPowerMW {
             metrics.append(
-                PrometheusMetric(
+                MetricSample(
                     name: "watchme_wifi_transmit_power_mw",
                     help: "Current Wi-Fi transmit power in milliwatts.",
                     type: .gauge,
@@ -94,7 +94,7 @@ enum WiFiMetricBuilder {
         }
         if let value = snapshot.powerOn {
             metrics.append(
-                PrometheusMetric(
+                MetricSample(
                     name: "watchme_wifi_power_on",
                     help: "Whether the Wi-Fi interface power is on.",
                     type: .gauge,
@@ -105,7 +105,7 @@ enum WiFiMetricBuilder {
         }
         if let value = snapshot.serviceActive {
             metrics.append(
-                PrometheusMetric(
+                MetricSample(
                     name: "watchme_wifi_service_active",
                     help: "Whether the Wi-Fi network service is active.",
                     type: .gauge,
@@ -117,8 +117,8 @@ enum WiFiMetricBuilder {
         return metrics
     }
 
-    private static func associatedMetric(snapshot: WiFiSnapshot, labels: [String: String]) -> PrometheusMetric {
-        PrometheusMetric(
+    private static func associatedMetric(snapshot: WiFiSnapshot, labels: [String: String]) -> MetricSample {
+        MetricSample(
             name: "watchme_wifi_associated",
             help: "Whether Wi-Fi appears associated.",
             type: .gauge,
@@ -127,7 +127,7 @@ enum WiFiMetricBuilder {
         )
     }
 
-    private static func infoMetric(snapshot: WiFiSnapshot) -> PrometheusMetric {
+    private static func infoMetric(snapshot: WiFiSnapshot) -> MetricSample {
         var labels = snapshot.metricLabels
         if let channel = snapshot.channel {
             labels["channel"] = "\(channel)"
@@ -140,7 +140,7 @@ enum WiFiMetricBuilder {
         labels["security"] = snapshot.security ?? "unknown"
         labels["interface_mode"] = snapshot.interfaceMode ?? "unknown"
         labels["country_code"] = snapshot.countryCode ?? "unknown"
-        return PrometheusMetric(
+        return MetricSample(
             name: "watchme_wifi_info",
             help: "Constant info metric with current Wi-Fi labels.",
             type: .gauge,
@@ -149,31 +149,31 @@ enum WiFiMetricBuilder {
         )
     }
 
-    private static func pushTimestampMetric(labels: [String: String]) -> PrometheusMetric {
-        PrometheusMetric(
-            name: "watchme_wifi_metrics_push_timestamp_seconds",
-            help: "Last metric push timestamp.",
+    private static func exportTimestampMetric(labels: [String: String]) -> MetricSample {
+        MetricSample(
+            name: "watchme_wifi_metrics_export_timestamp_seconds",
+            help: "Last metric export timestamp.",
             type: .gauge,
             labels: labels,
             value: Date().timeIntervalSince1970
         )
     }
 
-    private static func bpfMetrics(labels: [String: String], stats: BPFStats?) -> [PrometheusMetric] {
+    private static func bpfMetrics(labels: [String: String], stats: BPFStats?) -> [MetricSample] {
         guard let stats else {
             return []
         }
         var labels = labels
         labels["filter"] = watchmeWiFiBPFFilterName
         return [
-            PrometheusMetric(
+            MetricSample(
                 name: "watchme_wifi_bpf_packets_received_total",
                 help: "Packets accepted by the WatchMe Wi-Fi BPF descriptor.",
                 type: .counter,
                 labels: labels,
                 value: Double(stats.packetsReceived)
             ),
-            PrometheusMetric(
+            MetricSample(
                 name: "watchme_wifi_bpf_packets_dropped_total",
                 help: "Packets dropped by the WatchMe Wi-Fi BPF descriptor.",
                 type: .counter,
@@ -254,8 +254,8 @@ struct WiFiMetricState {
         gatewayProbes["\(result.gateway)|\(result.family.metricValue)"] = result
     }
 
-    func metrics(labels: [String: String]) -> [PrometheusMetric] {
-        var metrics: [PrometheusMetric] = []
+    func metrics(labels: [String: String]) -> [MetricSample] {
+        var metrics: [MetricSample] = []
         metrics.append(contentsOf: counterMetrics(labels: labels))
         metrics.append(contentsOf: internetHTTPProbeMetrics(labels: labels))
         metrics.append(contentsOf: dnsProbeMetrics(labels: labels))
@@ -264,13 +264,13 @@ struct WiFiMetricState {
         return metrics
     }
 
-    private func counterMetrics(labels: [String: String]) -> [PrometheusMetric] {
-        var metrics: [PrometheusMetric] = []
+    private func counterMetrics(labels: [String: String]) -> [MetricSample] {
+        var metrics: [MetricSample] = []
         for event in Self.coreWLANEventNames {
             var eventLabels = labels
             eventLabels["event"] = event
             metrics.append(
-                PrometheusMetric(
+                MetricSample(
                     name: "watchme_wifi_corewlan_event_total",
                     help: "CoreWLAN event callbacks observed by WatchMe.",
                     type: .counter,
@@ -283,7 +283,7 @@ struct WiFiMetricState {
             var fieldLabels = labels
             fieldLabels["field"] = field
             metrics.append(
-                PrometheusMetric(
+                MetricSample(
                     name: "watchme_wifi_snapshot_change_total",
                     help: "Wi-Fi snapshot field changes observed by WatchMe.",
                     type: .counter,

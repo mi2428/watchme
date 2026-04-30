@@ -23,7 +23,7 @@ public struct WiFiCommand: WatchmeSubcommand {
         let telemetry = TelemetryClient(
             serviceName: "watchme-macos",
             tracesEndpoint: config.tracesURL,
-            metricsSink: PushgatewayMetricSink(baseURL: config.metricsPushURL, pathPrefix: config.metricsPushPrefix),
+            metricsEndpoint: config.metricsURL,
             metricsTimeout: config.probeInternetTimeout
         )
         let agent = WiFiAgent(config: config, telemetry: telemetry)
@@ -43,8 +43,7 @@ struct WiFiConfig {
     var once = false
     var authorizeLocation = false
     var tracesURL = URL(string: "http://127.0.0.1:4318/v1/traces")!
-    var metricsPushURL = URL(string: "http://127.0.0.1:9091")!
-    var metricsPushPrefix = ""
+    var metricsURL = URL(string: "http://127.0.0.1:4318/v1/metrics")!
     var metricsInterval: TimeInterval = 5
     var activeInterval: TimeInterval = 60
     var triggerCooldown: TimeInterval = 2
@@ -119,10 +118,8 @@ private struct WiFiConfigParser {
             try applyInternetFamily(argument, inlineValue: inlineValue)
         case "--probe.gateway.count":
             try applyGatewayBurstCount(argument, inlineValue: inlineValue)
-        case "--traces.url", "--metrics.push.url":
+        case "--traces.url", "--metrics.url":
             try applyURL(argument, inlineValue: inlineValue)
-        case "--metrics.push.prefix":
-            config.metricsPushPrefix = try requireValue(for: argument, inlineValue: inlineValue)
         case "--metrics.interval", "--traces.interval", "--traces.cooldown", "--probe.internet.timeout", "--probe.gateway.interval",
              "--probe.bpf.span-max-age":
             try applyTimeInterval(argument, inlineValue: inlineValue)
@@ -165,8 +162,8 @@ private struct WiFiConfigParser {
         switch argument {
         case "--traces.url":
             config.tracesURL = url
-        case "--metrics.push.url":
-            config.metricsPushURL = url
+        case "--metrics.url":
+            config.metricsURL = url
         default:
             break
         }
@@ -276,12 +273,11 @@ private struct WiFiConfigParser {
 func printWiFiUsage() {
     let commands = usageRows([
         ("watchme wifi [options]", "Run the long-running Wi-Fi observability agent."),
-        ("watchme wifi once [options]", "Push one metrics snapshot and send one active trace."),
+        ("watchme wifi once [options]", "Export one metrics snapshot and send one active trace."),
         ("watchme wifi authorize-only", "Request Location authorization for the app-bundled CLI."),
     ])
     let options = usageRows([
-        ("--metrics.push.url URL", "Pushgateway base URL. Default: http://127.0.0.1:9091"),
-        ("--metrics.push.prefix path", "Pushgateway path prefix for reverse proxies."),
+        ("--metrics.url URL", "OTLP/HTTP metrics endpoint. Default: http://127.0.0.1:4318/v1/metrics"),
         ("--metrics.interval seconds", "Wi-Fi metric collection interval. Default: 5"),
         ("--traces.url URL", "OTLP/HTTP trace endpoint. Default: http://127.0.0.1:4318/v1/traces"),
         ("--traces.interval seconds", "Active trace interval. Default: 60"),

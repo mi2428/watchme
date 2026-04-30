@@ -97,8 +97,8 @@ private func makeGatewayMetricSnapshot() -> WiFiSnapshot {
 private func metric(
     named name: String,
     labels expectedLabels: [String: String] = [:],
-    in metrics: [PrometheusMetric]
-) -> PrometheusMetric? {
+    in metrics: [MetricSample]
+) -> MetricSample? {
     metrics.first { metric in
         metric.name == name && expectedLabels.allSatisfy { metric.labels[$0.key] == $0.value }
     }

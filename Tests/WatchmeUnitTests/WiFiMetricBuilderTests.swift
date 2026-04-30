@@ -21,7 +21,7 @@ final class WiFiMetricBuilderTests: XCTestCase {
             "watchme_wifi_service_active",
             "watchme_wifi_associated",
             "watchme_wifi_info",
-            "watchme_wifi_metrics_push_timestamp_seconds",
+            "watchme_wifi_metrics_export_timestamp_seconds",
             "watchme_wifi_corewlan_event_total",
             "watchme_wifi_snapshot_change_total",
         ]))
@@ -472,8 +472,8 @@ private func makeSnapshot(
 private func metric(
     named name: String,
     labels expectedLabels: [String: String] = [:],
-    in metrics: [PrometheusMetric]
-) -> PrometheusMetric? {
+    in metrics: [MetricSample]
+) -> MetricSample? {
     metrics.first { metric in
         metric.name == name && expectedLabels.allSatisfy { metric.labels[$0.key] == $0.value }
     }

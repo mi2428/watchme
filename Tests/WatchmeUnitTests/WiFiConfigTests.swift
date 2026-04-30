@@ -7,8 +7,7 @@ final class WiFiConfigTests: XCTestCase {
         let config = try WiFiConfig.parse([
             "once",
             "--traces.url", "http://collector.example:4318/v1/traces",
-            "--metrics.push.url=http://pushgateway.example:9091",
-            "--metrics.push.prefix", "/base",
+            "--metrics.url=http://collector.example:4318/v1/metrics",
             "--metrics.interval", "2.5",
             "--traces.interval=30",
             "--traces.cooldown", "0",
@@ -28,8 +27,7 @@ final class WiFiConfigTests: XCTestCase {
 
         XCTAssertTrue(config.once)
         XCTAssertEqual(config.tracesURL.absoluteString, "http://collector.example:4318/v1/traces")
-        XCTAssertEqual(config.metricsPushURL.absoluteString, "http://pushgateway.example:9091")
-        XCTAssertEqual(config.metricsPushPrefix, "/base")
+        XCTAssertEqual(config.metricsURL.absoluteString, "http://collector.example:4318/v1/metrics")
         XCTAssertEqual(config.metricsInterval, 2.5)
         XCTAssertEqual(config.activeInterval, 30)
         XCTAssertEqual(config.triggerCooldown, 0)

@@ -8,19 +8,14 @@ final class TelemetryUtilitiesTests: XCTestCase {
         logger.minimumLevel = .error
     }
 
-    func testPushgatewayEndpointPreservesPrefixAndEscapesGroupingKeys() throws {
-        let baseURL = try XCTUnwrap(URL(string: "http://127.0.0.1:9091/proxy/api"))
-
-        let endpoint = pushgatewayEndpointURL(
-            baseURL: baseURL,
-            pathPrefix: "/push gateway",
-            job: "watchme/wifi",
-            instance: "mac 1/en0"
-        )
-
+    func testMetricSeriesKeySortsLabels() {
         XCTAssertEqual(
-            endpoint.absoluteString,
-            "http://127.0.0.1:9091/proxy/api/push%20gateway/metrics/job/watchme%2Fwifi/instance/mac%201%2Fen0"
+            metricSeriesKey(name: "watchme.test", labels: ["z": "last", "a": "first"]),
+            metricSeriesKey(name: "watchme.test", labels: ["a": "first", "z": "last"])
+        )
+        XCTAssertNotEqual(
+            metricSeriesKey(name: "watchme.test", labels: ["a": "first"]),
+            metricSeriesKey(name: "watchme.test", labels: ["a": "second"])
         )
     }
 

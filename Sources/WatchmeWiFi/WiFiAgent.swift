@@ -35,7 +35,7 @@ final class WiFiAgent {
             bpfInterface = nil
         }
         logIdentityStatus(snapshot)
-        _ = pushMetrics(snapshot: snapshot)
+        _ = exportMetrics(snapshot: snapshot)
         emitTrace(reason: "wifi.active", eventTags: ["agent.mode": "once"], consumePacketSpans: false, includeActive: true)
         return 0
     }
@@ -48,15 +48,14 @@ final class WiFiAgent {
                 "metrics_interval_seconds": "\(Int(config.metricsInterval))",
                 "active_interval_seconds": "\(Int(config.activeInterval))",
                 "traces_url": config.tracesURL.absoluteString,
-                "metrics_push_url": config.metricsPushURL.absoluteString,
-                "metrics_push_prefix": config.metricsPushPrefix,
+                "metrics_url": config.metricsURL.absoluteString,
                 "bpf_enabled": config.bpfEnabled ? "true" : "false",
             ]
         )
 
         startBPFIfNeeded(interfaceName: lastSnapshot.interfaceName)
         logIdentityStatus(lastSnapshot)
-        _ = pushMetrics(snapshot: lastSnapshot)
+        _ = exportMetrics(snapshot: lastSnapshot)
         emitTrace(reason: "wifi.active", eventTags: ["agent.mode": "startup"], consumePacketSpans: true, includeActive: true)
 
         let metricsTimer = DispatchSource.makeTimerSource(queue: triggerQueue)
@@ -68,7 +67,7 @@ final class WiFiAgent {
             let snapshot = captureLatestSnapshot()
             startBPFIfNeeded(interfaceName: snapshot.interfaceName)
             logIdentityStatus(snapshot)
-            _ = pushMetrics(snapshot: snapshot)
+            _ = exportMetrics(snapshot: snapshot)
         }
         metricsTimer.resume()
         self.metricsTimer = metricsTimer
@@ -121,7 +120,7 @@ final class WiFiAgent {
             self.metricState.recordCoreWLANEvent(event.name)
             self.startBPFIfNeeded(interfaceName: current.interfaceName)
             self.logIdentityStatus(current)
-            _ = self.pushMetrics(snapshot: current)
+            _ = self.exportMetrics(snapshot: current)
 
             var fields = event.tags
             fields["event"] = event.name
@@ -156,7 +155,7 @@ final class WiFiAgent {
             let current = self.captureLatestSnapshot()
             self.startBPFIfNeeded(interfaceName: current.interfaceName)
             self.logIdentityStatus(current)
-            _ = self.pushMetrics(snapshot: current)
+            _ = self.exportMetrics(snapshot: current)
 
             var eventTags = tags
             eventTags["agent.observation"] = reason

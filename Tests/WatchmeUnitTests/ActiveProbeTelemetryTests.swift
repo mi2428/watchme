@@ -86,7 +86,7 @@ final class ActiveProbeTelemetryTests: XCTestCase {
             telemetry: TelemetryClient(
                 serviceName: "watchme-test",
                 tracesEndpoint: URL(string: "http://127.0.0.1:4318/v1/traces")!,
-                metricsSink: PushgatewayMetricSink(baseURL: URL(string: "http://127.0.0.1:9091")!)
+                metricsEndpoint: URL(string: "http://127.0.0.1:4318/v1/metrics")!
             )
         )
     }
