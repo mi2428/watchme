@@ -242,7 +242,7 @@ extension WiFiAgent {
             tags: [
                 "phase.name": "active_validation",
                 "phase.source": "network_framework_active_probe",
-                "phase.validation_scope": "internet_dns,internet_icmp,internet_http,gateway_tcp",
+                "phase.validation_scope": "internet_dns,internet_icmp,internet_http,gateway_icmp",
                 "probe.internet.targets": config.probeInternetTargets.joined(separator: ","),
                 "probe.internet.family": config.probeInternetFamily.metricValue,
                 "probe.internet.dns.enabled": config.probeInternetDNS ? "true" : "false",
@@ -253,6 +253,9 @@ extension WiFiAgent {
                 "probe.internet.http.span_count": "\(internetResults.http.count)",
                 "probe.dns_resolvers": networkState.dnsServers.joined(separator: ","),
                 "probe.gateway": networkState.routerIPv4 ?? "",
+                "probe.gateway.burst_count": "\(config.probeGatewayBurstCount)",
+                "probe.gateway.burst_interval_seconds": formatGatewayProbeDouble(config.probeGatewayBurstInterval),
+                "probe.gateway.span_count": gatewayResult.map { "\($0.probeCount)" } ?? "0",
             ]
         )
     }
@@ -261,11 +264,13 @@ extension WiFiAgent {
         guard let gateway = networkState.routerIPv4 else {
             return nil
         }
-        return runGatewayTCPConnectProbe(
+        return runGatewayICMPProbe(
             gateway: gateway,
             timeout: min(config.probeInternetTimeout, 2.0),
             interfaceName: snapshot.interfaceName,
-            packetStore: packetStore
+            packetStore: packetStore,
+            burstCount: config.probeGatewayBurstCount,
+            burstInterval: config.probeGatewayBurstInterval
         )
     }
 }

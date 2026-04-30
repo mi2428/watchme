@@ -1,12 +1,14 @@
 import Foundation
-import Network
 import WatchmeCore
 
-struct ActiveGatewayProbeResult {
-    let gateway: String
-    let port: UInt16
+let defaultGatewayProbeBurstCount = 4
+let defaultGatewayProbeBurstInterval: TimeInterval = 0.05
+
+struct ActiveGatewayProbeAttempt {
+    let sequence: Int
+    let identifier: UInt16?
+    let icmpSequence: UInt16?
     let reachable: Bool
-    let connectSuccess: Bool
     let outcome: String
     let error: String?
     let startWallNanos: UInt64
@@ -16,164 +18,229 @@ struct ActiveGatewayProbeResult {
     let timestampSource: String
 }
 
-private struct GatewayTCPExchangeResult {
-    let reachable: Bool
-    let connectSuccess: Bool
-    let outcome: String
-    let error: String?
-    let completedWallNanos: UInt64
-}
+struct ActiveGatewayProbeResult {
+    let gateway: String
+    let family: InternetAddressFamily
+    let attempts: [ActiveGatewayProbeAttempt]
+    let burstIntervalSeconds: TimeInterval
 
-func runGatewayTCPConnectProbe(
-    gateway: String,
-    port: UInt16 = 53,
-    timeout: TimeInterval,
-    interfaceName: String?,
-    packetStore: PassivePacketStore? = nil
-) -> ActiveGatewayProbeResult {
-    let startWallNanos = wallClockNanos()
-    guard let interface = requiredProbeInterface(named: interfaceName, timeout: timeout) else {
-        return failedGatewayProbe(
+    init(
+        gateway: String,
+        family: InternetAddressFamily = .ipv4,
+        attempts: [ActiveGatewayProbeAttempt],
+        burstIntervalSeconds: TimeInterval
+    ) {
+        self.gateway = gateway
+        self.family = family
+        self.attempts = attempts.sorted { $0.sequence < $1.sequence }
+        self.burstIntervalSeconds = burstIntervalSeconds
+    }
+
+    init(
+        gateway: String,
+        family: InternetAddressFamily = .ipv4,
+        reachable: Bool,
+        outcome: String,
+        error: String?,
+        startWallNanos: UInt64,
+        finishedWallNanos: UInt64,
+        durationNanos: UInt64,
+        timingSource: String,
+        timestampSource: String
+    ) {
+        self.init(
             gateway: gateway,
-            port: port,
-            startWallNanos: startWallNanos,
-            outcome: "interface_unavailable",
-            error: "Wi-Fi interface \(interfaceName ?? "unknown") was not available to Network.framework"
+            family: family,
+            attempts: [
+                ActiveGatewayProbeAttempt(
+                    sequence: 1,
+                    identifier: nil,
+                    icmpSequence: nil,
+                    reachable: reachable,
+                    outcome: outcome,
+                    error: error,
+                    startWallNanos: startWallNanos,
+                    finishedWallNanos: finishedWallNanos,
+                    durationNanos: durationNanos,
+                    timingSource: timingSource,
+                    timestampSource: timestampSource
+                ),
+            ],
+            burstIntervalSeconds: 0
         )
     }
 
-    let activePacketRequest = ActiveTCPProbeRequest(
-        remoteIP: gateway,
-        port: port,
-        interfaceName: interfaceName,
-        startWallNanos: startWallNanos,
-        timeout: timeout
-    )
-    packetStore?.registerActiveTCPProbe(activePacketRequest)
-    defer {
-        packetStore?.unregisterActiveTCPProbe(activePacketRequest)
+    var probeCount: Int {
+        attempts.count
     }
 
-    let exchange = performGatewayTCPConnectExchange(gateway: gateway, port: port, selectedInterface: interface, timeout: timeout)
-    let packetExchange = packetStore?.tcpConnectExchange(
-        for: activePacketRequest,
-        finishedWallNanos: exchange.completedWallNanos
-    )
-    let timing = packetExchange?.timing ?? .networkFramework(start: startWallNanos, finished: exchange.completedWallNanos)
-    return ActiveGatewayProbeResult(
-        gateway: gateway,
-        port: port,
-        reachable: exchange.reachable,
-        connectSuccess: exchange.connectSuccess,
-        outcome: exchange.outcome,
-        error: exchange.error,
-        startWallNanos: timing.startWallNanos,
-        finishedWallNanos: timing.finishedWallNanos,
-        durationNanos: timing.durationNanos,
-        timingSource: timing.timingSource,
-        timestampSource: timing.timestampSource
-    )
+    var reachableCount: Int {
+        attempts.filter(\.reachable).count
+    }
+
+    var lostCount: Int {
+        max(probeCount - reachableCount, 0)
+    }
+
+    var lossRatio: Double {
+        guard probeCount > 0 else {
+            return 1.0
+        }
+        return Double(lostCount) / Double(probeCount)
+    }
+
+    var jitterNanos: UInt64 {
+        gatewayJitterNanos(attempts: attempts)
+    }
+
+    var reachable: Bool {
+        reachableCount > 0
+    }
+
+    var outcome: String {
+        guard !attempts.isEmpty else {
+            return "no_samples"
+        }
+        if reachableCount == 0 {
+            return "loss"
+        }
+        if lostCount > 0 {
+            return "partial_loss"
+        }
+        let outcomes = Set(attempts.map(\.outcome))
+        return outcomes.count == 1 ? (outcomes.first ?? "unknown") : "mixed"
+    }
+
+    var error: String? {
+        if let latestError = latestAttempt?.error, !latestError.isEmpty {
+            return latestError
+        }
+        return attempts.first { !($0.error ?? "").isEmpty }?.error
+    }
+
+    var startWallNanos: UInt64 {
+        attempts.map(\.startWallNanos).min() ?? 0
+    }
+
+    var finishedWallNanos: UInt64 {
+        attempts.map(\.finishedWallNanos).max() ?? max(startWallNanos + 1000, 1000)
+    }
+
+    var burstDurationNanos: UInt64 {
+        max(finishedWallNanos >= startWallNanos ? finishedWallNanos - startWallNanos : 0, 1000)
+    }
+
+    var durationNanos: UInt64 {
+        averageReachableDurationNanos ?? latestAttempt?.durationNanos ?? burstDurationNanos
+    }
+
+    var timingSource: String {
+        aggregateGatewayString(attempts.map(\.timingSource))
+    }
+
+    var timestampSource: String {
+        aggregateGatewayString(attempts.map(\.timestampSource))
+    }
+
+    var latestAttempt: ActiveGatewayProbeAttempt? {
+        attempts.max { $0.sequence < $1.sequence }
+    }
+
+    private var averageReachableDurationNanos: UInt64? {
+        let durations = attempts.filter(\.reachable).map(\.durationNanos)
+        guard !durations.isEmpty else {
+            return nil
+        }
+        let sum = durations.reduce(UInt64(0), +)
+        return sum / UInt64(durations.count)
+    }
 }
 
-private func performGatewayTCPConnectExchange(
+func runGatewayICMPProbe(
     gateway: String,
-    port: UInt16,
-    selectedInterface: NWInterface,
-    timeout: TimeInterval
-) -> GatewayTCPExchangeResult {
-    let parameters = NWParameters.tcp
-    parameters.requiredInterface = selectedInterface
-    let connection = NWConnection(
-        host: NWEndpoint.Host(gateway),
-        port: NWEndpoint.Port(rawValue: port) ?? NWEndpoint.Port(rawValue: 53)!,
-        using: parameters
-    )
-    let queue = DispatchQueue(label: "watchme.gateway_probe.\(randomHex(bytes: 4))")
-    let semaphore = DispatchSemaphore(value: 0)
-    let completionLock = NSLock()
-    var completed = false
-    var reachable = false
-    var connectSuccess = false
-    var outcome = "unknown"
-    var errorMessage: String?
-    var completedWallNanos: UInt64?
-
-    func complete(outcome newOutcome: String, reachable isReachable: Bool, connectOK: Bool, error: String? = nil) {
-        completionLock.lock()
-        defer { completionLock.unlock() }
-        guard !completed else {
-            return
-        }
-        reachable = isReachable
-        connectSuccess = connectOK
-        outcome = newOutcome
-        errorMessage = error
-        completedWallNanos = wallClockNanos()
-        completed = true
-        semaphore.signal()
-    }
-
-    connection.stateUpdateHandler = { state in
-        switch state {
-        case .ready:
-            complete(outcome: "connected", reachable: true, connectOK: true)
-        case let .failed(error):
-            // TCP refusal proves the first hop answered even though no service
-            // accepted the connection, so it is still useful as reachability.
-            if isConnectionRefused(error) {
-                complete(outcome: "refused", reachable: true, connectOK: false, error: error.localizedDescription)
-            } else {
-                complete(outcome: "failed", reachable: false, connectOK: false, error: error.localizedDescription)
-            }
-        case .cancelled:
-            complete(outcome: "cancelled", reachable: false, connectOK: false, error: "connection cancelled")
-        default:
-            break
-        }
-    }
-    connection.start(queue: queue)
-
-    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
-        complete(outcome: "timeout", reachable: false, connectOK: false, error: "gateway TCP connect timed out")
-    }
-    connection.cancel()
-
-    let finishedWallNanos = completedWallNanos ?? wallClockNanos()
-    return GatewayTCPExchangeResult(
-        reachable: reachable,
-        connectSuccess: connectSuccess,
-        outcome: outcome,
-        error: errorMessage,
-        completedWallNanos: finishedWallNanos
-    )
-}
-
-private func failedGatewayProbe(
-    gateway: String,
-    port: UInt16,
-    startWallNanos: UInt64,
-    outcome: String,
-    error: String
+    timeout: TimeInterval,
+    interfaceName: String?,
+    packetStore: PassivePacketStore? = nil,
+    burstCount: Int = defaultGatewayProbeBurstCount,
+    burstInterval: TimeInterval = defaultGatewayProbeBurstInterval
 ) -> ActiveGatewayProbeResult {
-    let finishedWallNanos = wallClockNanos()
+    let count = max(burstCount, 1)
+    let interval = max(burstInterval, 0)
+    let lock = NSLock()
+    let group = DispatchGroup()
+    var attempts: [ActiveGatewayProbeAttempt] = []
+
+    for sequence in 1 ... count {
+        group.enter()
+        DispatchQueue.global(qos: .utility).async {
+            if sequence > 1, interval > 0 {
+                Thread.sleep(forTimeInterval: interval * Double(sequence - 1))
+            }
+            let result = runInternetICMPProbe(
+                target: gateway,
+                family: .ipv4,
+                remoteIP: gateway,
+                timeout: timeout,
+                interfaceName: interfaceName,
+                packetStore: packetStore
+            )
+            let attempt = gatewayAttempt(sequence: sequence, result: result)
+            lock.lock()
+            attempts.append(attempt)
+            lock.unlock()
+            group.leave()
+        }
+    }
+    group.wait()
+
     return ActiveGatewayProbeResult(
         gateway: gateway,
-        port: port,
-        reachable: false,
-        connectSuccess: false,
-        outcome: outcome,
-        error: error,
-        startWallNanos: startWallNanos,
-        finishedWallNanos: finishedWallNanos,
-        durationNanos: max(finishedWallNanos - startWallNanos, 1000),
-        timingSource: networkFrameworkTimingSource,
-        timestampSource: wallClockTimestampSource
+        attempts: attempts,
+        burstIntervalSeconds: interval
     )
 }
 
-func isConnectionRefused(_ error: NWError) -> Bool {
-    if case let .posix(code) = error {
-        return code == .ECONNREFUSED
+private func gatewayAttempt(sequence: Int, result: ActiveICMPProbeResult) -> ActiveGatewayProbeAttempt {
+    ActiveGatewayProbeAttempt(
+        sequence: sequence,
+        identifier: result.identifier,
+        icmpSequence: result.sequence,
+        reachable: result.ok,
+        outcome: result.ok ? "reply" : result.outcome,
+        error: result.error,
+        startWallNanos: result.startWallNanos,
+        finishedWallNanos: result.finishedWallNanos,
+        durationNanos: result.durationNanos,
+        timingSource: result.timingSource,
+        timestampSource: result.timestampSource
+    )
+}
+
+private func gatewayJitterNanos(attempts: [ActiveGatewayProbeAttempt]) -> UInt64 {
+    let durations = attempts
+        .sorted { $0.sequence < $1.sequence }
+        .filter(\.reachable)
+        .map(\.durationNanos)
+    guard durations.count > 1 else {
+        return 0
     }
-    return false
+    var previous = durations[0]
+    var totalDifference: UInt64 = 0
+    for duration in durations.dropFirst() {
+        totalDifference += previous > duration ? previous - duration : duration - previous
+        previous = duration
+    }
+    return totalDifference / UInt64(durations.count - 1)
+}
+
+private func aggregateGatewayString(_ values: [String]) -> String {
+    let nonEmpty = values.filter { !$0.isEmpty }
+    guard let first = nonEmpty.first else {
+        return "unknown"
+    }
+    return nonEmpty.allSatisfy { $0 == first } ? first : "mixed"
+}
+
+func formatGatewayProbeDouble(_ value: Double) -> String {
+    String(format: "%.6f", value)
 }

@@ -58,23 +58,27 @@ extension WiFiAgent {
     ) {
         metricState.recordGatewayProbe(result)
         recorder.recordSpan(
-            name: "probe.gateway.tcp_connect",
+            name: "probe.gateway.icmp.echo",
             id: recorder.newSpanId(),
             startWallNanos: result.startWallNanos,
-            durationNanos: result.durationNanos,
+            durationNanos: result.burstDurationNanos,
             parentId: phaseId,
             tags: activeGatewayTags(result: result, snapshot: snapshot),
             statusOK: result.reachable
         )
         logEvent(
-            result.reachable ? .debug : .warn, "active_gateway_probe_completed",
+            result.lossRatio == 0 ? .debug : .warn, "active_gateway_probe_completed",
             fields: [
                 "trace_id": recorder.traceId,
                 "gateway": result.gateway,
-                "port": "\(result.port)",
                 "outcome": result.outcome,
                 "reachable": result.reachable ? "true" : "false",
-                "connect_success": result.connectSuccess ? "true" : "false",
+                "probe_count": "\(result.probeCount)",
+                "reply_count": "\(result.reachableCount)",
+                "lost_count": "\(result.lostCount)",
+                "loss_ratio": formatGatewayProbeDouble(result.lossRatio),
+                "jitter_seconds": formatGatewayProbeDouble(seconds(fromDurationNanos: result.jitterNanos)),
+                "burst_interval_seconds": formatGatewayProbeDouble(result.burstIntervalSeconds),
                 "timing_source": result.timingSource,
                 "error": result.error ?? "",
             ]
@@ -235,21 +239,27 @@ extension WiFiAgent {
 
     func activeGatewayTags(result: ActiveGatewayProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
         var tags: [String: String] = [
-            "span.source": "network_framework_gateway_probe",
+            "span.source": "darwin_icmp_gateway_probe",
             "active_probe.interface": snapshot.interfaceName ?? "",
             "active_probe.required_interface": snapshot.interfaceName ?? "",
             "probe.timing_source": result.timingSource,
             "probe.timestamp_source": result.timestampSource,
+            "network.family": result.family.metricValue,
             "network.wifi_gateway": result.gateway,
-            "network.gateway_probe.port": "\(result.port)",
+            "network.gateway_probe.protocol": "icmp",
             "network.gateway_probe.outcome": result.outcome,
             "network.gateway_probe.reachable": result.reachable ? "true" : "false",
-            "network.gateway_probe.connect_success": result.connectSuccess ? "true" : "false",
+            "network.gateway_probe.probe_count": "\(result.probeCount)",
+            "network.gateway_probe.reply_count": "\(result.reachableCount)",
+            "network.gateway_probe.lost_count": "\(result.lostCount)",
+            "network.gateway_probe.loss_ratio": formatGatewayProbeDouble(result.lossRatio),
+            "network.gateway_probe.jitter_seconds": formatGatewayProbeDouble(seconds(fromDurationNanos: result.jitterNanos)),
+            "network.gateway_probe.burst_interval_seconds": formatGatewayProbeDouble(result.burstIntervalSeconds),
             "wifi.essid": snapshot.ssid ?? "unknown",
             "wifi.bssid": snapshot.bssid ?? "unknown",
         ]
         if result.timingSource == bpfPacketTimingSource {
-            tags["packet.event"] = "tcp_syn_to_response"
+            tags["packet.event"] = "icmp_echo_request_to_reply"
             tags["packet.timestamp_source"] = bpfHeaderTimestampSource
             tags["packet.timestamp_resolution"] = "microsecond"
         }

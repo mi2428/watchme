@@ -17,6 +17,8 @@ final class WiFiConfigTests: XCTestCase {
             "--probe.internet.dns", "false",
             "--probe.internet.icmp", "true",
             "--probe.internet.http", "false",
+            "--probe.gateway.count", "6",
+            "--probe.gateway.interval=0.1",
             "--probe.bpf.span-max-age=90",
             "--probe.bpf.enabled", "false",
             "--probe.internet.target", "example.com",
@@ -36,6 +38,8 @@ final class WiFiConfigTests: XCTestCase {
         XCTAssertFalse(config.probeInternetDNS)
         XCTAssertTrue(config.probeInternetICMP)
         XCTAssertFalse(config.probeInternetHTTP)
+        XCTAssertEqual(config.probeGatewayBurstCount, 6)
+        XCTAssertEqual(config.probeGatewayBurstInterval, 0.1)
         XCTAssertEqual(config.bpfSpanMaxAge, 90)
         XCTAssertFalse(config.bpfEnabled)
         XCTAssertEqual(config.probeInternetTargets, ["example.com", "www.apple.com"])
@@ -65,6 +69,8 @@ final class WiFiConfigTests: XCTestCase {
         XCTAssertThrowsError(try WiFiConfig.parse(["--probe.internet.target"]))
         XCTAssertThrowsError(try WiFiConfig.parse(["--probe.internet.family", "both"]))
         XCTAssertThrowsError(try WiFiConfig.parse(["--probe.internet.icmp", "maybe"]))
+        XCTAssertThrowsError(try WiFiConfig.parse(["--probe.gateway.count", "0"]))
+        XCTAssertThrowsError(try WiFiConfig.parse(["--probe.gateway.interval", "-0.1"]))
         XCTAssertThrowsError(try WiFiConfig.parse(["--probe.bpf.enabled", "maybe"]))
         XCTAssertThrowsError(try WiFiConfig.parse(["--bpf.enabled", "false"]))
         XCTAssertThrowsError(try WiFiConfig.parse(["--bpf.span-max-age", "90"]))

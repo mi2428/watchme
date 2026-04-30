@@ -251,7 +251,7 @@ struct WiFiMetricState {
     }
 
     mutating func recordGatewayProbe(_ result: ActiveGatewayProbeResult) {
-        gatewayProbes["\(result.gateway)|\(result.port)"] = result
+        gatewayProbes["\(result.gateway)|\(result.family.metricValue)"] = result
     }
 
     func metrics(labels: [String: String]) -> [PrometheusMetric] {
@@ -422,46 +422,6 @@ struct WiFiMetricState {
                 PrometheusMetric(
                     name: "watchme_wifi_probe_internet_icmp_last_run_timestamp_seconds",
                     help: "Unix timestamp of the latest Wi-Fi-bound internet ICMP echo probe.",
-                    type: .gauge,
-                    labels: probeLabels,
-                    value: seconds(fromWallNanos: result.finishedWallNanos)
-                ),
-            ]
-        }
-    }
-
-    private func gatewayProbeMetrics(labels: [String: String]) -> [PrometheusMetric] {
-        gatewayProbes.values.flatMap { result -> [PrometheusMetric] in
-            var probeLabels = labels
-            probeLabels["gateway"] = result.gateway
-            probeLabels["port"] = "\(result.port)"
-            probeLabels["outcome"] = result.outcome
-            probeLabels["timing_source"] = result.timingSource
-            return [
-                PrometheusMetric(
-                    name: "watchme_wifi_probe_gateway_tcp_reachable",
-                    help: "Whether the latest Wi-Fi-bound gateway TCP probe reached the gateway host.",
-                    type: .gauge,
-                    labels: probeLabels,
-                    value: result.reachable ? 1 : 0
-                ),
-                PrometheusMetric(
-                    name: "watchme_wifi_probe_gateway_tcp_connect_success",
-                    help: "Whether the latest Wi-Fi-bound gateway TCP probe established a connection.",
-                    type: .gauge,
-                    labels: probeLabels,
-                    value: result.connectSuccess ? 1 : 0
-                ),
-                PrometheusMetric(
-                    name: "watchme_wifi_probe_gateway_tcp_duration_seconds",
-                    help: "Duration of the latest Wi-Fi-bound gateway TCP probe.",
-                    type: .gauge,
-                    labels: probeLabels,
-                    value: seconds(fromDurationNanos: result.durationNanos)
-                ),
-                PrometheusMetric(
-                    name: "watchme_wifi_probe_gateway_tcp_last_run_timestamp_seconds",
-                    help: "Unix timestamp of the latest Wi-Fi-bound gateway TCP probe.",
                     type: .gauge,
                     labels: probeLabels,
                     value: seconds(fromWallNanos: result.finishedWallNanos)

@@ -54,6 +54,8 @@ struct WiFiConfig {
     var probeInternetICMP = true
     var probeInternetHTTP = true
     var probeInternetTargets = ["example.com", "www.cloudflare.com"]
+    var probeGatewayBurstCount = defaultGatewayProbeBurstCount
+    var probeGatewayBurstInterval = defaultGatewayProbeBurstInterval
     var bpfEnabled = true
     var bpfSpanMaxAge: TimeInterval = 180
     var logLevel: LogLevel = .debug
@@ -115,11 +117,14 @@ private struct WiFiConfigParser {
             try explicitInternetTargets.append(requireValue(for: argument, inlineValue: inlineValue))
         case "--probe.internet.family":
             try applyInternetFamily(argument, inlineValue: inlineValue)
+        case "--probe.gateway.count":
+            try applyGatewayBurstCount(argument, inlineValue: inlineValue)
         case "--traces.url", "--metrics.push.url":
             try applyURL(argument, inlineValue: inlineValue)
         case "--metrics.push.prefix":
             config.metricsPushPrefix = try requireValue(for: argument, inlineValue: inlineValue)
-        case "--metrics.interval", "--traces.interval", "--traces.cooldown", "--probe.internet.timeout", "--probe.bpf.span-max-age":
+        case "--metrics.interval", "--traces.interval", "--traces.cooldown", "--probe.internet.timeout", "--probe.gateway.interval",
+             "--probe.bpf.span-max-age":
             try applyTimeInterval(argument, inlineValue: inlineValue)
         case "--probe.internet.dns", "--probe.internet.icmp", "--probe.internet.http", "--probe.bpf.enabled":
             try applyBoolOption(argument, inlineValue: inlineValue)
@@ -181,11 +186,21 @@ private struct WiFiConfigParser {
             config.triggerCooldown = try nonNegative(value, name: "trigger cooldown")
         case "--probe.internet.timeout":
             config.probeInternetTimeout = try positive(value, name: "internet probe timeout")
+        case "--probe.gateway.interval":
+            config.probeGatewayBurstInterval = try nonNegative(value, name: "gateway probe burst interval")
         case "--probe.bpf.span-max-age":
             config.bpfSpanMaxAge = try positive(value, name: "BPF span max age")
         default:
             break
         }
+    }
+
+    private mutating func applyGatewayBurstCount(_ argument: String, inlineValue: String?) throws {
+        let rawValue = try requireValue(for: argument, inlineValue: inlineValue)
+        guard let value = Int(rawValue), value > 0 else {
+            throw WatchmeError.invalidArgument("Invalid gateway probe burst count: \(rawValue)")
+        }
+        config.probeGatewayBurstCount = value
     }
 
     private mutating func applyInternetFamily(_ argument: String, inlineValue: String?) throws {
@@ -277,6 +292,8 @@ func printWiFiUsage() {
         ("--probe.internet.dns bool", "Enable internet DNS probe. Default: true"),
         ("--probe.internet.icmp bool", "Enable internet ICMP probe. Default: true"),
         ("--probe.internet.http bool", "Enable internet plain HTTP probe. Default: true"),
+        ("--probe.gateway.count n", "Gateway ICMP probes per burst. Default: 4"),
+        ("--probe.gateway.interval sec", "Delay between gateway burst probes. Default: 0.05"),
         ("--probe.bpf.enabled bool", "Enable passive BPF probe for DHCP/RS/RA/NDP. Default: true"),
         ("--probe.bpf.span-max-age sec", "Passive probe packet span lookback window. Default: 180"),
         ("--log.level level", "debug, info, warn, or error. Default: debug"),

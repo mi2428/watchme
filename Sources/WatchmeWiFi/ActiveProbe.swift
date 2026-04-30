@@ -37,6 +37,13 @@ func networkInterface(named name: String?, timeout: TimeInterval) -> NWInterface
     return selected
 }
 
+func isConnectionRefused(_ error: NWError) -> Bool {
+    if case let .posix(code) = error {
+        return code == .ECONNREFUSED
+    }
+    return false
+}
+
 func parseHTTPStatusCode(_ data: Data) -> Int? {
     // The active probe only needs the status line. Cap the decoded prefix so a
     // misbehaving endpoint cannot turn response parsing into unbounded work.

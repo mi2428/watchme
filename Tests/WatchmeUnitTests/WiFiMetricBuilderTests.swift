@@ -151,15 +151,15 @@ final class WiFiMetricBuilderTests: XCTestCase {
         )
         XCTAssertEqual(
             metric(
-                named: "watchme_wifi_probe_gateway_tcp_reachable",
-                labels: ["gateway": "192.168.23.254", "outcome": "refused", "timing_source": "network_framework_callback"],
+                named: "watchme_wifi_probe_gateway_icmp_success",
+                labels: ["gateway": "192.168.23.254", "outcome": "reply", "timing_source": "network_framework_callback"],
                 in: metrics
             )?.value,
             1
         )
         XCTAssertEqual(
-            metric(named: "watchme_wifi_probe_gateway_tcp_connect_success", labels: ["gateway": "192.168.23.254"], in: metrics)?.value,
-            0
+            metric(named: "watchme_wifi_probe_gateway_icmp_reply_count", labels: ["gateway": "192.168.23.254"], in: metrics)?.value,
+            1
         )
     }
 
@@ -410,11 +410,9 @@ private func recordSampleActiveProbes(in state: inout WiFiMetricState) throws {
     state.recordGatewayProbe(
         ActiveGatewayProbeResult(
             gateway: "192.168.23.254",
-            port: 53,
             reachable: true,
-            connectSuccess: false,
-            outcome: "refused",
-            error: "connection refused",
+            outcome: "reply",
+            error: nil,
             startWallNanos: 3_000_000_000,
             finishedWallNanos: 3_010_000_000,
             durationNanos: 10_000_000,

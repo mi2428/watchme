@@ -55,13 +55,18 @@ final class ActiveProbeTelemetryTests: XCTestCase {
     func testGatewayTagsExposeFirstHopOutcomeAndPacketTimingFields() {
         let tags = makeAgent().activeGatewayTags(result: gatewayResult(), snapshot: makeSnapshot())
 
-        XCTAssertEqual(tags["span.source"], "network_framework_gateway_probe")
+        XCTAssertEqual(tags["span.source"], "darwin_icmp_gateway_probe")
         XCTAssertEqual(tags["network.wifi_gateway"], "192.168.23.254")
-        XCTAssertEqual(tags["network.gateway_probe.port"], "53")
-        XCTAssertEqual(tags["network.gateway_probe.outcome"], "refused")
+        XCTAssertEqual(tags["network.family"], "ipv4")
+        XCTAssertEqual(tags["network.gateway_probe.protocol"], "icmp")
+        XCTAssertEqual(tags["network.gateway_probe.outcome"], "reply")
         XCTAssertEqual(tags["network.gateway_probe.reachable"], "true")
-        XCTAssertEqual(tags["network.gateway_probe.connect_success"], "false")
-        XCTAssertEqual(tags["packet.event"], "tcp_syn_to_response")
+        XCTAssertEqual(tags["network.gateway_probe.probe_count"], "1")
+        XCTAssertEqual(tags["network.gateway_probe.reply_count"], "1")
+        XCTAssertEqual(tags["network.gateway_probe.lost_count"], "0")
+        XCTAssertEqual(tags["network.gateway_probe.loss_ratio"], "0.000000")
+        XCTAssertEqual(tags["network.gateway_probe.jitter_seconds"], "0.000000")
+        XCTAssertEqual(tags["packet.event"], "icmp_echo_request_to_reply")
         XCTAssertEqual(tags["packet.timestamp_source"], bpfHeaderTimestampSource)
     }
 
@@ -144,11 +149,9 @@ final class ActiveProbeTelemetryTests: XCTestCase {
     private func gatewayResult() -> ActiveGatewayProbeResult {
         ActiveGatewayProbeResult(
             gateway: "192.168.23.254",
-            port: 53,
             reachable: true,
-            connectSuccess: false,
-            outcome: "refused",
-            error: "connection refused",
+            outcome: "reply",
+            error: nil,
             startWallNanos: 4_000_000_000,
             finishedWallNanos: 4_004_000_000,
             durationNanos: 4_000_000,
