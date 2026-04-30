@@ -1,3 +1,4 @@
+import WatchmeBPF
 import WatchmeTelemetry
 @testable import WatchmeWiFi
 import XCTest
@@ -159,6 +160,30 @@ final class WiFiMetricBuilderTests: XCTestCase {
         XCTAssertEqual(
             metric(named: "watchme_wifi_probe_gateway_tcp_connect_success", labels: ["gateway": "192.168.23.254"], in: metrics)?.value,
             0
+        )
+    }
+
+    func testBPFStatsMetricsExposeKernelReceivedAndDroppedCounters() {
+        let metrics = WiFiMetricBuilder.metrics(
+            snapshot: makeSnapshot(),
+            bpfStats: BPFStats(packetsReceived: 123, packetsDropped: 4)
+        )
+
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_bpf_packets_received_total",
+                labels: ["filter": watchmeWiFiBPFFilterName],
+                in: metrics
+            )?.value,
+            123
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_bpf_packets_dropped_total",
+                labels: ["filter": watchmeWiFiBPFFilterName],
+                in: metrics
+            )?.value,
+            4
         )
     }
 

@@ -1,14 +1,20 @@
 import Foundation
+import WatchmeBPF
 import WatchmeTelemetry
 
 enum WiFiMetricBuilder {
-    static func metrics(snapshot: WiFiSnapshot, state: WiFiMetricState = WiFiMetricState()) -> [PrometheusMetric] {
+    static func metrics(
+        snapshot: WiFiSnapshot,
+        state: WiFiMetricState = WiFiMetricState(),
+        bpfStats: BPFStats? = nil
+    ) -> [PrometheusMetric] {
         let labels = snapshot.metricLabels
         var metrics = quantitativeMetrics(snapshot: snapshot, labels: labels)
         metrics.append(contentsOf: interfaceStateMetrics(snapshot: snapshot, labels: labels))
         metrics.append(associatedMetric(snapshot: snapshot, labels: labels))
         metrics.append(infoMetric(snapshot: snapshot))
         metrics.append(pushTimestampMetric(labels: labels))
+        metrics.append(contentsOf: bpfMetrics(labels: labels, stats: bpfStats))
         metrics.append(contentsOf: state.metrics(labels: labels))
         return metrics
     }
@@ -151,6 +157,30 @@ enum WiFiMetricBuilder {
             labels: labels,
             value: Date().timeIntervalSince1970
         )
+    }
+
+    private static func bpfMetrics(labels: [String: String], stats: BPFStats?) -> [PrometheusMetric] {
+        guard let stats else {
+            return []
+        }
+        var labels = labels
+        labels["filter"] = watchmeWiFiBPFFilterName
+        return [
+            PrometheusMetric(
+                name: "watchme_wifi_bpf_packets_received_total",
+                help: "Packets accepted by the WatchMe Wi-Fi BPF descriptor.",
+                type: .counter,
+                labels: labels,
+                value: Double(stats.packetsReceived)
+            ),
+            PrometheusMetric(
+                name: "watchme_wifi_bpf_packets_dropped_total",
+                help: "Packets dropped by the WatchMe Wi-Fi BPF descriptor.",
+                type: .counter,
+                labels: labels,
+                value: Double(stats.packetsDropped)
+            ),
+        ]
     }
 }
 

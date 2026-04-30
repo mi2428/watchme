@@ -1,4 +1,5 @@
 import Foundation
+import WatchmeBPF
 import WatchmeCore
 import WatchmeTelemetry
 
@@ -142,6 +143,12 @@ extension WiFiAgent {
         rootTags["bpf.enabled"] = config.bpfEnabled ? "true" : "false"
 
         let networkState = currentWiFiServiceNetworkState(interfaceName: snapshot.interfaceName)
+        if let bpfStats = bpfMonitor?.stats() {
+            rootTags["bpf.filter"] = watchmeWiFiBPFFilterName
+            rootTags["bpf.packets_received"] = "\(bpfStats.packetsReceived)"
+            rootTags["bpf.packets_dropped"] = "\(bpfStats.packetsDropped)"
+        }
+
         let packetSpans = packetStore.recentPacketSpans(
             interfaceName: snapshot.interfaceName,
             ipv4Gateway: networkState.routerIPv4,
@@ -178,7 +185,7 @@ extension WiFiAgent {
         telemetry.pushMetrics(
             job: "watchme_wifi",
             fields: snapshot.traceTags,
-            metrics: WiFiMetricBuilder.metrics(snapshot: snapshot, state: metricState)
+            metrics: WiFiMetricBuilder.metrics(snapshot: snapshot, state: metricState, bpfStats: bpfMonitor?.stats())
         )
     }
 

@@ -46,6 +46,10 @@ final class PassiveBPFMonitor {
         monitor = nil
     }
 
+    func stats() -> BPFStats? {
+        monitor?.stats()
+    }
+
     private func handlePacket(buffer: [UInt8], offset: Int, length: Int, timestampNanos: UInt64) {
         guard length >= 14 else {
             return
