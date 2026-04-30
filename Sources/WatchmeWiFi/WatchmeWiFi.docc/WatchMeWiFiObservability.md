@@ -129,7 +129,7 @@ The options below apply to `watchme agent --collector.wifi` and `watchme agent o
 - **`--wifi.probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds. Default: `180`.
 - **`--wifi.probe.gateway.count`:** Gateway ICMP attempts per burst. Default: `4`.
 - **`--wifi.probe.gateway.interval`:** Delay between gateway ICMP burst attempts in seconds. Default: `0.05`.
-- **`--wifi.probe.internet.target`:** Internet probe host; repeat to probe multiple hosts. Default: `example.com`, `www.cloudflare.com`.
+- **`--wifi.probe.internet.target`:** Internet probe host; repeat to probe multiple hosts. Default: `www.wide.ad.jp`, `www.cloudflare.com`.
 - **`--wifi.probe.internet.family`:** `ipv4`, `ipv6`, or `dual`; default is `dual`.
 - **`--wifi.probe.internet.timeout`:** Internet active probe timeout in seconds. Default: `5`.
 - **`--wifi.probe.internet.dns`:** Boolean switch for internet DNS probes. Default: `true`.
@@ -484,7 +484,7 @@ The Wi-Fi BPF monitor parses Ethernet frames admitted by the filter, but it only
 ## Active probe details
 
 Active internet probes validate the Wi-Fi path to internet hosts, not just general host reachability.
-The default targets are `example.com` and `www.cloudflare.com`.
+The default targets are `www.wide.ad.jp` and `www.cloudflare.com`.
 These defaults are ordinary probe targets, not a guarantee that every network will permit DNS, ICMP, IPv6, or plain HTTP to them; use repeated `--wifi.probe.internet.target` options to choose targets appropriate for the environment.
 
 `--wifi.probe.internet.family=dual` expands each target into independent IPv4 and IPv6 probe work.
@@ -557,7 +557,7 @@ $ rg 'watchme_wifi_|recordSpan|SpanEvent|packetSpan' Sources
 $ make lint
 $ make test
 $ make app
-$ scripts/watchme-app agent once --collector.wifi --wifi.probe.internet.target example.com --wifi.probe.internet.target www.cloudflare.com
+$ scripts/watchme-app agent once --collector.wifi --wifi.probe.internet.target www.wide.ad.jp --wifi.probe.internet.target www.cloudflare.com
 ```
 
 When SSID/BSSID are expected but show as `unknown`, verify that the app bundle path is being used:
