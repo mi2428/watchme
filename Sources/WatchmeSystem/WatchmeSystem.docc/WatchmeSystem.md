@@ -1,17 +1,17 @@
 # ``WatchmeSystem``
 
-WatchMe system metrics support for the `watchme system` command.
+System collector support for the `watchme agent --collector.system` command.
 
 ## Overview
 
-`WatchmeSystem` owns the system subcommand, CPU time collection, memory page-state collection, disk I/O counter collection, and OTLP metric export.
+`WatchmeSystem` owns the system collector, CPU time collection, memory page-state collection, disk I/O counter collection, and OTLP metric export.
 For the full instrumentation map, see <doc:WatchMeSystemObservability>.
 
 ## Topics
 
-### Command
+### Collector
 
-- ``SystemCommand``
+- ``SystemCollectorFactory``
 
 ### Instrumentation
 

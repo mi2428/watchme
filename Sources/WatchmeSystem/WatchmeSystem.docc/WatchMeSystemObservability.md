@@ -1,15 +1,15 @@
-# WatchMe system observability
+# System collector observability
 
 @Metadata {
     @PageKind(article)
 }
 
-This document describes the current `watchme system` implementation.
+This document describes the current `watchme agent --collector.system` implementation.
 It is meant to be checked against the source when instrumentation changes.
 
 ## Scope
 
-`watchme system` turns macOS host CPU, memory, and disk counters into OpenTelemetry metrics exported through OTLP/HTTP.
+`watchme agent --collector.system` turns macOS host CPU, memory, and disk counters into OpenTelemetry metrics exported through OTLP/HTTP.
 
 The system module emits primary observations rather than quality scores or local interpretation.
 It does not calculate CPU utilization percentages, memory pressure levels, disk saturation, energy impact, or health scores.
@@ -17,19 +17,19 @@ Those views can be built downstream from the exported counters and gauges.
 
 ## Runtime entry points
 
-- **`watchme system`:** Long-running agent that exports CPU, memory, and disk metrics.
-- **`watchme system once`:** One-shot metrics export.
-- **`scripts/watchme-app system ...`:** Runs the same system command through the app-bundle wrapper for parity with app-bundled workflows. Location authorization is not required for system metrics.
+- **`watchme agent --collector.system`:** Long-running agent that exports CPU, memory, and disk metrics.
+- **`watchme agent once --collector.system`:** One-shot metrics export.
+- **`scripts/watchme-app agent ...`:** Runs the same agent command through the app-bundle wrapper for parity with app-bundled workflows. Location authorization is not required for system metrics.
 
 ### CLI options
 
-- **`--collector.url`:** OTLP/HTTP collector base endpoint. `watchme system` exports metrics to `/v1/metrics` under this URL. Default: `http://127.0.0.1:4318`.
-- **`--metrics.interval`:** System metric collection interval in seconds. Default: `5`.
+- **`--otlp.url`:** OTLP/HTTP collector base endpoint. `watchme agent --collector.system` exports metrics to `/v1/metrics` under this URL. Default: `http://127.0.0.1:4318`.
+- **`--system.metrics.interval`:** System metric collection interval in seconds. Default: `5`.
 - **`--log.level`:** Structured log minimum level. Default: `debug`.
 
 ## OTLP delivery and local spool
 
-`watchme system` uses the same OTLP/HTTP delivery path as `watchme wifi`.
+`watchme agent --collector.system` uses the same OTLP/HTTP delivery path as `watchme agent --collector.wifi`.
 When a retryable export fails because the collector or network is unavailable, WatchMe writes the exact OTLP HTTP payload to a local spool.
 The default spool directory is `~/.watchme/otlp-spool`; set `WATCHME_OTLP_SPOOL_DIR` to override it.
 
@@ -39,7 +39,7 @@ Delivery behavior:
 - A spooled payload is removed only after the collector returns a 2xx HTTP response.
 - Retryable failures, such as connection failures, timeouts, HTTP 408, HTTP 429, or HTTP 5xx, leave the payload on disk.
 - Non-retryable HTTP status responses, such as most HTTP 4xx responses, drop that payload so a bad request does not permanently block newer metrics.
-- Recovery is attempted on the next metrics interval in long-running mode, or by a later `watchme system once`, `watchme wifi once`, or long-running agent execution.
+- Recovery is attempted on the next metrics interval in long-running mode, or by a later `watchme agent once --collector.system`, `watchme agent once --collector.wifi`, or long-running agent execution.
 
 ## Collection points
 
@@ -51,16 +51,16 @@ Delivery behavior:
 
 ## Metrics
 
-Metrics are encoded as OTLP/HTTP JSON and exported to `<--collector.url>/v1/metrics`.
+Metrics are encoded as OTLP/HTTP JSON and exported to `<--otlp.url>/v1/metrics`.
 `MetricSample` gauges become OTel gauge datapoints.
 `MetricSample` counters are emitted as cumulative monotonic OTel sum datapoints.
 WatchMe keeps a per-series local total by adding source deltas; if a source counter decreases WatchMe treats it as a local source reset.
 
 Metrics are exported:
 
-- once immediately in `watchme system once`;
+- once immediately in `watchme agent once --collector.system`;
 - at agent startup;
-- every `--metrics.interval` seconds in agent mode.
+- every `--system.metrics.interval` seconds in agent mode.
 
 | Metric | Labels | Source | Meaning |
 | --- | --- | --- | --- |
@@ -74,8 +74,8 @@ Metrics are exported:
 ## Operational checks
 
 ```console
-$ watchme system once
-$ watchme system --metrics.interval 5
+$ watchme agent once --collector.system
+$ watchme agent --collector.system --system.metrics.interval 5
 $ make app
-$ scripts/watchme-app system once
+$ scripts/watchme-app agent once --collector.system
 ```

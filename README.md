@@ -4,11 +4,11 @@ macOS observability agent that exports OpenTelemetry metrics and traces.
 
 ## Commands
 
-- `watchme wifi`: Wi-Fi metrics, event traces, active probes, and passive packet timing.
-  - `watchme wifi once`: one-shot Wi-Fi metrics and active trace export.
-  - `watchme wifi authorize-only`: request Location authorization for app-bundled Wi-Fi labels.
-- `watchme system`: CPU, memory, and disk metrics.
-  - `watchme system once`: one-shot CPU, memory, and disk metrics export.
+- `watchme agent --collector.wifi`: Wi-Fi metrics, event traces, active probes, and passive packet timing.
+  - `watchme agent once --collector.wifi`: one-shot Wi-Fi metrics and active trace export.
+  - `watchme agent authorize-location`: request Location authorization for app-bundled Wi-Fi labels.
+- `watchme agent --collector.system`: CPU, memory, and disk metrics.
+  - `watchme agent once --collector.system`: one-shot CPU, memory, and disk metrics export.
 
 ## App bundle wrapper
 
@@ -16,12 +16,12 @@ Build `WatchMe.app` when Wi-Fi SSID/BSSID labels need macOS Location authorizati
 
 ```console
 $ make app
-$ scripts/watchme-app wifi authorize-only
-$ scripts/watchme-app wifi once
-$ scripts/watchme-app system once
+$ scripts/watchme-app agent authorize-location
+$ scripts/watchme-app agent once --collector.wifi
+$ scripts/watchme-app agent once --collector.system
 ```
 
-`scripts/watchme-app` supports both `wifi` and `system` commands. The app bundle is required for Location-gated Wi-Fi identity labels; system metrics do not require Location authorization.
+`scripts/watchme-app` runs the `agent` command through the app bundle. The app bundle is required for Location-gated Wi-Fi identity labels; system metrics do not require Location authorization.
 
 ## OTLP delivery
 

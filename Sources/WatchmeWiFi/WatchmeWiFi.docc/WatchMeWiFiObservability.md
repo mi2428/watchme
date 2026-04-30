@@ -4,7 +4,7 @@
     @PageKind(article)
 }
 
-This document describes the current `watchme wifi` implementation.
+This document describes the current `watchme agent --collector.wifi` implementation.
 It is meant to be checked against the source when instrumentation changes.
 
 ### Table of contents
@@ -35,7 +35,7 @@ It is meant to be checked against the source when instrumentation changes.
 
 ## Scope
 
-`watchme wifi` turns macOS Wi-Fi state into two OpenTelemetry signal families:
+`watchme agent --collector.wifi` turns macOS Wi-Fi state into two OpenTelemetry signal families:
 
 - Metrics exported through OTLP/HTTP.
 - OpenTelemetry traces exported through OTLP/HTTP.
@@ -96,45 +96,45 @@ BPF timestamping is used only when a probe has registered a narrow packet identi
 The monitor then keeps just the packets needed to pair a DNS query/response, ICMP request/reply, HTTP request/first-response, or gateway ICMP request/reply.
 If correlation fails, WatchMe still emits the same span and metric with callback or deadline timing and marks the `timing_source` accordingly.
 
-HTTPS, TLS handshake timing, certificate validation, browser page fetch timing, and synthetic quality scores are deliberately out of scope for `watchme wifi`.
+HTTPS, TLS handshake timing, certificate validation, browser page fetch timing, and synthetic quality scores are deliberately out of scope for `watchme agent --collector.wifi`.
 Those features need either encrypted-stream instrumentation, browser/application-level probes, or site-specific scoring policy.
 They should be added as a separate monitor or downstream dashboard/rule logic unless they can be measured with the same Wi-Fi-bound precision as the current probes.
 
 ## Runtime entry points
 
-- **`watchme wifi`:** Long-running agent that starts metrics, active trace, CoreWLAN/SystemConfiguration event monitors, and BPF packet monitor.
-- **`watchme wifi once`:** One-shot metrics export and one active trace.
-- **`watchme wifi authorize-only`:** Requests Core Location authorization so CoreWLAN can return SSID/BSSID.
-- **`scripts/watchme-app wifi ...`:** Runs the `.app` bundle through LaunchServices so macOS TCC applies the app's Location grant; use this path when SSID/BSSID are required.
+- **`watchme agent --collector.wifi`:** Long-running agent that starts metrics, active trace, CoreWLAN/SystemConfiguration event monitors, and BPF packet monitor.
+- **`watchme agent once --collector.wifi`:** One-shot metrics export and one active trace.
+- **`watchme agent authorize-location`:** Requests Core Location authorization so CoreWLAN can return SSID/BSSID.
+- **`scripts/watchme-app agent ...`:** Runs the `.app` bundle through LaunchServices so macOS TCC applies the app's Location grant; use this path when SSID/BSSID are required.
 
 For SSID/BSSID labels on modern macOS, build and authorize the app bundle:
 
 ```console
 $ make app
-$ scripts/watchme-app wifi authorize-only
-$ scripts/watchme-app wifi once
+$ scripts/watchme-app agent authorize-location
+$ scripts/watchme-app agent once --collector.wifi
 ```
 
 Running `.build/watchme-app/WatchMe.app/Contents/MacOS/watchme` directly can still behave like a plain CLI process for TCC and may return `unknown` for SSID/BSSID.
 
 ### CLI options
 
-The options below apply to `watchme wifi` and `watchme wifi once`.
+The options below apply to `watchme agent --collector.wifi` and `watchme agent once --collector.wifi`.
 
-- **`--collector.url`:** OTLP/HTTP collector base endpoint. WatchMe derives `/v1/metrics` and `/v1/traces` from this URL. Default: `http://127.0.0.1:4318`.
-- **`--metrics.interval`:** Wi-Fi metric collection interval in seconds. Default: `5`.
-- **`--traces.interval`:** Active trace interval in seconds. Default: `60`.
-- **`--traces.cooldown`:** Minimum seconds between non-forced event traces. Default: `2`.
-- **`--probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/ARP/RS/RA/NDP packets. Default: `true`.
-- **`--probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds. Default: `180`.
-- **`--probe.gateway.count`:** Gateway ICMP attempts per burst. Default: `4`.
-- **`--probe.gateway.interval`:** Delay between gateway ICMP burst attempts in seconds. Default: `0.05`.
-- **`--probe.internet.target`:** Internet probe host; repeat to probe multiple hosts. Default: `example.com`, `www.cloudflare.com`.
-- **`--probe.internet.family`:** `ipv4`, `ipv6`, or `dual`; default is `dual`.
-- **`--probe.internet.timeout`:** Internet active probe timeout in seconds. Default: `5`.
-- **`--probe.internet.dns`:** Boolean switch for internet DNS probes. Default: `true`.
-- **`--probe.internet.icmp`:** Boolean switch for internet ICMP echo probes. Default: `true`.
-- **`--probe.internet.http`:** Boolean switch for internet plain HTTP HEAD probes. Default: `true`.
+- **`--otlp.url`:** OTLP/HTTP collector base endpoint. WatchMe derives `/v1/metrics` and `/v1/traces` from this URL. Default: `http://127.0.0.1:4318`.
+- **`--wifi.metrics.interval`:** Wi-Fi metric collection interval in seconds. Default: `5`.
+- **`--wifi.traces.interval`:** Active trace interval in seconds. Default: `60`.
+- **`--wifi.traces.cooldown`:** Minimum seconds between non-forced event traces. Default: `2`.
+- **`--wifi.probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/ARP/RS/RA/NDP packets. Default: `true`.
+- **`--wifi.probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds. Default: `180`.
+- **`--wifi.probe.gateway.count`:** Gateway ICMP attempts per burst. Default: `4`.
+- **`--wifi.probe.gateway.interval`:** Delay between gateway ICMP burst attempts in seconds. Default: `0.05`.
+- **`--wifi.probe.internet.target`:** Internet probe host; repeat to probe multiple hosts. Default: `example.com`, `www.cloudflare.com`.
+- **`--wifi.probe.internet.family`:** `ipv4`, `ipv6`, or `dual`; default is `dual`.
+- **`--wifi.probe.internet.timeout`:** Internet active probe timeout in seconds. Default: `5`.
+- **`--wifi.probe.internet.dns`:** Boolean switch for internet DNS probes. Default: `true`.
+- **`--wifi.probe.internet.icmp`:** Boolean switch for internet ICMP echo probes. Default: `true`.
+- **`--wifi.probe.internet.http`:** Boolean switch for internet plain HTTP HEAD probes. Default: `true`.
 - **`--log.level`:** Structured log minimum level. Default: `debug`.
 
 ## OTLP delivery and local spool
@@ -153,7 +153,7 @@ Delivery behavior:
 - Retryable failures, such as connection failures, timeouts, HTTP 408, HTTP 429, or HTTP 5xx, leave the payload on disk.
 - Non-retryable HTTP status responses, such as most HTTP 4xx responses, drop that payload so a bad request does not permanently block newer signals.
 - In long-running mode, recovery is attempted on the next metrics interval, active trace, or event-triggered export.
-- In one-shot mode, pending payloads can be flushed by a later `watchme wifi once`, `watchme system once`, or long-running agent execution that can reach the collector.
+- In one-shot mode, pending payloads can be flushed by a later `watchme agent once --collector.wifi`, `watchme agent once --collector.system`, or long-running agent execution that can reach the collector.
 
 ## Collection points
 
@@ -225,16 +225,16 @@ Trace root tags always include the snapshot fields below when available:
 
 ## Metrics
 
-Metrics are encoded as OTLP/HTTP JSON and exported to `<--collector.url>/v1/metrics`.
+Metrics are encoded as OTLP/HTTP JSON and exported to `<--otlp.url>/v1/metrics`.
 `MetricSample` gauges become OTel gauge datapoints.
 `MetricSample` counters are emitted as cumulative monotonic OTel sum datapoints.
 WatchMe keeps a per-series local total by adding source deltas; zero-valued first samples are recorded so expected series exist, and if a source counter decreases WatchMe treats it as a local source reset.
 
 Metrics are exported:
 
-- once immediately in `watchme wifi once`, then again at trace start;
+- once immediately in `watchme agent once --collector.wifi`, then again at trace start;
 - at agent startup, then again at startup trace start;
-- every `--metrics.interval` seconds in agent mode;
+- every `--wifi.metrics.interval` seconds in agent mode;
 - after CoreWLAN or SystemConfiguration events before event traces;
 - at every trace start;
 - after active validation, so the latest internet DNS, ICMP, HTTP, and gateway probe samples are available to the OTel collector or backend.
@@ -296,7 +296,7 @@ The root span name is derived from the trace reason:
 Common root tags include every tag listed in the snapshot model section, plus:
 
 - **`reason`:** Trace reason before normalization.
-- **`collector.url`:** OTLP/HTTP collector base endpoint.
+- **`otlp.url`:** OTLP/HTTP collector base endpoint.
 - **`bpf.enabled`:** `true` or `false`.
 - **`bpf.filter`:** BPF filter profile name when the monitor is active.
 - **`bpf.packets_received`:** `BIOCGSTATS` accepted packet count when available.
@@ -311,9 +311,9 @@ Common root tags include every tag listed in the snapshot model section, plus:
 
 | Trigger | Root reason | Active probe | Packet spans | Notes |
 | --- | --- | --- | --- | --- |
-| `watchme wifi once` | `wifi.active` | Yes | Recent packet spans are included without consuming them. | `agent.mode=once`. |
+| `watchme agent once --collector.wifi` | `wifi.active` | Yes | Recent packet spans are included without consuming them. | `agent.mode=once`. |
 | Agent startup | `wifi.active` | Yes | Recent packet spans are consumed. | `agent.mode=startup`. |
-| Active timer | `wifi.active` | Yes | Recent packet spans are consumed. | Runs every `--traces.interval` seconds. |
+| Active timer | `wifi.active` | Yes | Recent packet spans are consumed. | Runs every `--wifi.traces.interval` seconds. |
 | CoreWLAN join | `wifi.join` | Yes | Recent packet spans are consumed, plus delayed packet-window trace. | Forced through cooldown. |
 | CoreWLAN roam | `wifi.roam` | Yes | Recent packet spans are consumed, plus delayed packet-window trace. | Forced through cooldown. |
 | CoreWLAN disconnect | `wifi.disconnect` | Yes | Recent packet spans are consumed. | Classified from snapshot transition. |
@@ -323,7 +323,7 @@ Common root tags include every tag listed in the snapshot model section, plus:
 | BPF DHCP ACK / ARP reply / ICMPv6 RA / ICMPv6 NA | `wifi.rejoin.packet_window` | Yes | Recent packet spans are included without consuming them. | Delayed 1.25 seconds from packet event. |
 | Delayed join/roam packet window | `wifi.rejoin.packet_window` | Yes | Recent packet spans are included without consuming them. | Delayed 2.0 seconds from join/roam. |
 
-`--traces.cooldown` suppresses non-forced event traces.
+`--wifi.traces.cooldown` suppresses non-forced event traces.
 Join, roam, startup, once, active timer, and packet-window traces bypass or avoid this suppression as implemented by their call sites.
 
 ## Emitted spans
@@ -451,7 +451,7 @@ All ICMPv6 packet spans receive:
 - DHCP, ARP, ICMPv6, active DNS, active ICMP, and active HTTP packet observations older than 600 seconds are pruned.
 - Active probe registrations expire after the probe timeout plus one second.
 - Active DNS, ICMP, and HTTP packet observations are retained only when they match a currently registered probe identity.
-- Trace attachment uses `--probe.bpf.span-max-age` as the lookback window; default is 180 seconds.
+- Trace attachment uses `--wifi.probe.bpf.span-max-age` as the lookback window; default is 180 seconds.
 - `consume=true` suppresses re-emitting the same packet span in later event-triggered traces.
 - Packet-window traces use `consume=false` so the delayed trace can show the complete recent packet window.
 - ARP packet-window attachment prefers the Wi-Fi service IPv4 router when it is known; otherwise it includes recent ARP request/reply spans without a gateway filter.
@@ -485,11 +485,11 @@ The Wi-Fi BPF monitor parses Ethernet frames admitted by the filter, but it only
 
 Active internet probes validate the Wi-Fi path to internet hosts, not just general host reachability.
 The default targets are `example.com` and `www.cloudflare.com`.
-These defaults are ordinary probe targets, not a guarantee that every network will permit DNS, ICMP, IPv6, or plain HTTP to them; use repeated `--probe.internet.target` options to choose targets appropriate for the environment.
+These defaults are ordinary probe targets, not a guarantee that every network will permit DNS, ICMP, IPv6, or plain HTTP to them; use repeated `--wifi.probe.internet.target` options to choose targets appropriate for the environment.
 
-`--probe.internet.family=dual` expands each target into independent IPv4 and IPv6 probe work.
-`--probe.internet.family=ipv4` sends only A-record, IPv4 ICMP, and IPv4 HTTP probes.
-`--probe.internet.family=ipv6` sends only AAAA-record, IPv6 ICMP, and IPv6 HTTP probes.
+`--wifi.probe.internet.family=dual` expands each target into independent IPv4 and IPv6 probe work.
+`--wifi.probe.internet.family=ipv4` sends only A-record, IPv4 ICMP, and IPv4 HTTP probes.
+`--wifi.probe.internet.family=ipv6` sends only AAAA-record, IPv6 ICMP, and IPv6 HTTP probes.
 When DNS probing is enabled, target/family/resolver DNS work is executed first because hostname ICMP and HTTP probes need concrete addresses.
 After DNS planning, ICMP and HTTP work is executed in parallel across targets and address families.
 
@@ -501,7 +501,7 @@ The BPF monitor only stores DNS packets that match that active registration, so 
 When both the query and response are observed, `probe.internet.dns.resolve` and the DNS duration metric use BPF packet timestamps from the BPF header.
 If packet correlation fails or BPF is disabled, the same span and metric fall back to Network.framework callback wall-clock timing.
 When DNS probing is enabled but the Wi-Fi service has no DNS resolver, WatchMe emits one failed DNS result per target and concrete address family with `resolver=none` and `timing_source=no_address`.
-When `--probe.internet.dns=false`, no DNS spans or DNS metrics are emitted.
+When `--wifi.probe.internet.dns=false`, no DNS spans or DNS metrics are emitted.
 In that mode, ICMP and HTTP probes still run, but hostname targets have no resolved remote address and produce `outcome=no_address`; literal IPv4 or IPv6 targets can still be probed for their matching address family.
 
 ICMP active probes use Darwin datagram ICMP sockets and bind the socket to the Wi-Fi interface with `IP_BOUND_IF` or `IPV6_BOUND_IF`.
@@ -517,7 +517,7 @@ Before opening the connection, WatchMe registers the target address, port, host,
 The BPF monitor stores only TCP payload packets that match a registered active HTTP probe.
 When the outbound HEAD packet and inbound first response payload are observed, `probe.internet.http.head` and the HTTP duration metric use BPF packet timestamps.
 If packet correlation fails or BPF is disabled, the same span and metric fall back to Network.framework callback wall-clock timing.
-HTTPS, TLS handshake timing, certificate validation, and encrypted HTTP response timing are intentionally out of scope for `watchme wifi`.
+HTTPS, TLS handshake timing, certificate validation, and encrypted HTTP response timing are intentionally out of scope for `watchme agent --collector.wifi`.
 
 Gateway active probes use the Wi-Fi service's IPv4 router, not `State:/Network/Global/IPv4`.
 The probe sends a short burst of ICMP echo requests to the gateway over the Wi-Fi interface.
@@ -557,13 +557,13 @@ $ rg 'watchme_wifi_|recordSpan|SpanEvent|packetSpan' Sources
 $ make lint
 $ make test
 $ make app
-$ scripts/watchme-app wifi once --probe.internet.target example.com --probe.internet.target www.cloudflare.com
+$ scripts/watchme-app agent once --collector.wifi --wifi.probe.internet.target example.com --wifi.probe.internet.target www.cloudflare.com
 ```
 
 When SSID/BSSID are expected but show as `unknown`, verify that the app bundle path is being used:
 
 ```console
-$ scripts/watchme-app wifi once
+$ scripts/watchme-app agent once --collector.wifi
 ```
 
 Do not run `.build/watchme-app/WatchMe.app/Contents/MacOS/watchme` directly when validating Location-gated Wi-Fi identity fields.
