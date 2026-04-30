@@ -148,6 +148,7 @@ extension WiFiAgent {
 
         if includeActive {
             recordActiveValidation(recorder: recorder, snapshot: snapshot)
+            _ = pushMetrics(snapshot: snapshot)
         }
 
         let rootName = traceRootName(reason)
@@ -171,7 +172,7 @@ extension WiFiAgent {
         telemetry.pushMetrics(
             job: "watchme_wifi",
             fields: snapshot.traceTags,
-            metrics: WiFiMetricBuilder.metrics(snapshot: snapshot, counters: metricCounters)
+            metrics: WiFiMetricBuilder.metrics(snapshot: snapshot, state: metricState)
         )
     }
 
@@ -207,11 +208,15 @@ extension WiFiAgent {
     private func recordActiveValidation(recorder: TraceRecorder, snapshot: WiFiSnapshot) {
         let phaseId = recorder.newSpanId()
         let phaseStart = wallClockNanos()
-        let routeTags = defaultRouteTags()
+        let networkState = currentWiFiServiceNetworkState(interfaceName: snapshot.interfaceName)
+        var routeTags = defaultRouteTags()
+        routeTags.merge(networkState.traceTags) { _, new in new }
 
         for target in config.probeHTTPTargets {
             recordActiveTarget(target, phaseId: phaseId, routeTags: routeTags, recorder: recorder, snapshot: snapshot)
         }
+        recordActiveDNSProbes(phaseId: phaseId, networkState: networkState, recorder: recorder, snapshot: snapshot)
+        recordActiveGatewayProbe(phaseId: phaseId, networkState: networkState, recorder: recorder, snapshot: snapshot)
 
         recorder.recordSpan(
             name: "phase.active_validation",
@@ -221,8 +226,10 @@ extension WiFiAgent {
             tags: [
                 "phase.name": "active_validation",
                 "phase.source": "network_framework_active_probe",
-                "phase.validation_scope": "http_head_targets",
+                "phase.validation_scope": "http_head_targets,dns_targets,gateway_tcp",
                 "probe.targets": config.probeHTTPTargets.joined(separator: ","),
+                "probe.dns_resolvers": networkState.dnsServers.joined(separator: ","),
+                "probe.gateway": networkState.routerIPv4 ?? "",
             ]
         )
     }
@@ -236,6 +243,7 @@ extension WiFiAgent {
     ) {
         let targetSpanId = recorder.newSpanId()
         let result = runHTTPHeadProbe(target: target, timeout: config.probeHTTPTimeout, interfaceName: snapshot.interfaceName)
+        metricState.recordHTTPProbe(result)
         for child in result.childSpans {
             recorder.recordEvent(
                 child, parentId: targetSpanId,
@@ -290,5 +298,142 @@ extension WiFiAgent {
             tags["error"] = clipped(error, limit: 240)
         }
         return tags
+    }
+
+    private func recordActiveDNSProbes(
+        phaseId: String,
+        networkState: WiFiServiceNetworkState,
+        recorder: TraceRecorder,
+        snapshot: WiFiSnapshot
+    ) {
+        let resolvers = Array(networkState.dnsServers.prefix(2))
+        guard !resolvers.isEmpty else {
+            return
+        }
+        let targets = uniqueProbeHosts(config.probeHTTPTargets)
+        let timeout = min(config.probeHTTPTimeout, 2.0)
+        for resolver in resolvers {
+            for target in targets {
+                let result = runDNSAProbe(
+                    target: target,
+                    resolver: resolver,
+                    timeout: timeout,
+                    interfaceName: snapshot.interfaceName
+                )
+                metricState.recordDNSProbe(result)
+                recorder.recordSpan(
+                    name: "probe.dns.resolve",
+                    id: recorder.newSpanId(),
+                    startWallNanos: result.startWallNanos,
+                    durationNanos: result.durationNanos,
+                    parentId: phaseId,
+                    tags: activeDNSTags(result: result, snapshot: snapshot),
+                    statusOK: result.ok
+                )
+                logEvent(
+                    result.ok ? .debug : .warn, "active_dns_probe_completed",
+                    fields: [
+                        "trace_id": recorder.traceId,
+                        "target": result.target,
+                        "resolver": result.resolver,
+                        "transport": result.transport,
+                        "status": result.ok ? "ok" : "error",
+                        "rcode": result.rcode.map(String.init) ?? "",
+                        "answers": result.answerCount.map(String.init) ?? "",
+                        "error": result.error ?? "",
+                    ]
+                )
+            }
+        }
+    }
+
+    private func recordActiveGatewayProbe(
+        phaseId: String,
+        networkState: WiFiServiceNetworkState,
+        recorder: TraceRecorder,
+        snapshot: WiFiSnapshot
+    ) {
+        guard let gateway = networkState.routerIPv4 else {
+            return
+        }
+        let result = runGatewayTCPConnectProbe(
+            gateway: gateway,
+            timeout: min(config.probeHTTPTimeout, 2.0),
+            interfaceName: snapshot.interfaceName
+        )
+        metricState.recordGatewayProbe(result)
+        recorder.recordSpan(
+            name: "probe.gateway.tcp_connect",
+            id: recorder.newSpanId(),
+            startWallNanos: result.startWallNanos,
+            durationNanos: result.durationNanos,
+            parentId: phaseId,
+            tags: activeGatewayTags(result: result, snapshot: snapshot),
+            statusOK: result.reachable
+        )
+        logEvent(
+            result.reachable ? .debug : .warn, "active_gateway_probe_completed",
+            fields: [
+                "trace_id": recorder.traceId,
+                "gateway": result.gateway,
+                "port": "\(result.port)",
+                "outcome": result.outcome,
+                "reachable": result.reachable ? "true" : "false",
+                "connect_success": result.connectSuccess ? "true" : "false",
+                "error": result.error ?? "",
+            ]
+        )
+    }
+
+    private func activeDNSTags(result: ActiveDNSProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
+        var tags: [String: String] = [
+            "span.source": "network_framework_dns_probe",
+            "active_probe.interface": snapshot.interfaceName ?? "",
+            "active_probe.required_interface": snapshot.interfaceName ?? "",
+            "probe.target": result.target,
+            "dns.resolver": result.resolver,
+            "dns.transport": result.transport,
+            "dns.answer_count": result.answerCount.map(String.init) ?? "",
+            "wifi.essid": snapshot.ssid ?? "unknown",
+            "wifi.bssid": snapshot.bssid ?? "unknown",
+        ]
+        if let rcode = result.rcode {
+            tags["dns.rcode"] = "\(rcode)"
+        }
+        if let error = result.error {
+            tags["error"] = clipped(error, limit: 240)
+        }
+        return tags
+    }
+
+    private func activeGatewayTags(result: ActiveGatewayProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
+        var tags: [String: String] = [
+            "span.source": "network_framework_gateway_probe",
+            "active_probe.interface": snapshot.interfaceName ?? "",
+            "active_probe.required_interface": snapshot.interfaceName ?? "",
+            "network.wifi_gateway": result.gateway,
+            "network.gateway_probe.port": "\(result.port)",
+            "network.gateway_probe.outcome": result.outcome,
+            "network.gateway_probe.reachable": result.reachable ? "true" : "false",
+            "network.gateway_probe.connect_success": result.connectSuccess ? "true" : "false",
+            "wifi.essid": snapshot.ssid ?? "unknown",
+            "wifi.bssid": snapshot.bssid ?? "unknown",
+        ]
+        if let error = result.error {
+            tags["error"] = clipped(error, limit: 240)
+        }
+        return tags
+    }
+}
+
+func uniqueProbeHosts(_ targets: [String]) -> [String] {
+    var seen = Set<String>()
+    return targets.compactMap { target in
+        let host = normalizedTargetURL(target).host ?? target
+        guard !host.isEmpty, !seen.contains(host) else {
+            return nil
+        }
+        seen.insert(host)
+        return host
     }
 }

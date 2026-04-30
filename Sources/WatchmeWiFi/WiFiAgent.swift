@@ -19,7 +19,7 @@ final class WiFiAgent {
     var activeTimer: DispatchSourceTimer?
     var packetWindowVersion = 0
     var lastIdentityStatusLogSignature: String?
-    var metricCounters = WiFiMetricCounters()
+    var metricState = WiFiMetricState()
 
     init(config: WiFiConfig, telemetry: TelemetryClient) {
         self.config = config
@@ -112,7 +112,7 @@ final class WiFiAgent {
         triggerQueue.async {
             let previous = self.lastSnapshot
             let current = self.captureLatestSnapshot()
-            self.metricCounters.recordCoreWLANEvent(event.name)
+            self.metricState.recordCoreWLANEvent(event.name)
             self.startBPFIfNeeded(interfaceName: current.interfaceName)
             self.logIdentityStatus(current)
             _ = self.pushMetrics(snapshot: current)
@@ -194,7 +194,7 @@ final class WiFiAgent {
     func captureLatestSnapshot() -> WiFiSnapshot {
         let previous = lastSnapshot
         let current = WiFiSnapshot.capture()
-        metricCounters.recordSnapshotChanges(from: previous, to: current)
+        metricState.recordSnapshotChanges(from: previous, to: current)
         lastSnapshot = current
         return current
     }

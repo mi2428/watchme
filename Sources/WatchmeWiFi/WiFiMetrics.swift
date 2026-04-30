@@ -2,14 +2,14 @@ import Foundation
 import WatchmeTelemetry
 
 enum WiFiMetricBuilder {
-    static func metrics(snapshot: WiFiSnapshot, counters: WiFiMetricCounters = WiFiMetricCounters()) -> [PrometheusMetric] {
+    static func metrics(snapshot: WiFiSnapshot, state: WiFiMetricState = WiFiMetricState()) -> [PrometheusMetric] {
         let labels = snapshot.metricLabels
         var metrics = quantitativeMetrics(snapshot: snapshot, labels: labels)
         metrics.append(contentsOf: interfaceStateMetrics(snapshot: snapshot, labels: labels))
         metrics.append(associatedMetric(snapshot: snapshot, labels: labels))
         metrics.append(infoMetric(snapshot: snapshot))
         metrics.append(pushTimestampMetric(labels: labels))
-        metrics.append(contentsOf: counters.metrics(labels: labels))
+        metrics.append(contentsOf: state.metrics(labels: labels))
         return metrics
     }
 
@@ -154,7 +154,7 @@ enum WiFiMetricBuilder {
     }
 }
 
-struct WiFiMetricCounters {
+struct WiFiMetricState {
     static let coreWLANEventNames = [
         "power_did_change",
         "ssid_did_change",
@@ -182,6 +182,9 @@ struct WiFiMetricCounters {
 
     private(set) var coreWLANEvents: [String: Int] = [:]
     private(set) var snapshotChanges: [String: Int] = [:]
+    private(set) var httpProbes: [String: ActiveProbeResult] = [:]
+    private(set) var dnsProbes: [String: ActiveDNSProbeResult] = [:]
+    private(set) var gatewayProbes: [String: ActiveGatewayProbeResult] = [:]
 
     mutating func recordCoreWLANEvent(_ event: String) {
         let name = coreWLANMetricEventName(event)
@@ -196,7 +199,28 @@ struct WiFiMetricCounters {
         }
     }
 
+    mutating func recordHTTPProbe(_ result: ActiveProbeResult) {
+        httpProbes["\(result.url.scheme ?? "")|\(result.url.host ?? result.target)"] = result
+    }
+
+    mutating func recordDNSProbe(_ result: ActiveDNSProbeResult) {
+        dnsProbes["\(result.transport)|\(result.resolver)|\(result.target)"] = result
+    }
+
+    mutating func recordGatewayProbe(_ result: ActiveGatewayProbeResult) {
+        gatewayProbes["\(result.gateway)|\(result.port)"] = result
+    }
+
     func metrics(labels: [String: String]) -> [PrometheusMetric] {
+        var metrics: [PrometheusMetric] = []
+        metrics.append(contentsOf: counterMetrics(labels: labels))
+        metrics.append(contentsOf: httpProbeMetrics(labels: labels))
+        metrics.append(contentsOf: dnsProbeMetrics(labels: labels))
+        metrics.append(contentsOf: gatewayProbeMetrics(labels: labels))
+        return metrics
+    }
+
+    private func counterMetrics(labels: [String: String]) -> [PrometheusMetric] {
         var metrics: [PrometheusMetric] = []
         for event in Self.coreWLANEventNames {
             var eventLabels = labels
@@ -226,6 +250,138 @@ struct WiFiMetricCounters {
         }
         return metrics
     }
+
+    private func httpProbeMetrics(labels: [String: String]) -> [PrometheusMetric] {
+        httpProbes.values.flatMap { result -> [PrometheusMetric] in
+            var probeLabels = labels
+            probeLabels["target"] = result.url.host ?? result.target
+            probeLabels["scheme"] = result.url.scheme ?? "unknown"
+            var metrics = [
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_http_success",
+                    help: "Whether the latest Wi-Fi-bound HTTP probe succeeded.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: result.ok ? 1 : 0
+                ),
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_http_last_run_timestamp_seconds",
+                    help: "Unix timestamp of the latest Wi-Fi-bound HTTP probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromWallNanos: result.finishedWallNanos)
+                ),
+            ]
+            if let statusCode = result.statusCode {
+                metrics.append(
+                    PrometheusMetric(
+                        name: "watchme_wifi_probe_http_status_code",
+                        help: "HTTP status code returned by the latest Wi-Fi-bound HTTP probe.",
+                        type: .gauge,
+                        labels: probeLabels,
+                        value: Double(statusCode)
+                    )
+                )
+            }
+            for phase in result.phaseDurations {
+                var phaseLabels = probeLabels
+                phaseLabels["phase"] = phase.phase
+                metrics.append(
+                    PrometheusMetric(
+                        name: "watchme_wifi_probe_http_duration_seconds",
+                        help: "Duration of the latest Wi-Fi-bound HTTP probe phase.",
+                        type: .gauge,
+                        labels: phaseLabels,
+                        value: seconds(fromDurationNanos: phase.durationNanos)
+                    )
+                )
+            }
+            return metrics
+        }
+    }
+
+    private func dnsProbeMetrics(labels: [String: String]) -> [PrometheusMetric] {
+        dnsProbes.values.flatMap { result -> [PrometheusMetric] in
+            var probeLabels = labels
+            probeLabels["target"] = result.target
+            probeLabels["resolver"] = result.resolver
+            probeLabels["transport"] = result.transport
+            var metrics = [
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_dns_success",
+                    help: "Whether the latest Wi-Fi-bound DNS probe succeeded.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: result.ok ? 1 : 0
+                ),
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_dns_duration_seconds",
+                    help: "Duration of the latest Wi-Fi-bound DNS probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromDurationNanos: result.durationNanos)
+                ),
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_dns_last_run_timestamp_seconds",
+                    help: "Unix timestamp of the latest Wi-Fi-bound DNS probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromWallNanos: result.finishedWallNanos)
+                ),
+            ]
+            if let rcode = result.rcode {
+                metrics.append(
+                    PrometheusMetric(
+                        name: "watchme_wifi_probe_dns_rcode",
+                        help: "DNS response code returned by the latest Wi-Fi-bound DNS probe.",
+                        type: .gauge,
+                        labels: probeLabels,
+                        value: Double(rcode)
+                    )
+                )
+            }
+            return metrics
+        }
+    }
+
+    private func gatewayProbeMetrics(labels: [String: String]) -> [PrometheusMetric] {
+        gatewayProbes.values.flatMap { result -> [PrometheusMetric] in
+            var probeLabels = labels
+            probeLabels["gateway"] = result.gateway
+            probeLabels["port"] = "\(result.port)"
+            probeLabels["outcome"] = result.outcome
+            return [
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_gateway_tcp_reachable",
+                    help: "Whether the latest Wi-Fi-bound gateway TCP probe reached the gateway host.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: result.reachable ? 1 : 0
+                ),
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_gateway_tcp_connect_success",
+                    help: "Whether the latest Wi-Fi-bound gateway TCP probe established a connection.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: result.connectSuccess ? 1 : 0
+                ),
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_gateway_tcp_duration_seconds",
+                    help: "Duration of the latest Wi-Fi-bound gateway TCP probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromDurationNanos: result.durationNanos)
+                ),
+                PrometheusMetric(
+                    name: "watchme_wifi_probe_gateway_tcp_last_run_timestamp_seconds",
+                    help: "Unix timestamp of the latest Wi-Fi-bound gateway TCP probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromWallNanos: result.finishedWallNanos)
+                ),
+            ]
+        }
+    }
 }
 
 func coreWLANMetricEventName(_ event: String) -> String {
@@ -238,4 +394,12 @@ func coreWLANMetricEventName(_ event: String) -> String {
         "wifi_link_quality_changed": "link_quality_did_change",
         "wifi_mode_changed": "mode_did_change",
     ][event] ?? event
+}
+
+func seconds(fromDurationNanos nanos: UInt64) -> Double {
+    Double(nanos) / 1_000_000_000.0
+}
+
+func seconds(fromWallNanos nanos: UInt64) -> Double {
+    Double(nanos) / 1_000_000_000.0
 }

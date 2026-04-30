@@ -59,12 +59,12 @@ final class WiFiMetricBuilderTests: XCTestCase {
     func testMetricCountersExposeCoreWLANEventsAndSnapshotChanges() {
         let previous = makeSnapshot(bssid: "aa:bb:cc:dd:ee:ff", channel: 36, channelWidth: "20mhz", channelWidthMHz: 20)
         let current = makeSnapshot(bssid: "11:22:33:44:55:66", channel: 40, channelWidth: "40mhz", channelWidthMHz: 40)
-        var counters = WiFiMetricCounters()
+        var state = WiFiMetricState()
 
-        counters.recordCoreWLANEvent("wifi_bssid_changed")
-        counters.recordSnapshotChanges(from: previous, to: current)
+        state.recordCoreWLANEvent("wifi_bssid_changed")
+        state.recordSnapshotChanges(from: previous, to: current)
 
-        let metrics = WiFiMetricBuilder.metrics(snapshot: current, counters: counters)
+        let metrics = WiFiMetricBuilder.metrics(snapshot: current, state: state)
         XCTAssertEqual(
             metric(named: "watchme_wifi_corewlan_event_total", labels: ["event": "bssid_did_change"], in: metrics)?.value,
             1
@@ -92,6 +92,81 @@ final class WiFiMetricBuilderTests: XCTestCase {
 
         XCTAssertEqual(ssid.value, "hex:deadbeef")
         XCTAssertEqual(ssid.encoding, "hex")
+    }
+
+    func testActiveProbeMetricsExposeHTTPDNSAndGatewayResults() throws {
+        let snapshot = makeSnapshot()
+        var state = WiFiMetricState()
+        try state.recordHTTPProbe(
+            ActiveProbeResult(
+                target: "https://www.apple.com/",
+                url: XCTUnwrap(URL(string: "https://www.apple.com/")),
+                ok: true,
+                statusCode: 200,
+                error: nil,
+                startWallNanos: 1_000_000_000,
+                finishedWallNanos: 1_300_000_000,
+                durationNanos: 300_000_000,
+                phaseDurations: [
+                    ProbePhaseDuration(phase: "connect", durationNanos: 120_000_000),
+                    ProbePhaseDuration(phase: "http_head", durationNanos: 180_000_000),
+                    ProbePhaseDuration(phase: "total", durationNanos: 300_000_000),
+                ],
+                childSpans: []
+            )
+        )
+        state.recordDNSProbe(
+            ActiveDNSProbeResult(
+                target: "www.apple.com",
+                resolver: "192.168.23.254",
+                transport: "udp",
+                ok: true,
+                rcode: 0,
+                answerCount: 2,
+                error: nil,
+                startWallNanos: 2_000_000_000,
+                finishedWallNanos: 2_050_000_000,
+                durationNanos: 50_000_000
+            )
+        )
+        state.recordGatewayProbe(
+            ActiveGatewayProbeResult(
+                gateway: "192.168.23.254",
+                port: 53,
+                reachable: true,
+                connectSuccess: false,
+                outcome: "refused",
+                error: "connection refused",
+                startWallNanos: 3_000_000_000,
+                finishedWallNanos: 3_010_000_000,
+                durationNanos: 10_000_000
+            )
+        )
+
+        let metrics = WiFiMetricBuilder.metrics(snapshot: snapshot, state: state)
+
+        XCTAssertEqual(metric(named: "watchme_wifi_probe_http_success", labels: ["target": "www.apple.com"], in: metrics)?.value, 1)
+        XCTAssertEqual(metric(named: "watchme_wifi_probe_http_status_code", labels: ["target": "www.apple.com"], in: metrics)?.value, 200)
+        XCTAssertEqual(
+            metric(named: "watchme_wifi_probe_http_duration_seconds", labels: ["target": "www.apple.com", "phase": "total"], in: metrics)?
+                .value ?? -1,
+            0.3,
+            accuracy: 0.000_001
+        )
+        XCTAssertEqual(metric(named: "watchme_wifi_probe_dns_success", labels: ["target": "www.apple.com"], in: metrics)?.value, 1)
+        XCTAssertEqual(metric(named: "watchme_wifi_probe_dns_rcode", labels: ["resolver": "192.168.23.254"], in: metrics)?.value, 0)
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_gateway_tcp_reachable",
+                labels: ["gateway": "192.168.23.254", "outcome": "refused"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(named: "watchme_wifi_probe_gateway_tcp_connect_success", labels: ["gateway": "192.168.23.254"], in: metrics)?.value,
+            0
+        )
     }
 }
 

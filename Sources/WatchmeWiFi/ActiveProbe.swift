@@ -28,13 +28,21 @@ struct ActiveProbeResult {
     let statusCode: Int?
     let error: String?
     let startWallNanos: UInt64
+    let finishedWallNanos: UInt64
     let durationNanos: UInt64
+    let phaseDurations: [ProbePhaseDuration]
     let childSpans: [SpanEvent]
+}
+
+struct ProbePhaseDuration {
+    let phase: String
+    let durationNanos: UInt64
 }
 
 private struct HTTPHeadExchange {
     let readyWallNanos: UInt64?
     let responseWallNanos: UInt64?
+    let completedWallNanos: UInt64
     let statusCode: Int?
     let errorMessage: String?
 }
@@ -46,9 +54,45 @@ private struct ProbeSpanContext {
     let selectedInterface: NWInterface?
     let portValue: UInt16
     let startWallNanos: UInt64
+    let endWallNanos: UInt64
     let durationNanos: UInt64
     let exchange: HTTPHeadExchange
     let ok: Bool
+}
+
+private final class HTTPHeadExchangeState {
+    let semaphore = DispatchSemaphore(value: 0)
+    private let completionLock = NSLock()
+    private var completed = false
+    var readyWallNanos: UInt64?
+    var responseWallNanos: UInt64?
+    var completedWallNanos: UInt64?
+    var statusCode: Int?
+    var errorMessage: String?
+
+    func complete(_ error: String? = nil) {
+        completionLock.lock()
+        defer { completionLock.unlock() }
+        guard !completed else {
+            return
+        }
+        if let error {
+            errorMessage = error
+        }
+        completedWallNanos = completedWallNanos ?? responseWallNanos ?? wallClockNanos()
+        completed = true
+        semaphore.signal()
+    }
+
+    func exchange() -> HTTPHeadExchange {
+        HTTPHeadExchange(
+            readyWallNanos: readyWallNanos,
+            responseWallNanos: responseWallNanos,
+            completedWallNanos: completedWallNanos ?? wallClockNanos(),
+            statusCode: statusCode,
+            errorMessage: errorMessage
+        )
+    }
 }
 
 func runHTTPHeadProbe(target: String, timeout: TimeInterval, interfaceName: String?) -> ActiveProbeResult {
@@ -81,9 +125,21 @@ func runHTTPHeadProbe(target: String, timeout: TimeInterval, interfaceName: Stri
         selectedInterface: selectedInterface,
         timeout: timeout
     )
-    let endWallNanos = exchange.responseWallNanos ?? wallClockNanos()
+    let endWallNanos = exchange.completedWallNanos
     let durationNanos = max(endWallNanos - startWallNanos, 1000)
     let ok = exchange.statusCode.map { (200 ..< 500).contains($0) } ?? false
+    let context = ProbeSpanContext(
+        target: target,
+        url: url,
+        interfaceName: interfaceName,
+        selectedInterface: selectedInterface,
+        portValue: portValue,
+        startWallNanos: startWallNanos,
+        endWallNanos: endWallNanos,
+        durationNanos: durationNanos,
+        exchange: exchange,
+        ok: ok
+    )
 
     return ActiveProbeResult(
         target: target,
@@ -92,37 +148,33 @@ func runHTTPHeadProbe(target: String, timeout: TimeInterval, interfaceName: Stri
         statusCode: exchange.statusCode,
         error: exchange.errorMessage,
         startWallNanos: startWallNanos,
+        finishedWallNanos: endWallNanos,
         durationNanos: durationNanos,
-        childSpans: probeChildSpans(
-            ProbeSpanContext(
-                target: target,
-                url: url,
-                interfaceName: interfaceName,
-                selectedInterface: selectedInterface,
-                portValue: portValue,
-                startWallNanos: startWallNanos,
-                durationNanos: durationNanos,
-                exchange: exchange,
-                ok: ok
-            )
-        )
+        phaseDurations: httpProbePhaseDurations(context),
+        childSpans: probeChildSpans(context)
     )
 }
 
 private func failedProbe(target: String, url: URL, startWallNanos: UInt64, error: String) -> ActiveProbeResult {
-    ActiveProbeResult(
+    let finishedWallNanos = wallClockNanos()
+    let durationNanos = max(finishedWallNanos - startWallNanos, 1000)
+    return ActiveProbeResult(
         target: target,
         url: url,
         ok: false,
         statusCode: nil,
         error: error,
         startWallNanos: startWallNanos,
-        durationNanos: max(wallClockNanos() - startWallNanos, 1000),
+        finishedWallNanos: finishedWallNanos,
+        durationNanos: durationNanos,
+        phaseDurations: [
+            ProbePhaseDuration(phase: "total", durationNanos: durationNanos),
+        ],
         childSpans: []
     )
 }
 
-private func requiredProbeInterface(named interfaceName: String?, timeout: TimeInterval) -> NWInterface? {
+func requiredProbeInterface(named interfaceName: String?, timeout: TimeInterval) -> NWInterface? {
     guard let interfaceName, !interfaceName.isEmpty else {
         return nil
     }
@@ -139,92 +191,105 @@ private func performHTTPHeadExchange(
     selectedInterface: NWInterface?,
     timeout: TimeInterval
 ) -> HTTPHeadExchange {
-    let tlsOptions = NWProtocolTLS.Options()
-    sec_protocol_options_set_tls_server_name(tlsOptions.securityProtocolOptions, host)
-    let parameters = NWParameters(tls: tlsOptions)
-    parameters.requiredInterface = selectedInterface
-
     // Use Network.framework directly so connection timing and interface binding
     // stay inside the process; the agent must not shell out to curl or ifconfig.
     let port = NWEndpoint.Port(rawValue: portValue) ?? .https
-    let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: parameters)
+    let connection = NWConnection(
+        host: NWEndpoint.Host(host),
+        port: port,
+        using: httpTLSParameters(host: host, selectedInterface: selectedInterface)
+    )
     let queue = DispatchQueue(label: "watchme.http_head.\(randomHex(bytes: 4))")
-    let semaphore = DispatchSemaphore(value: 0)
-    let completionLock = NSLock()
-    var completed = false
-    var readyWallNanos: UInt64?
-    var responseWallNanos: UInt64?
-    var statusCode: Int?
-    var errorMessage: String?
-
-    func complete(_ error: String? = nil) {
-        completionLock.lock()
-        defer { completionLock.unlock() }
-        guard !completed else {
-            return
-        }
-        if let error {
-            errorMessage = error
-        }
-        completed = true
-        semaphore.signal()
-    }
-
-    func receiveResponse() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, isComplete, error in
-            if let error {
-                complete(error.localizedDescription)
-                return
-            }
-            if let data, !data.isEmpty {
-                responseWallNanos = wallClockNanos()
-                statusCode = parseHTTPStatusCode(data)
-                complete()
-                return
-            }
-            if isComplete {
-                complete("connection closed before response bytes")
-                return
-            }
-            receiveResponse()
-        }
-    }
+    let exchangeState = HTTPHeadExchangeState()
 
     connection.stateUpdateHandler = { state in
         switch state {
         case .ready:
-            readyWallNanos = wallClockNanos()
-            connection.send(
-                content: httpHeadRequestBytes(url: url, host: host),
-                completion: .contentProcessed { error in
-                    if let error {
-                        complete(error.localizedDescription)
-                        return
-                    }
-                    receiveResponse()
-                }
-            )
+            exchangeState.readyWallNanos = wallClockNanos()
+            sendHTTPHeadRequest(connection: connection, url: url, host: host, exchangeState: exchangeState)
         case let .failed(error):
-            complete(error.localizedDescription)
+            exchangeState.complete(error.localizedDescription)
         case .cancelled:
-            complete("connection cancelled")
+            exchangeState.complete("connection cancelled")
         default:
             break
         }
     }
     connection.start(queue: queue)
 
-    if semaphore.wait(timeout: .now() + timeout + 1) == .timedOut {
-        complete("HTTP HEAD timed out")
+    if exchangeState.semaphore.wait(timeout: .now() + timeout) == .timedOut {
+        exchangeState.complete("HTTP HEAD timed out")
     }
     connection.cancel()
 
-    return HTTPHeadExchange(
-        readyWallNanos: readyWallNanos,
-        responseWallNanos: responseWallNanos,
-        statusCode: statusCode,
-        errorMessage: errorMessage
+    return exchangeState.exchange()
+}
+
+private func httpTLSParameters(host: String, selectedInterface: NWInterface?) -> NWParameters {
+    let tlsOptions = NWProtocolTLS.Options()
+    sec_protocol_options_set_tls_server_name(tlsOptions.securityProtocolOptions, host)
+    let parameters = NWParameters(tls: tlsOptions)
+    parameters.requiredInterface = selectedInterface
+    return parameters
+}
+
+private func sendHTTPHeadRequest(
+    connection: NWConnection,
+    url: URL,
+    host: String,
+    exchangeState: HTTPHeadExchangeState
+) {
+    connection.send(
+        content: httpHeadRequestBytes(url: url, host: host),
+        completion: .contentProcessed { error in
+            if let error {
+                exchangeState.complete(error.localizedDescription)
+                return
+            }
+            receiveHTTPHeadResponse(connection: connection, exchangeState: exchangeState)
+        }
     )
+}
+
+private func receiveHTTPHeadResponse(connection: NWConnection, exchangeState: HTTPHeadExchangeState) {
+    connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, isComplete, error in
+        if let error {
+            exchangeState.complete(error.localizedDescription)
+            return
+        }
+        if let data, !data.isEmpty {
+            exchangeState.responseWallNanos = wallClockNanos()
+            exchangeState.statusCode = parseHTTPStatusCode(data)
+            exchangeState.complete()
+            return
+        }
+        if isComplete {
+            exchangeState.complete("connection closed before response bytes")
+            return
+        }
+        receiveHTTPHeadResponse(connection: connection, exchangeState: exchangeState)
+    }
+}
+
+private func httpProbePhaseDurations(_ context: ProbeSpanContext) -> [ProbePhaseDuration] {
+    var durations = [
+        ProbePhaseDuration(phase: "total", durationNanos: context.durationNanos),
+    ]
+    if let readyWallNanos = context.exchange.readyWallNanos {
+        durations.append(
+            ProbePhaseDuration(
+                phase: "connect",
+                durationNanos: max(readyWallNanos - context.startWallNanos, 1000)
+            )
+        )
+        durations.append(
+            ProbePhaseDuration(
+                phase: "http_head",
+                durationNanos: max(context.endWallNanos - readyWallNanos, 1000)
+            )
+        )
+    }
+    return durations
 }
 
 private func probeChildSpans(_ context: ProbeSpanContext) -> [SpanEvent] {
@@ -260,11 +325,12 @@ private func probeChildSpans(_ context: ProbeSpanContext) -> [SpanEvent] {
     if let errorMessage = context.exchange.errorMessage {
         commonTags["error"] = clipped(errorMessage, limit: 240)
     }
+    let httpHeadStart = context.exchange.readyWallNanos ?? context.startWallNanos
     childSpans.append(
         SpanEvent(
             name: "probe.http.head",
-            startWallNanos: context.startWallNanos,
-            durationNanos: context.durationNanos,
+            startWallNanos: httpHeadStart,
+            durationNanos: max(context.endWallNanos - httpHeadStart, 1000),
             tags: commonTags,
             statusOK: context.ok
         )
