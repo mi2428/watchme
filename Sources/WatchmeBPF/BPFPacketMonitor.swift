@@ -74,6 +74,15 @@ public final class BPFPacketMonitor {
         }
     }
 
+    public func stats() -> BPFStats? {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard fd >= 0 else {
+            return nil
+        }
+        return readBPFStats(fd: fd)
+    }
+
     private func isRunning() -> Bool {
         stateLock.lock()
         defer { stateLock.unlock() }

@@ -40,4 +40,19 @@ final class BPFUtilitiesTests: XCTestCase {
             )
         )
     }
+
+    func testWiFiBPFFilterMatchesExpectedControlTrafficProgramShape() {
+        let instructions = watchmeWiFiBPFFilterInstructions()
+
+        XCTAssertEqual(watchmeWiFiBPFFilterName, "wifi_control_active_probe_v1")
+        XCTAssertEqual(instructions.count, 46)
+        XCTAssertEqual(instructions.first, BPFInstruction(code: 40, jt: 0, jf: 0, k: 12))
+        XCTAssertTrue(instructions.contains(BPFInstruction(code: 21, jt: 42, jf: 0, k: 2054)))
+        XCTAssertTrue(instructions.contains(BPFInstruction(code: 21, jt: 39, jf: 0, k: 1)))
+        XCTAssertTrue(instructions.contains(BPFInstruction(code: 21, jt: 15, jf: 0, k: 58)))
+        XCTAssertEqual(Array(instructions.suffix(2)), [
+            BPFInstruction(code: 6, jt: 0, jf: 0, k: 524_288),
+            BPFInstruction(code: 6, jt: 0, jf: 0, k: 0),
+        ])
+    }
 }

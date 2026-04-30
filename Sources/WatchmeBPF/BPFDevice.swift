@@ -5,8 +5,10 @@ import Foundation
 // numbers are the macOS values from <net/bpf.h>. Keeping them together makes it
 // obvious which boundary this module owns when new BPF features are added.
 let bpfIOCSetInterface: UInt = 2_149_597_804
+let bpfIOCSetFilter: UInt = 2_148_549_223
 let bpfIOCImmediate: UInt = 2_147_762_800
 let bpfIOCGetBufferLength: UInt = 1_074_020_966
+let bpfIOCGetStats: UInt = 1_074_283_119
 let bpfIOCSeeSent: UInt = 2_147_762_807
 let bpfIOCHeaderComplete: UInt = 2_147_762_805
 let bpfIOCGetDLT: UInt = 1_074_020_970
@@ -20,6 +22,35 @@ struct BPFOpenResult {
     let fd: Int32?
     let path: String?
     let error: String?
+}
+
+public struct BPFStats: Equatable {
+    public let packetsReceived: UInt64
+    public let packetsDropped: UInt64
+
+    public init(packetsReceived: UInt64, packetsDropped: UInt64) {
+        self.packetsReceived = packetsReceived
+        self.packetsDropped = packetsDropped
+    }
+}
+
+public let watchmeWiFiBPFFilterName = "wifi_control_active_probe_v1"
+
+struct BPFInstruction: Equatable {
+    var code: UInt16
+    var jt: UInt8
+    var jf: UInt8
+    var k: UInt32
+}
+
+struct BPFProgram {
+    var bfLen: UInt32
+    var bfInsns: UnsafeMutablePointer<BPFInstruction>?
+}
+
+struct RawBPFStats {
+    var packetsReceived: UInt32 = 0
+    var packetsDropped: UInt32 = 0
 }
 
 func openBPFDevice() -> BPFOpenResult {
@@ -60,7 +91,6 @@ func configureBPF(fd: Int32, interfaceName: String, tags: inout [String: String]
     _ = ioctl(fd, bpfIOCImmediate, &one)
     _ = ioctl(fd, bpfIOCSeeSent, &one)
     _ = ioctl(fd, bpfIOCHeaderComplete, &one)
-    _ = ioctl(fd, bpfIOCFlush, &zero)
 
     var bufferLength: UInt32 = 0
     if ioctl(fd, bpfIOCGetBufferLength, &bufferLength) == 0, bufferLength > 0 {
@@ -77,7 +107,94 @@ func configureBPF(fd: Int32, interfaceName: String, tags: inout [String: String]
             return false
         }
     }
+    guard installBPFFilter(fd: fd, tags: &tags) else {
+        return false
+    }
+    _ = ioctl(fd, bpfIOCFlush, &zero)
     return true
+}
+
+func installBPFFilter(fd: Int32, tags: inout [String: String]) -> Bool {
+    var instructions = watchmeWiFiBPFFilterInstructions()
+    return instructions.withUnsafeMutableBufferPointer { buffer in
+        var program = BPFProgram(
+            bfLen: UInt32(buffer.count),
+            bfInsns: buffer.baseAddress
+        )
+        guard ioctl(fd, bpfIOCSetFilter, &program) == 0 else {
+            tags["bpf.error"] = "BIOCSETF \(watchmeWiFiBPFFilterName) failed: \(posixErrorString())"
+            return false
+        }
+        tags["bpf.filter"] = watchmeWiFiBPFFilterName
+        tags["bpf.filter_instruction_count"] = "\(buffer.count)"
+        return true
+    }
+}
+
+func readBPFStats(fd: Int32) -> BPFStats? {
+    var stats = RawBPFStats()
+    guard ioctl(fd, bpfIOCGetStats, &stats) == 0 else {
+        return nil
+    }
+    return BPFStats(
+        packetsReceived: UInt64(stats.packetsReceived),
+        packetsDropped: UInt64(stats.packetsDropped)
+    )
+}
+
+func watchmeWiFiBPFFilterInstructions() -> [BPFInstruction] {
+    // Generated for DLT_EN10MB from:
+    // arp or (ip and (icmp or (udp and (port 53 or port 67 or port 68))
+    // or (tcp and (port 53 or port 80)))) or
+    // (ip6 and (icmp6 or (udp and port 53) or (tcp and (port 53 or port 80))))
+    [
+        BPFInstruction(code: 40, jt: 0, jf: 0, k: 12),
+        BPFInstruction(code: 21, jt: 42, jf: 0, k: 2054),
+        BPFInstruction(code: 21, jt: 0, jf: 23, k: 2048),
+        BPFInstruction(code: 48, jt: 0, jf: 0, k: 23),
+        BPFInstruction(code: 21, jt: 39, jf: 0, k: 1),
+        BPFInstruction(code: 21, jt: 0, jf: 11, k: 17),
+        BPFInstruction(code: 40, jt: 0, jf: 0, k: 20),
+        BPFInstruction(code: 69, jt: 37, jf: 0, k: 8191),
+        BPFInstruction(code: 177, jt: 0, jf: 0, k: 14),
+        BPFInstruction(code: 72, jt: 0, jf: 0, k: 14),
+        BPFInstruction(code: 21, jt: 33, jf: 0, k: 53),
+        BPFInstruction(code: 21, jt: 32, jf: 0, k: 67),
+        BPFInstruction(code: 21, jt: 31, jf: 0, k: 68),
+        BPFInstruction(code: 72, jt: 0, jf: 0, k: 16),
+        BPFInstruction(code: 21, jt: 29, jf: 0, k: 53),
+        BPFInstruction(code: 21, jt: 28, jf: 0, k: 67),
+        BPFInstruction(code: 21, jt: 27, jf: 28, k: 68),
+        BPFInstruction(code: 21, jt: 0, jf: 27, k: 6),
+        BPFInstruction(code: 40, jt: 0, jf: 0, k: 20),
+        BPFInstruction(code: 69, jt: 25, jf: 0, k: 8191),
+        BPFInstruction(code: 177, jt: 0, jf: 0, k: 14),
+        BPFInstruction(code: 72, jt: 0, jf: 0, k: 14),
+        BPFInstruction(code: 21, jt: 21, jf: 0, k: 53),
+        BPFInstruction(code: 21, jt: 20, jf: 0, k: 80),
+        BPFInstruction(code: 72, jt: 0, jf: 0, k: 16),
+        BPFInstruction(code: 21, jt: 18, jf: 17, k: 53),
+        BPFInstruction(code: 21, jt: 0, jf: 18, k: 34525),
+        BPFInstruction(code: 48, jt: 0, jf: 0, k: 20),
+        BPFInstruction(code: 21, jt: 15, jf: 0, k: 58),
+        BPFInstruction(code: 21, jt: 0, jf: 2, k: 44),
+        BPFInstruction(code: 48, jt: 0, jf: 0, k: 54),
+        BPFInstruction(code: 21, jt: 12, jf: 13, k: 58),
+        BPFInstruction(code: 21, jt: 0, jf: 4, k: 17),
+        BPFInstruction(code: 40, jt: 0, jf: 0, k: 54),
+        BPFInstruction(code: 21, jt: 9, jf: 0, k: 53),
+        BPFInstruction(code: 40, jt: 0, jf: 0, k: 56),
+        BPFInstruction(code: 21, jt: 7, jf: 8, k: 53),
+        BPFInstruction(code: 21, jt: 0, jf: 7, k: 6),
+        BPFInstruction(code: 40, jt: 0, jf: 0, k: 54),
+        BPFInstruction(code: 21, jt: 4, jf: 0, k: 53),
+        BPFInstruction(code: 21, jt: 3, jf: 0, k: 80),
+        BPFInstruction(code: 40, jt: 0, jf: 0, k: 56),
+        BPFInstruction(code: 21, jt: 1, jf: 0, k: 53),
+        BPFInstruction(code: 21, jt: 0, jf: 1, k: 80),
+        BPFInstruction(code: 6, jt: 0, jf: 0, k: 524_288),
+        BPFInstruction(code: 6, jt: 0, jf: 0, k: 0),
+    ]
 }
 
 func setNonBlocking(_ fd: Int32) {
