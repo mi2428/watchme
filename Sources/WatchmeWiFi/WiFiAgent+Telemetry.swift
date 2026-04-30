@@ -72,7 +72,11 @@ extension WiFiAgent {
         }
         bpfMonitor = monitor
         bpfInterface = interfaceName
-        logEvent(.info, "bpf_monitor_started", fields: ["interface": interfaceName, "profiles": "dhcp,icmpv6_control"])
+        logEvent(
+            .info,
+            "bpf_monitor_started",
+            fields: ["interface": interfaceName, "profiles": "dhcp,icmpv6_control,active_dns,active_tcp"]
+        )
     }
 
     func logIdentityStatus(_ snapshot: WiFiSnapshot) {
@@ -318,7 +322,8 @@ extension WiFiAgent {
                     target: target,
                     resolver: resolver,
                     timeout: timeout,
-                    interfaceName: snapshot.interfaceName
+                    interfaceName: snapshot.interfaceName,
+                    packetStore: packetStore
                 )
                 metricState.recordDNSProbe(result)
                 recorder.recordSpan(
@@ -340,6 +345,7 @@ extension WiFiAgent {
                         "status": result.ok ? "ok" : "error",
                         "rcode": result.rcode.map(String.init) ?? "",
                         "answers": result.answerCount.map(String.init) ?? "",
+                        "timing_source": result.timingSource,
                         "error": result.error ?? "",
                     ]
                 )
@@ -359,7 +365,8 @@ extension WiFiAgent {
         let result = runGatewayTCPConnectProbe(
             gateway: gateway,
             timeout: min(config.probeHTTPTimeout, 2.0),
-            interfaceName: snapshot.interfaceName
+            interfaceName: snapshot.interfaceName,
+            packetStore: packetStore
         )
         metricState.recordGatewayProbe(result)
         recorder.recordSpan(
@@ -380,6 +387,7 @@ extension WiFiAgent {
                 "outcome": result.outcome,
                 "reachable": result.reachable ? "true" : "false",
                 "connect_success": result.connectSuccess ? "true" : "false",
+                "timing_source": result.timingSource,
                 "error": result.error ?? "",
             ]
         )
@@ -391,6 +399,8 @@ extension WiFiAgent {
             "active_probe.interface": snapshot.interfaceName ?? "",
             "active_probe.required_interface": snapshot.interfaceName ?? "",
             "probe.target": result.target,
+            "probe.timing_source": result.timingSource,
+            "probe.timestamp_source": result.timestampSource,
             "dns.resolver": result.resolver,
             "dns.transport": result.transport,
             "dns.answer_count": result.answerCount.map(String.init) ?? "",
@@ -399,6 +409,11 @@ extension WiFiAgent {
         ]
         if let rcode = result.rcode {
             tags["dns.rcode"] = "\(rcode)"
+        }
+        if result.timingSource == bpfPacketTimingSource {
+            tags["packet.event"] = "dns_query_to_response"
+            tags["packet.timestamp_source"] = bpfHeaderTimestampSource
+            tags["packet.timestamp_resolution"] = "microsecond"
         }
         if let error = result.error {
             tags["error"] = clipped(error, limit: 240)
@@ -411,6 +426,8 @@ extension WiFiAgent {
             "span.source": "network_framework_gateway_probe",
             "active_probe.interface": snapshot.interfaceName ?? "",
             "active_probe.required_interface": snapshot.interfaceName ?? "",
+            "probe.timing_source": result.timingSource,
+            "probe.timestamp_source": result.timestampSource,
             "network.wifi_gateway": result.gateway,
             "network.gateway_probe.port": "\(result.port)",
             "network.gateway_probe.outcome": result.outcome,
@@ -419,6 +436,11 @@ extension WiFiAgent {
             "wifi.essid": snapshot.ssid ?? "unknown",
             "wifi.bssid": snapshot.bssid ?? "unknown",
         ]
+        if result.timingSource == bpfPacketTimingSource {
+            tags["packet.event"] = "tcp_syn_to_response"
+            tags["packet.timestamp_source"] = bpfHeaderTimestampSource
+            tags["packet.timestamp_resolution"] = "microsecond"
+        }
         if let error = result.error {
             tags["error"] = clipped(error, limit: 240)
         }

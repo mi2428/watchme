@@ -13,6 +13,8 @@ struct ActiveDNSProbeResult {
     let startWallNanos: UInt64
     let finishedWallNanos: UInt64
     let durationNanos: UInt64
+    let timingSource: String
+    let timestampSource: String
 }
 
 private struct DNSExchangeResult {
@@ -22,7 +24,13 @@ private struct DNSExchangeResult {
     let completedWallNanos: UInt64
 }
 
-func runDNSAProbe(target: String, resolver: String, timeout: TimeInterval, interfaceName: String?) -> ActiveDNSProbeResult {
+func runDNSAProbe(
+    target: String,
+    resolver: String,
+    timeout: TimeInterval,
+    interfaceName: String?,
+    packetStore: PassivePacketStore? = nil
+) -> ActiveDNSProbeResult {
     let host = normalizedTargetURL(target).host ?? target
     let startWallNanos = wallClockNanos()
     guard let query = dnsAQueryPacket(host: host) else {
@@ -42,20 +50,41 @@ func runDNSAProbe(target: String, resolver: String, timeout: TimeInterval, inter
         )
     }
 
+    let activePacketRequest = ActiveDNSProbeRequest(
+        transactionID: query.id,
+        target: host,
+        resolver: resolver,
+        interfaceName: interfaceName,
+        startWallNanos: startWallNanos,
+        timeout: timeout
+    )
+    packetStore?.registerActiveDNSProbe(activePacketRequest)
+    defer {
+        packetStore?.unregisterActiveDNSProbe(activePacketRequest)
+    }
+
     let exchange = performDNSUDPExchange(query: query, resolver: resolver, selectedInterface: interface, timeout: timeout)
-    let durationNanos = max(exchange.completedWallNanos - startWallNanos, 1000)
-    let ok = exchange.rcode == 0 && (exchange.answerCount ?? 0) > 0
+    let packetExchange = packetStore?.dnsExchange(
+        for: activePacketRequest,
+        finishedWallNanos: exchange.completedWallNanos
+    )
+    let timing = packetExchange?.timing ?? .networkFramework(start: startWallNanos, finished: exchange.completedWallNanos)
+    let rcode = exchange.rcode ?? packetExchange?.response.rcode
+    let answerCount = exchange.answerCount ?? packetExchange?.response.answerCount
+    let ok = rcode == 0 && (answerCount ?? 0) > 0
     return ActiveDNSProbeResult(
         target: host,
         resolver: resolver,
         transport: "udp",
         ok: ok,
-        rcode: exchange.rcode,
-        answerCount: exchange.answerCount,
+        rcode: rcode,
+        answerCount: answerCount,
         error: exchange.error,
-        startWallNanos: startWallNanos,
-        finishedWallNanos: exchange.completedWallNanos,
-        durationNanos: durationNanos
+        startWallNanos: timing.startWallNanos,
+        finishedWallNanos: timing.finishedWallNanos,
+        durationNanos: timing.durationNanos,
+        timingSource: timing.timingSource,
+        timestampSource: timing.timestampSource
     )
 }
 
@@ -76,7 +105,9 @@ private func failedDNSProbe(
         error: error,
         startWallNanos: startWallNanos,
         finishedWallNanos: finishedWallNanos,
-        durationNanos: max(finishedWallNanos - startWallNanos, 1000)
+        durationNanos: max(finishedWallNanos - startWallNanos, 1000),
+        timingSource: networkFrameworkTimingSource,
+        timestampSource: wallClockTimestampSource
     )
 }
 

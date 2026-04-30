@@ -28,6 +28,12 @@ final class WiFiAgent {
 
     func runOnce() -> Int32 {
         let snapshot = WiFiSnapshot.capture()
+        startBPFIfNeeded(interfaceName: snapshot.interfaceName)
+        defer {
+            bpfMonitor?.stop()
+            bpfMonitor = nil
+            bpfInterface = nil
+        }
         logIdentityStatus(snapshot)
         _ = pushMetrics(snapshot: snapshot)
         emitTrace(reason: "wifi.active", eventTags: ["agent.mode": "once"], consumePacketSpans: false, includeActive: true)

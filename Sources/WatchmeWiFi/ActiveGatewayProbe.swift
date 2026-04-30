@@ -12,13 +12,24 @@ struct ActiveGatewayProbeResult {
     let startWallNanos: UInt64
     let finishedWallNanos: UInt64
     let durationNanos: UInt64
+    let timingSource: String
+    let timestampSource: String
+}
+
+private struct GatewayTCPExchangeResult {
+    let reachable: Bool
+    let connectSuccess: Bool
+    let outcome: String
+    let error: String?
+    let completedWallNanos: UInt64
 }
 
 func runGatewayTCPConnectProbe(
     gateway: String,
     port: UInt16 = 53,
     timeout: TimeInterval,
-    interfaceName: String?
+    interfaceName: String?,
+    packetStore: PassivePacketStore? = nil
 ) -> ActiveGatewayProbeResult {
     let startWallNanos = wallClockNanos()
     guard let interface = requiredProbeInterface(named: interfaceName, timeout: timeout) else {
@@ -31,8 +42,47 @@ func runGatewayTCPConnectProbe(
         )
     }
 
+    let activePacketRequest = ActiveTCPProbeRequest(
+        remoteIP: gateway,
+        port: port,
+        interfaceName: interfaceName,
+        startWallNanos: startWallNanos,
+        timeout: timeout
+    )
+    packetStore?.registerActiveTCPProbe(activePacketRequest)
+    defer {
+        packetStore?.unregisterActiveTCPProbe(activePacketRequest)
+    }
+
+    let exchange = performGatewayTCPConnectExchange(gateway: gateway, port: port, selectedInterface: interface, timeout: timeout)
+    let packetExchange = packetStore?.tcpConnectExchange(
+        for: activePacketRequest,
+        finishedWallNanos: exchange.completedWallNanos
+    )
+    let timing = packetExchange?.timing ?? .networkFramework(start: startWallNanos, finished: exchange.completedWallNanos)
+    return ActiveGatewayProbeResult(
+        gateway: gateway,
+        port: port,
+        reachable: exchange.reachable,
+        connectSuccess: exchange.connectSuccess,
+        outcome: exchange.outcome,
+        error: exchange.error,
+        startWallNanos: timing.startWallNanos,
+        finishedWallNanos: timing.finishedWallNanos,
+        durationNanos: timing.durationNanos,
+        timingSource: timing.timingSource,
+        timestampSource: timing.timestampSource
+    )
+}
+
+private func performGatewayTCPConnectExchange(
+    gateway: String,
+    port: UInt16,
+    selectedInterface: NWInterface,
+    timeout: TimeInterval
+) -> GatewayTCPExchangeResult {
     let parameters = NWParameters.tcp
-    parameters.requiredInterface = interface
+    parameters.requiredInterface = selectedInterface
     let connection = NWConnection(
         host: NWEndpoint.Host(gateway),
         port: NWEndpoint.Port(rawValue: port) ?? NWEndpoint.Port(rawValue: 53)!,
@@ -89,16 +139,12 @@ func runGatewayTCPConnectProbe(
     connection.cancel()
 
     let finishedWallNanos = completedWallNanos ?? wallClockNanos()
-    return ActiveGatewayProbeResult(
-        gateway: gateway,
-        port: port,
+    return GatewayTCPExchangeResult(
         reachable: reachable,
         connectSuccess: connectSuccess,
         outcome: outcome,
         error: errorMessage,
-        startWallNanos: startWallNanos,
-        finishedWallNanos: finishedWallNanos,
-        durationNanos: max(finishedWallNanos - startWallNanos, 1000)
+        completedWallNanos: finishedWallNanos
     )
 }
 
@@ -119,7 +165,9 @@ private func failedGatewayProbe(
         error: error,
         startWallNanos: startWallNanos,
         finishedWallNanos: finishedWallNanos,
-        durationNanos: max(finishedWallNanos - startWallNanos, 1000)
+        durationNanos: max(finishedWallNanos - startWallNanos, 1000),
+        timingSource: networkFrameworkTimingSource,
+        timestampSource: wallClockTimestampSource
     )
 }
 

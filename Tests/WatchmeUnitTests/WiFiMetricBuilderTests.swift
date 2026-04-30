@@ -97,51 +97,7 @@ final class WiFiMetricBuilderTests: XCTestCase {
     func testActiveProbeMetricsExposeHTTPDNSAndGatewayResults() throws {
         let snapshot = makeSnapshot()
         var state = WiFiMetricState()
-        try state.recordHTTPProbe(
-            ActiveProbeResult(
-                target: "https://www.apple.com/",
-                url: XCTUnwrap(URL(string: "https://www.apple.com/")),
-                ok: true,
-                statusCode: 200,
-                error: nil,
-                startWallNanos: 1_000_000_000,
-                finishedWallNanos: 1_300_000_000,
-                durationNanos: 300_000_000,
-                phaseDurations: [
-                    ProbePhaseDuration(phase: "connect", durationNanos: 120_000_000),
-                    ProbePhaseDuration(phase: "http_head", durationNanos: 180_000_000),
-                    ProbePhaseDuration(phase: "total", durationNanos: 300_000_000),
-                ],
-                childSpans: []
-            )
-        )
-        state.recordDNSProbe(
-            ActiveDNSProbeResult(
-                target: "www.apple.com",
-                resolver: "192.168.23.254",
-                transport: "udp",
-                ok: true,
-                rcode: 0,
-                answerCount: 2,
-                error: nil,
-                startWallNanos: 2_000_000_000,
-                finishedWallNanos: 2_050_000_000,
-                durationNanos: 50_000_000
-            )
-        )
-        state.recordGatewayProbe(
-            ActiveGatewayProbeResult(
-                gateway: "192.168.23.254",
-                port: 53,
-                reachable: true,
-                connectSuccess: false,
-                outcome: "refused",
-                error: "connection refused",
-                startWallNanos: 3_000_000_000,
-                finishedWallNanos: 3_010_000_000,
-                durationNanos: 10_000_000
-            )
-        )
+        try recordSampleActiveProbes(in: &state)
 
         let metrics = WiFiMetricBuilder.metrics(snapshot: snapshot, state: state)
 
@@ -153,12 +109,20 @@ final class WiFiMetricBuilderTests: XCTestCase {
             0.3,
             accuracy: 0.000_001
         )
-        XCTAssertEqual(metric(named: "watchme_wifi_probe_dns_success", labels: ["target": "www.apple.com"], in: metrics)?.value, 1)
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_dns_success",
+                labels: ["target": "www.apple.com", "timing_source": "bpf_packet"],
+                in: metrics
+            )?
+                .value,
+            1
+        )
         XCTAssertEqual(metric(named: "watchme_wifi_probe_dns_rcode", labels: ["resolver": "192.168.23.254"], in: metrics)?.value, 0)
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_gateway_tcp_reachable",
-                labels: ["gateway": "192.168.23.254", "outcome": "refused"],
+                labels: ["gateway": "192.168.23.254", "outcome": "refused", "timing_source": "network_framework_callback"],
                 in: metrics
             )?.value,
             1
@@ -168,6 +132,58 @@ final class WiFiMetricBuilderTests: XCTestCase {
             0
         )
     }
+}
+
+private func recordSampleActiveProbes(in state: inout WiFiMetricState) throws {
+    try state.recordHTTPProbe(
+        ActiveProbeResult(
+            target: "https://www.apple.com/",
+            url: XCTUnwrap(URL(string: "https://www.apple.com/")),
+            ok: true,
+            statusCode: 200,
+            error: nil,
+            startWallNanos: 1_000_000_000,
+            finishedWallNanos: 1_300_000_000,
+            durationNanos: 300_000_000,
+            phaseDurations: [
+                ProbePhaseDuration(phase: "connect", durationNanos: 120_000_000),
+                ProbePhaseDuration(phase: "http_head", durationNanos: 180_000_000),
+                ProbePhaseDuration(phase: "total", durationNanos: 300_000_000),
+            ],
+            childSpans: []
+        )
+    )
+    state.recordDNSProbe(
+        ActiveDNSProbeResult(
+            target: "www.apple.com",
+            resolver: "192.168.23.254",
+            transport: "udp",
+            ok: true,
+            rcode: 0,
+            answerCount: 2,
+            error: nil,
+            startWallNanos: 2_000_000_000,
+            finishedWallNanos: 2_050_000_000,
+            durationNanos: 50_000_000,
+            timingSource: bpfPacketTimingSource,
+            timestampSource: bpfHeaderTimestampSource
+        )
+    )
+    state.recordGatewayProbe(
+        ActiveGatewayProbeResult(
+            gateway: "192.168.23.254",
+            port: 53,
+            reachable: true,
+            connectSuccess: false,
+            outcome: "refused",
+            error: "connection refused",
+            startWallNanos: 3_000_000_000,
+            finishedWallNanos: 3_010_000_000,
+            durationNanos: 10_000_000,
+            timingSource: networkFrameworkTimingSource,
+            timestampSource: wallClockTimestampSource
+        )
+    )
 }
 
 private func makeSnapshot(

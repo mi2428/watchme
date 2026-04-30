@@ -306,6 +306,7 @@ struct WiFiMetricState {
             probeLabels["target"] = result.target
             probeLabels["resolver"] = result.resolver
             probeLabels["transport"] = result.transport
+            probeLabels["timing_source"] = result.timingSource
             var metrics = [
                 PrometheusMetric(
                     name: "watchme_wifi_probe_dns_success",
@@ -350,6 +351,7 @@ struct WiFiMetricState {
             probeLabels["gateway"] = result.gateway
             probeLabels["port"] = "\(result.port)"
             probeLabels["outcome"] = result.outcome
+            probeLabels["timing_source"] = result.timingSource
             return [
                 PrometheusMetric(
                     name: "watchme_wifi_probe_gateway_tcp_reachable",
