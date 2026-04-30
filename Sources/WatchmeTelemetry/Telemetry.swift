@@ -322,8 +322,8 @@ final class BlockingHTTPClient: HTTPClient, OTLPHTTPTransport {
     }
 
     func send(request: URLRequest, completion: @escaping (Result<HTTPURLResponse, Error>) -> Void) {
-        // The exporter API is callback-based, but watchme emits traces from a
-        // serial agent path and needs completion before logging export state.
+        // The exporter API is callback-based, but WatchMe Agent emits traces
+        // from a serial collector path and needs completion before logging export state.
         // Blocking here keeps lifecycle semantics simple without shelling out.
         let flushResult = spool.flushPending { [weak self] pendingRequest in
             guard let self else {

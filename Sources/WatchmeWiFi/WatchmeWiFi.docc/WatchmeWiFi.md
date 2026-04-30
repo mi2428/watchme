@@ -1,6 +1,6 @@
 # ``WatchmeWiFi``
 
-WatchMe Wi-Fi observability support for the `watchme agent --collector.wifi` command.
+WatchMe Agent Wi-Fi observability support for the `watchme agent --collector.wifi` command.
 
 ## Overview
 

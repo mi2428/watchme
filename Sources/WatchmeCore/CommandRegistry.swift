@@ -41,7 +41,7 @@ public struct CommandRegistry {
                 .joined(separator: "\n")
         print(
             """
-            WatchMe - macOS observability agent
+            \(WatchmeCLI.displayName) - macOS observability
 
             Usage:
               watchme <command> [options]

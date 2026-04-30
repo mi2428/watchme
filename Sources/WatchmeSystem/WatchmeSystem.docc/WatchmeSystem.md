@@ -1,6 +1,6 @@
 # ``WatchmeSystem``
 
-System collector support for the `watchme agent --collector.system` command.
+WatchMe Agent system collector support for the `watchme agent --collector.system` command.
 
 ## Overview
 

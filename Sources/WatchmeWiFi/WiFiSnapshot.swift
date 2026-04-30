@@ -134,7 +134,7 @@ struct WiFiSnapshot {
     static func capture() -> WiFiSnapshot {
         // Keep this snapshot limited to OS-reported state. Derived quality
         // scores belong in downstream rules where operators can own
-        // the scoring policy instead of baking one into the agent.
+        // the scoring policy instead of baking one into WatchMe Agent.
         let interface = CWWiFiClient.shared().interface()
         let interfaceName = interface?.interfaceName ?? nativeWiFiInterfaceName()
         let state =

@@ -4,7 +4,7 @@
     @PageKind(article)
 }
 
-This document describes the current `watchme agent --collector.wifi` implementation.
+This document describes the current Wi-Fi collector implementation used by `watchme agent --collector.wifi`.
 It is meant to be checked against the source when instrumentation changes.
 
 ### Table of contents
@@ -35,7 +35,7 @@ It is meant to be checked against the source when instrumentation changes.
 
 ## Scope
 
-`watchme agent --collector.wifi` turns macOS Wi-Fi state into two OpenTelemetry signal families:
+With `--collector.wifi`, WatchMe Agent turns macOS Wi-Fi state into two OpenTelemetry signal families:
 
 - Metrics exported through OTLP/HTTP.
 - OpenTelemetry traces exported through OTLP/HTTP.
@@ -46,7 +46,7 @@ Collection is implemented with macOS APIs and file descriptors inside the proces
 ## Signal design policy
 
 WatchMe Wi-Fi emits primary observations rather than semantic or derived judgments.
-The agent should report values that come directly from macOS APIs, packet timestamps, or active probes that are explicitly bound to the Wi-Fi interface.
+WatchMe Agent should report values that come directly from macOS APIs, packet timestamps, or active probes that are explicitly bound to the Wi-Fi interface.
 It should avoid inventing quality scores or event categories whose meaning depends on a local policy.
 
 This is why WatchMe does not emit metrics such as:
@@ -62,9 +62,9 @@ This is why WatchMe does not emit metrics such as:
 SNR, signal quality, and connection score are derived quality models.
 They are useful dashboard concepts, but the thresholds and weights depend on RF environment, client hardware, AP generation, application workload, and operator preference.
 Roam, join, disconnect, and channel-change counters are semantic summaries over lower-level events.
-Those summaries are also useful, but encoding them in the agent would make WatchMe's output less neutral and harder to reinterpret later.
+Those summaries are also useful, but encoding them in WatchMe Agent would make WatchMe's output less neutral and harder to reinterpret later.
 
-The agent instead exposes the primary signals needed to build those views downstream:
+WatchMe Agent instead exposes the primary signals needed to build those views downstream:
 
 - `watchme_wifi_corewlan_event_total` for raw CoreWLAN callback counts such as `power_did_change`, `ssid_did_change`, `bssid_did_change`, and `link_did_change`.
 - `watchme_wifi_snapshot_change_total` for observed snapshot field changes such as `associated`, `bssid`, `ssid`, `channel`, and `power_on`.
@@ -75,7 +75,7 @@ The agent instead exposes the primary signals needed to build those views downst
 
 Grafana dashboards, recording rules, or alert rules may define site-specific semantic views from these primary signals.
 For example, an operator can count BSSID changes from `watchme_wifi_snapshot_change_total{field="bssid"}` or define an SNR recording rule from RSSI and noise when that is appropriate for the environment.
-Those derived rules should live near the operational policy that gives them meaning, not inside the agent.
+Those derived rules should live near the operational policy that gives them meaning, not inside WatchMe Agent.
 
 ## Implementation rationale
 
@@ -96,13 +96,13 @@ BPF timestamping is used only when a probe has registered a narrow packet identi
 The monitor then keeps just the packets needed to pair a DNS query/response, ICMP request/reply, HTTP request/first-response, or gateway ICMP request/reply.
 If correlation fails, WatchMe still emits the same span and metric with callback or deadline timing and marks the `timing_source` accordingly.
 
-HTTPS, TLS handshake timing, certificate validation, browser page fetch timing, and synthetic quality scores are deliberately out of scope for `watchme agent --collector.wifi`.
+HTTPS, TLS handshake timing, certificate validation, browser page fetch timing, and synthetic quality scores are deliberately out of scope for the Wi-Fi collector used by `watchme agent --collector.wifi`.
 Those features need either encrypted-stream instrumentation, browser/application-level probes, or site-specific scoring policy.
 They should be added as a separate monitor or downstream dashboard/rule logic unless they can be measured with the same Wi-Fi-bound precision as the current probes.
 
 ## Runtime entry points
 
-- **`watchme agent --collector.wifi`:** Long-running agent that starts metrics, active trace, CoreWLAN/SystemConfiguration event monitors, and BPF packet monitor.
+- **`watchme agent --collector.wifi`:** Long-running WatchMe Agent execution that starts metrics, active trace, CoreWLAN/SystemConfiguration event monitors, and BPF packet monitor.
 - **`watchme agent once --collector.wifi`:** One-shot metrics export and one active trace.
 - **`watchme agent authorize-location`:** Requests Core Location authorization so CoreWLAN can return SSID/BSSID.
 - **`scripts/watchme-app agent ...`:** Runs the `.app` bundle through LaunchServices so macOS TCC applies the app's Location grant; use this path when SSID/BSSID are required.
@@ -153,7 +153,7 @@ Delivery behavior:
 - Retryable failures, such as connection failures, timeouts, HTTP 408, HTTP 429, or HTTP 5xx, leave the payload on disk.
 - Non-retryable HTTP status responses, such as most HTTP 4xx responses, drop that payload so a bad request does not permanently block newer signals.
 - In long-running mode, recovery is attempted on the next metrics interval, active trace, or event-triggered export.
-- In one-shot mode, pending payloads can be flushed by a later `watchme agent once --collector.wifi`, `watchme agent once --collector.system`, or long-running agent execution that can reach the collector.
+- In one-shot mode, pending payloads can be flushed by a later `watchme agent once --collector.wifi`, `watchme agent once --collector.system`, or long-running WatchMe Agent execution that can reach the collector.
 
 ## Collection points
 
@@ -233,8 +233,8 @@ WatchMe keeps a per-series local total by adding source deltas; zero-valued firs
 Metrics are exported:
 
 - once immediately in `watchme agent once --collector.wifi`, then again at trace start;
-- at agent startup, then again at startup trace start;
-- every `--wifi.metrics.interval` seconds in agent mode;
+- at WatchMe Agent startup, then again when the startup trace begins;
+- every `--wifi.metrics.interval` seconds in long-running WatchMe Agent mode;
 - after CoreWLAN or SystemConfiguration events before event traces;
 - at every trace start;
 - after active validation, so the latest internet DNS, ICMP, HTTP, and gateway probe samples are available to the OTel collector or backend.
@@ -312,7 +312,7 @@ Common root tags include every tag listed in the snapshot model section, plus:
 | Trigger | Root reason | Active probe | Packet spans | Notes |
 | --- | --- | --- | --- | --- |
 | `watchme agent once --collector.wifi` | `wifi.active` | Yes | Recent packet spans are included without consuming them. | `agent.mode=once`. |
-| Agent startup | `wifi.active` | Yes | Recent packet spans are consumed. | `agent.mode=startup`. |
+| WatchMe Agent startup | `wifi.active` | Yes | Recent packet spans are consumed. | `agent.mode=startup`. |
 | Active timer | `wifi.active` | Yes | Recent packet spans are consumed. | Runs every `--wifi.traces.interval` seconds. |
 | CoreWLAN join | `wifi.join` | Yes | Recent packet spans are consumed, plus delayed packet-window trace. | Forced through cooldown. |
 | CoreWLAN roam | `wifi.roam` | Yes | Recent packet spans are consumed, plus delayed packet-window trace. | Forced through cooldown. |
@@ -517,7 +517,7 @@ Before opening the connection, WatchMe registers the target address, port, host,
 The BPF monitor stores only TCP payload packets that match a registered active HTTP probe.
 When the outbound HEAD packet and inbound first response payload are observed, `probe.internet.http.head` and the HTTP duration metric use BPF packet timestamps.
 If packet correlation fails or BPF is disabled, the same span and metric fall back to Network.framework callback wall-clock timing.
-HTTPS, TLS handshake timing, certificate validation, and encrypted HTTP response timing are intentionally out of scope for `watchme agent --collector.wifi`.
+HTTPS, TLS handshake timing, certificate validation, and encrypted HTTP response timing are intentionally out of scope for the Wi-Fi collector used by `watchme agent --collector.wifi`.
 
 Gateway active probes use the Wi-Fi service's IPv4 router, not `State:/Network/Global/IPv4`.
 The probe sends a short burst of ICMP echo requests to the gateway over the Wi-Fi interface.

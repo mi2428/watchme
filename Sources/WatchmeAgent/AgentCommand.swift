@@ -177,7 +177,7 @@ private struct AgentConfigParser {
             } else if let collectorName = collectorName(forNamespacedOption: argument) {
                 try appendCollectorOption(collectorName: collectorName)
             } else {
-                throw WatchmeError.invalidArgument("Unknown agent argument: \(argument)")
+                throw WatchmeError.invalidArgument("Unknown `watchme agent` argument: \(argument)")
             }
         }
     }
@@ -284,7 +284,7 @@ public func agentUsageText() -> String {
     let wifiOptions = formatUsageRows(WiFiCollectorFactory.usageRows(), leftColumnWidth: 38)
 
     return """
-    WatchMe - macOS observability agent
+    \(WatchmeCLI.displayName) - macOS observability
 
     Usage:
       \(WatchmeCLI.Command.executable) \(AgentCommand.name) [options]
@@ -305,8 +305,8 @@ public func agentUsageText() -> String {
     \(wifiOptions)
 
     Defaults:
-      \(WatchmeCLI.Command.executable) \(AgentCommand.name) enables only \(WatchmeCLI.Collector
-        .option(SystemCollectorFactory.name)) unless any \(WatchmeCLI.Collector.wildcard) option is provided.
-      Enable Wi-Fi explicitly with \(WatchmeCLI.Collector.option(WiFiCollectorFactory.name)).
+      `\(WatchmeCLI.Command.executable) \(AgentCommand.name)` starts \(WatchmeCLI.displayName) with only `\(WatchmeCLI.Collector
+        .option(SystemCollectorFactory.name))` unless any `\(WatchmeCLI.Collector.wildcard)` option is provided.
+      Enable Wi-Fi explicitly with `\(WatchmeCLI.Collector.option(WiFiCollectorFactory.name))`.
     """
 }

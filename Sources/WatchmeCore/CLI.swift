@@ -31,6 +31,8 @@ public struct CLIOption: Equatable {
 }
 
 public enum WatchmeCLI {
+    public static let displayName = "WatchMe Agent"
+
     public enum Command {
         public static let executable = "watchme"
         public static let agent = "agent"

@@ -4,12 +4,12 @@
     @PageKind(article)
 }
 
-This document describes the current `watchme agent --collector.system` implementation.
+This document describes the current system collector implementation used by `watchme agent --collector.system`.
 It is meant to be checked against the source when instrumentation changes.
 
 ## Scope
 
-`watchme agent --collector.system` turns macOS host CPU, memory, and disk counters into OpenTelemetry metrics exported through OTLP/HTTP.
+With `--collector.system`, WatchMe Agent turns macOS host CPU, memory, and disk counters into OpenTelemetry metrics exported through OTLP/HTTP.
 
 The system module emits primary observations rather than quality scores or local interpretation.
 It does not calculate CPU utilization percentages, memory pressure levels, disk saturation, energy impact, or health scores.
@@ -17,9 +17,9 @@ Those views can be built downstream from the exported counters and gauges.
 
 ## Runtime entry points
 
-- **`watchme agent --collector.system`:** Long-running agent that exports CPU, memory, and disk metrics.
+- **`watchme agent --collector.system`:** Long-running WatchMe Agent execution that exports CPU, memory, and disk metrics.
 - **`watchme agent once --collector.system`:** One-shot metrics export.
-- **`scripts/watchme-app agent ...`:** Runs the same agent command through the app-bundle wrapper for parity with app-bundled workflows. Location authorization is not required for system metrics.
+- **`scripts/watchme-app agent ...`:** Runs the same `watchme agent` command through the app-bundle wrapper for parity with app-bundled workflows. Location authorization is not required for system metrics.
 
 ### CLI options
 
@@ -29,7 +29,7 @@ Those views can be built downstream from the exported counters and gauges.
 
 ## OTLP delivery and local spool
 
-`watchme agent --collector.system` uses the same OTLP/HTTP delivery path as `watchme agent --collector.wifi`.
+The system collector uses the same OTLP/HTTP delivery path as the Wi-Fi collector used by `watchme agent --collector.wifi`.
 When a retryable export fails because the collector or network is unavailable, WatchMe writes the exact OTLP HTTP payload to a local spool.
 The default spool directory is `~/.watchme/otlp-spool`; set `WATCHME_OTLP_SPOOL_DIR` to override it.
 
@@ -39,7 +39,7 @@ Delivery behavior:
 - A spooled payload is removed only after the collector returns a 2xx HTTP response.
 - Retryable failures, such as connection failures, timeouts, HTTP 408, HTTP 429, or HTTP 5xx, leave the payload on disk.
 - Non-retryable HTTP status responses, such as most HTTP 4xx responses, drop that payload so a bad request does not permanently block newer metrics.
-- Recovery is attempted on the next metrics interval in long-running mode, or by a later `watchme agent once --collector.system`, `watchme agent once --collector.wifi`, or long-running agent execution.
+- Recovery is attempted on the next metrics interval in long-running WatchMe Agent mode, or by a later `watchme agent once --collector.system`, `watchme agent once --collector.wifi`, or long-running WatchMe Agent execution.
 
 ## Collection points
 
@@ -59,8 +59,8 @@ WatchMe keeps a per-series local total by adding source deltas; if a source coun
 Metrics are exported:
 
 - once immediately in `watchme agent once --collector.system`;
-- at agent startup;
-- every `--system.metrics.interval` seconds in agent mode.
+- at WatchMe Agent startup;
+- every `--system.metrics.interval` seconds in long-running WatchMe Agent mode.
 
 | Metric | Labels | Source | Meaning |
 | --- | --- | --- | --- |

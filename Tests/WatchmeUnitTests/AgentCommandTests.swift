@@ -62,6 +62,7 @@ final class AgentCommandTests: XCTestCase {
     func testUsageShowsCollectorBasedCLI() {
         let usage = agentUsageText()
 
+        XCTAssertTrue(usage.contains(WatchmeCLI.displayName))
         XCTAssertTrue(usage.contains("\(WatchmeCLI.Command.executable) \(AgentCommand.name) [options]"))
         XCTAssertTrue(usage.contains("\(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.once) [options]"))
         XCTAssertTrue(usage
@@ -71,6 +72,7 @@ final class AgentCommandTests: XCTestCase {
         XCTAssertTrue(usage.contains(WatchmeCLI.Option.otlpURL.usage))
         XCTAssertTrue(usage.contains(SystemCLI.Option.metricsInterval.usage))
         XCTAssertTrue(usage.contains(WiFiCLI.Option.internetTarget.usage))
+        XCTAssertTrue(usage.contains("`\(WatchmeCLI.Command.executable) \(AgentCommand.name)` starts \(WatchmeCLI.displayName)"))
     }
 
     func testRejectsUnknownAndAmbiguousOptions() {

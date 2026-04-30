@@ -1,6 +1,6 @@
 # WatchMe
 
-macOS observability agent that exports OpenTelemetry metrics and traces.
+WatchMe Agent exports OpenTelemetry metrics and traces from macOS.
 
 ## Commands
 
@@ -21,7 +21,7 @@ $ scripts/watchme-app agent once --collector.wifi
 $ scripts/watchme-app agent once --collector.system
 ```
 
-`scripts/watchme-app` runs the `agent` command through the app bundle. The app bundle is required for Location-gated Wi-Fi identity labels; system metrics do not require Location authorization.
+`scripts/watchme-app` runs `watchme agent` through the app bundle. The app bundle is required for Location-gated Wi-Fi identity labels; system metrics do not require Location authorization.
 
 ## OTLP delivery
 
