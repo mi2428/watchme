@@ -24,6 +24,7 @@ It is meant to be checked against the source when instrumentation changes.
   - [Active validation spans](#active-validation-spans)
   - [Packet-window phase span](#packet-window-phase-span)
   - [DHCPv4 packet spans](#dhcpv4-packet-spans)
+  - [IPv4 ARP packet spans](#ipv4-arp-packet-spans)
   - [ICMPv6 packet spans](#icmpv6-packet-spans)
 - [Passive packet store behavior](#passive-packet-store-behavior)
 - [BPF details](#bpf-details)
@@ -68,7 +69,7 @@ The agent instead exposes the primary signals needed to build those views downst
 - `watchme_wifi_snapshot_change_total` for observed snapshot field changes such as `associated`, `bssid`, `ssid`, `channel`, and `power_on`.
 - `watchme_wifi_info` for categorical OS state such as `phy_mode`, `channel_band`, `channel_width`, `security`, and `country_code`.
 - Root trace names such as `wifi.join`, `wifi.roam`, `wifi.power.changed`, `wifi.link.changed`, and `wifi.rejoin.packet_window`.
-- BPF packet spans for DHCPv4, router solicitation/advertisement, and neighbor discovery timing.
+- BPF packet spans for DHCPv4, IPv4 ARP, router solicitation/advertisement, and neighbor discovery timing.
 - Active internet DNS, ICMP, plain HTTP, and gateway probe metrics and spans for Wi-Fi-bound reachability.
 
 Grafana dashboards, Prometheus recording rules, or alert rules may define site-specific semantic views from these primary signals.
@@ -131,7 +132,7 @@ The options below apply to `watchme wifi` and `watchme wifi once`.
 - **`--probe.internet.dns`:** Boolean switch for internet DNS probes.
 - **`--probe.internet.icmp`:** Boolean switch for internet ICMP echo probes.
 - **`--probe.internet.http`:** Boolean switch for internet plain HTTP HEAD probes.
-- **`--probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/RS/RA/NDP packets.
+- **`--probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/ARP/RS/RA/NDP packets.
 - **`--probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds.
 - **`--log.level`:** Structured log minimum level.
 
@@ -143,7 +144,7 @@ The options below apply to `watchme wifi` and `watchme wifi once`.
 | Interface state and addresses | `Sources/WatchmeWiFi/WiFiSnapshot.swift` | `getifaddrs`, `getnameinfo` | Interface up/running state, IPv4 addresses, non-link-local IPv6 addresses. |
 | Wi-Fi events | `Sources/WatchmeWiFi/EventMonitors.swift` | `CWEventDelegate` | Power, SSID, BSSID, link, link quality, country code, and mode changes. |
 | Network events | `Sources/WatchmeWiFi/EventMonitors.swift` | `SCDynamicStore` notifications | Global and per-interface IPv4/IPv6/DNS/DHCP/link changes. |
-| Passive packet timing | `Sources/WatchmeBPF`, `Sources/WatchmeWiFi/BPFMonitor.swift` | `/dev/bpfN`, `ioctl`, `poll`, `read` | DHCPv4 and ICMPv6 control packets during address acquisition, plus registered active DNS, ICMP, HTTP, and gateway packets. |
+| Passive packet timing | `Sources/WatchmeBPF`, `Sources/WatchmeWiFi/BPFMonitor.swift` | `/dev/bpfN`, `BIOCSETF`, `BIOCGSTATS`, `poll`, `read` | DHCPv4, IPv4 ARP, and ICMPv6 control packets during address acquisition, plus registered active DNS, ICMP, HTTP, and gateway packets. |
 | Active internet DNS probe | `Sources/WatchmeWiFi/ActiveDNSProbe.swift` | `Network.framework` UDP `NWConnection` | DNS A and AAAA query latency through Wi-Fi-bound resolver traffic. |
 | Active internet ICMP probe | `Sources/WatchmeWiFi/ActiveICMPProbe.swift` | Darwin datagram ICMP sockets with `IP_BOUND_IF` / `IPV6_BOUND_IF` | IPv4 and IPv6 internet echo reachability through the Wi-Fi interface. |
 | Active internet HTTP probe | `Sources/WatchmeWiFi/ActiveInternetHTTPProbe.swift` | `Network.framework` TCP `NWConnection` | Plain HTTP HEAD reachability over TCP/80 through the Wi-Fi interface. |
@@ -239,6 +240,8 @@ Those can be defined in Prometheus or Grafana if an operator wants a site-specif
 | `watchme_wifi_associated` | `interface`, `essid`, `bssid` | Snapshot association heuristic | `1` when Wi-Fi appears associated, otherwise `0`. |
 | `watchme_wifi_info` | `interface`, `essid`, `bssid`, `identity_status`, `essid_encoding`, optional `channel`, `channel_band`, `channel_width`, `phy_mode`, `security`, `interface_mode`, `country_code` | CoreWLAN snapshot categorical fields | Constant `1` info metric carrying current identity and categorical OS labels. |
 | `watchme_wifi_metrics_push_timestamp_seconds` | `interface`, `essid`, `bssid` | `Date().timeIntervalSince1970` | Unix timestamp of metric generation. |
+| `watchme_wifi_bpf_packets_received_total` | `interface`, `essid`, `bssid`, `filter` | `BIOCGSTATS.bs_recv` | Packets accepted by the WatchMe Wi-Fi BPF descriptor since it was opened. |
+| `watchme_wifi_bpf_packets_dropped_total` | `interface`, `essid`, `bssid`, `filter` | `BIOCGSTATS.bs_drop` | Packets dropped by the WatchMe Wi-Fi BPF descriptor since it was opened. |
 | `watchme_wifi_corewlan_event_total` | `interface`, `essid`, `bssid`, `event` | `CWEventDelegate` callback receipt | Count of CoreWLAN event callbacks observed in this process. |
 | `watchme_wifi_snapshot_change_total` | `interface`, `essid`, `bssid`, `field` | Consecutive `WiFiSnapshot` comparison | Count of raw snapshot field changes observed in this process. |
 | `watchme_wifi_probe_internet_dns_success` | `interface`, `essid`, `bssid`, `target`, `family`, `resolver`, `transport`, `record_type`, `timing_source` | Wi-Fi-bound active internet DNS probe | `1` when the latest DNS probe returned rcode `0` with at least one address, otherwise `0`. |
@@ -276,6 +279,9 @@ Common root tags include every tag listed in the snapshot model section, plus:
 - **`metrics.push.url`:** Pushgateway base URL.
 - **`metrics.push.prefix`:** Pushgateway path prefix.
 - **`bpf.enabled`:** `true` or `false`.
+- **`bpf.filter`:** BPF filter profile name when the monitor is active.
+- **`bpf.packets_received`:** `BIOCGSTATS` accepted packet count when available.
+- **`bpf.packets_dropped`:** `BIOCGSTATS` dropped packet count when available.
 - **`trace.root_name`:** Final root span name.
 - **`trace.start_epoch_ns`:** Trace assembly start time.
 - **`trace.kind`:** `wifi_observability`.
@@ -295,7 +301,7 @@ Common root tags include every tag listed in the snapshot model section, plus:
 | Other CoreWLAN events | Normalized event name, e.g. `wifi.power.changed` | Yes | Recent packet spans are consumed. | `wifi_link_quality_changed` only updates logs and does not trigger a trace. |
 | SystemConfiguration join | `wifi.join` | Yes | Recent packet spans are consumed, plus delayed packet-window trace. | Detected when previous snapshot was not associated and current snapshot is. |
 | SystemConfiguration IPv4 change while associated | Event reason, e.g. `wifi.network.ipv4_changed` | Yes | Recent packet spans are consumed. | Subject to trigger cooldown. |
-| BPF DHCP ACK / ICMPv6 RA / ICMPv6 NA | `wifi.rejoin.packet_window` | Yes | Recent packet spans are included without consuming them. | Delayed 1.25 seconds from packet event. |
+| BPF DHCP ACK / ARP reply / ICMPv6 RA / ICMPv6 NA | `wifi.rejoin.packet_window` | Yes | Recent packet spans are included without consuming them. | Delayed 1.25 seconds from packet event. |
 | Delayed join/roam packet window | `wifi.rejoin.packet_window` | Yes | Recent packet spans are included without consuming them. | Delayed 2.0 seconds from join/roam. |
 
 `--traces.cooldown` suppresses non-forced event traces.
@@ -370,6 +376,31 @@ Common DHCP span tags:
 | `packet.dhcp.discover_to_offer` | Latest DISCOVER before first OFFER for the same xid to that OFFER. | `discover_to_offer` | Optional `dhcp.server_identifier`. |
 | `packet.dhcp.request_to_ack` | Latest REQUEST before first ACK for the same xid to that ACK. | `request_to_ack` | Optional `dhcp.yiaddr`, optional `dhcp.server_identifier`, optional `dhcp.lease_time_seconds`. |
 
+### IPv4 ARP packet spans
+
+ARP observations are captured from BPF Ethernet frames carrying ARP for IPv4 over Ethernet.
+These spans explain the period after DHCP when the host has an IPv4 address but still needs to resolve the first-hop gateway's link-layer address.
+When the Wi-Fi service gateway is known from SystemConfiguration, packet-window traces keep ARP spans for that gateway; if the gateway is not known yet, the recent ARP window is included without a gateway filter.
+
+Common ARP span tags:
+
+- **`span.source`:** `bpf_packet`.
+- **`packet.protocol`:** `arp`.
+- **`packet.event`:** Event-specific value.
+- **`packet.timestamp_source`:** `bpf_header_timeval`.
+- **`packet.timestamp_resolution`:** `microsecond`.
+- **`arp.target_ip`:** IPv4 address being resolved.
+- **`arp.target_role`:** `gateway` when the target matches the Wi-Fi service router, otherwise `ipv4_neighbor`.
+- **`network.gateway`:** Wi-Fi service router when the span target matches it.
+- **`network.interface`:** BPF interface name when known.
+- **`wifi.essid`:** Added when attached to a trace.
+- **`wifi.bssid`:** Added when attached to a trace.
+
+| Span name | Timing | Event tag | Extra tags |
+| --- | --- | --- | --- |
+| `packet.arp.request_retry_gap` | Between consecutive ARP requests for the same target IPv4 address. | `request_retry_gap` | Optional sender MAC/IP context. |
+| `packet.arp.request_to_reply` | Latest ARP request before first reply from the target IPv4 address to that reply. | `request_to_reply` | `arp.sender_ip`, `arp.sender_mac`, optional `network.gateway`. |
+
 ### ICMPv6 packet spans
 
 ICMPv6 observations are captured from BPF Ethernet frames carrying IPv6 ICMPv6 types 133, 134, 135, or 136.
@@ -391,13 +422,14 @@ All ICMPv6 packet spans receive:
 
 ## Passive packet store behavior
 
-`PassivePacketStore` is a rolling in-memory store for DHCP and ICMPv6 observations.
+`PassivePacketStore` is a rolling in-memory store for DHCP, ARP, and ICMPv6 observations.
 
 - Observations older than 600 seconds are pruned.
 - Trace attachment uses `--probe.bpf.span-max-age` as the lookback window; default is 180 seconds.
 - `consume=true` suppresses re-emitting the same packet span in later event-triggered traces.
 - Packet-window traces use `consume=false` so the delayed trace can show the complete recent packet window.
-- Emitted-span de-duplication keys include span name, start time, duration, `packet.event`, `dhcp.xid`, and `icmpv6.nd.target_address`.
+- ARP packet-window attachment prefers the Wi-Fi service IPv4 router when it is known; otherwise it includes recent ARP request/reply spans without a gateway filter.
+- Emitted-span de-duplication keys include span name, start time, duration, `packet.event`, `dhcp.xid`, `icmpv6.nd.target_address`, and `arp.target_ip`.
 
 ## BPF details
 
@@ -408,11 +440,15 @@ The reusable BPF layer is in `Sources/WatchmeBPF`.
 - Enables immediate mode so packets are delivered without waiting for the kernel buffer to fill.
 - Enables seeing sent packets.
 - Requires Ethernet datalink type.
+- Installs a classic BPF kernel filter with `BIOCSETF`.
+  The filter profile is `wifi_control_active_probe_v1` and accepts only ARP, DHCPv4, ICMP, ICMPv6, DNS UDP/53, gateway TCP/53, and plain HTTP TCP/80 traffic.
+- Reads `BIOCGSTATS` for accepted and dropped packet counters and exposes them as Prometheus counters and root trace tags.
 - Reads BPF buffers in a utility queue and walks `bpf_hdr + frame` records using BPF word alignment.
 - Converts BPF `timeval` timestamps to wall-clock nanoseconds.
 
 The Wi-Fi BPF monitor only parses:
 
+- Ethernet type `0x0806` ARP packets for IPv4 gateway or neighbor resolution timing.
 - Ethernet type `0x0800` IPv4 UDP DHCP packets on ports 67/68.
 - Ethernet type `0x86DD` IPv6 ICMPv6 control packets of type 133, 134, 135, or 136.
 - UDP DNS packets on port 53 that match a currently registered active DNS probe transaction ID, query type, resolver, and target host.
