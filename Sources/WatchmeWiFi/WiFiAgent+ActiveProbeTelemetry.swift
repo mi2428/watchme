@@ -86,14 +86,15 @@ extension WiFiAgent {
     }
 
     func activeDNSTags(result: ActiveDNSProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
-        var tags: [String: String] = [
-            "span.source": "network_framework_internet_dns_probe",
-            "active_probe.interface": snapshot.interfaceName ?? "",
-            "active_probe.required_interface": snapshot.interfaceName ?? "",
+        var tags = activeProbeBaseTags(
+            snapshot: snapshot,
+            timingSource: result.timingSource,
+            timestampSource: result.timestampSource,
+            spanSource: "network_framework_internet_dns_probe"
+        )
+        tags.merge([
             "probe.target": result.target,
             "probe.internet.target": result.target,
-            "probe.timing_source": result.timingSource,
-            "probe.timestamp_source": result.timestampSource,
             "network.family": result.family.metricValue,
             "dns.resolver": result.resolver,
             "dns.transport": result.transport,
@@ -101,84 +102,62 @@ extension WiFiAgent {
             "dns.answer_count": result.answerCount.map(String.init) ?? "",
             "dns.address_count": "\(result.addresses.count)",
             "dns.addresses": result.addresses.joined(separator: ","),
-            "wifi.essid": snapshot.ssid ?? "unknown",
-            "wifi.bssid": snapshot.bssid ?? "unknown",
-        ]
+        ]) { _, new in new }
         if let rcode = result.rcode {
             tags["dns.rcode"] = "\(rcode)"
         }
-        if result.timingSource == bpfPacketTimingSource {
-            tags["packet.event"] = "dns_query_to_response"
-            tags["packet.timestamp_source"] = bpfHeaderTimestampSource
-            tags["packet.timestamp_resolution"] = "microsecond"
-        }
-        if let error = result.error {
-            tags["error"] = clipped(error, limit: 240)
-        }
+        addPacketTimingTags(&tags, timingSource: result.timingSource, event: "dns_query_to_response")
+        addErrorTag(&tags, error: result.error)
         return tags
     }
 
     func activeICMPTags(result: ActiveICMPProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
-        var tags: [String: String] = [
-            "span.source": "darwin_icmp_socket",
-            "active_probe.interface": snapshot.interfaceName ?? "",
-            "active_probe.required_interface": snapshot.interfaceName ?? "",
+        var tags = activeProbeBaseTags(
+            snapshot: snapshot,
+            timingSource: result.timingSource,
+            timestampSource: result.timestampSource,
+            spanSource: "darwin_icmp_socket"
+        )
+        tags.merge([
             "probe.target": result.target,
             "probe.internet.target": result.target,
-            "probe.timing_source": result.timingSource,
-            "probe.timestamp_source": result.timestampSource,
             "network.family": result.family.metricValue,
             "network.peer.address": result.remoteIP,
             "icmp.outcome": result.outcome,
-            "wifi.essid": snapshot.ssid ?? "unknown",
-            "wifi.bssid": snapshot.bssid ?? "unknown",
-        ]
-        if result.timingSource == bpfPacketTimingSource {
-            tags["packet.event"] = "icmp_echo_request_to_reply"
-            tags["packet.timestamp_source"] = bpfHeaderTimestampSource
-            tags["packet.timestamp_resolution"] = "microsecond"
-        }
+        ]) { _, new in new }
+        addPacketTimingTags(&tags, timingSource: result.timingSource, event: "icmp_echo_request_to_reply")
         if let identifier = result.identifier {
             tags["icmp.identifier"] = String(format: "0x%04x", identifier)
         }
         if let sequence = result.sequence {
             tags["icmp.sequence"] = "\(sequence)"
         }
-        if let error = result.error {
-            tags["error"] = clipped(error, limit: 240)
-        }
+        addErrorTag(&tags, error: result.error)
         return tags
     }
 
     func activeInternetHTTPTags(result: ActiveInternetHTTPProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
-        var tags: [String: String] = [
-            "span.source": "network_framework_plain_http_probe",
-            "active_probe.interface": snapshot.interfaceName ?? "",
-            "active_probe.required_interface": snapshot.interfaceName ?? "",
+        var tags = activeProbeBaseTags(
+            snapshot: snapshot,
+            timingSource: result.timingSource,
+            timestampSource: result.timestampSource,
+            spanSource: "network_framework_plain_http_probe"
+        )
+        tags.merge([
             "probe.target": result.target,
             "probe.internet.target": result.target,
-            "probe.timing_source": result.timingSource,
-            "probe.timestamp_source": result.timestampSource,
             "network.family": result.family.metricValue,
             "network.peer.address": result.remoteIP,
             "net.peer.port": "80",
             "url.scheme": "http",
             "http.request.method": "HEAD",
             "http.outcome": result.outcome,
-            "wifi.essid": snapshot.ssid ?? "unknown",
-            "wifi.bssid": snapshot.bssid ?? "unknown",
-        ]
+        ]) { _, new in new }
         if let statusCode = result.statusCode {
             tags["http.response.status_code"] = "\(statusCode)"
         }
-        if result.timingSource == bpfPacketTimingSource {
-            tags["packet.event"] = "http_request_to_first_response_byte"
-            tags["packet.timestamp_source"] = bpfHeaderTimestampSource
-            tags["packet.timestamp_resolution"] = "microsecond"
-        }
-        if let error = result.error {
-            tags["error"] = clipped(error, limit: 240)
-        }
+        addPacketTimingTags(&tags, timingSource: result.timingSource, event: "http_request_to_first_response_byte")
+        addErrorTag(&tags, error: result.error)
         return tags
     }
 
@@ -238,12 +217,13 @@ extension WiFiAgent {
     }
 
     func activeGatewayTags(result: ActiveGatewayProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
-        var tags: [String: String] = [
-            "span.source": "darwin_icmp_gateway_probe",
-            "active_probe.interface": snapshot.interfaceName ?? "",
-            "active_probe.required_interface": snapshot.interfaceName ?? "",
-            "probe.timing_source": result.timingSource,
-            "probe.timestamp_source": result.timestampSource,
+        var tags = activeProbeBaseTags(
+            snapshot: snapshot,
+            timingSource: result.timingSource,
+            timestampSource: result.timestampSource,
+            spanSource: "darwin_icmp_gateway_probe"
+        )
+        tags.merge([
             "network.family": result.family.metricValue,
             "network.wifi_gateway": result.gateway,
             "network.gateway_probe.protocol": "icmp",
@@ -255,17 +235,42 @@ extension WiFiAgent {
             "network.gateway_probe.loss_ratio": formatGatewayProbeDouble(result.lossRatio),
             "network.gateway_probe.jitter_seconds": formatGatewayProbeDouble(seconds(fromDurationNanos: result.jitterNanos)),
             "network.gateway_probe.burst_interval_seconds": formatGatewayProbeDouble(result.burstIntervalSeconds),
+        ]) { _, new in new }
+        addPacketTimingTags(&tags, timingSource: result.timingSource, event: "icmp_echo_request_to_reply")
+        addErrorTag(&tags, error: result.error)
+        return tags
+    }
+
+    private func activeProbeBaseTags(
+        snapshot: WiFiSnapshot,
+        timingSource: String,
+        timestampSource: String,
+        spanSource: String
+    ) -> [String: String] {
+        [
+            "span.source": spanSource,
+            "active_probe.interface": snapshot.interfaceName ?? "",
+            "active_probe.required_interface": snapshot.interfaceName ?? "",
+            "probe.timing_source": timingSource,
+            "probe.timestamp_source": timestampSource,
             "wifi.essid": snapshot.ssid ?? "unknown",
             "wifi.bssid": snapshot.bssid ?? "unknown",
         ]
-        if result.timingSource == bpfPacketTimingSource {
-            tags["packet.event"] = "icmp_echo_request_to_reply"
-            tags["packet.timestamp_source"] = bpfHeaderTimestampSource
-            tags["packet.timestamp_resolution"] = "microsecond"
+    }
+
+    private func addPacketTimingTags(_ tags: inout [String: String], timingSource: String, event: String) {
+        guard timingSource == bpfPacketTimingSource else {
+            return
         }
-        if let error = result.error {
-            tags["error"] = clipped(error, limit: 240)
+        tags["packet.event"] = event
+        tags["packet.timestamp_source"] = bpfHeaderTimestampSource
+        tags["packet.timestamp_resolution"] = "microsecond"
+    }
+
+    private func addErrorTag(_ tags: inout [String: String], error: String?) {
+        guard let error else {
+            return
         }
-        return tags
+        tags["error"] = clipped(error, limit: 240)
     }
 }
