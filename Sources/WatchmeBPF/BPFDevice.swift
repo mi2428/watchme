@@ -145,8 +145,8 @@ func readBPFStats(fd: Int32) -> BPFStats? {
 func watchmeWiFiBPFFilterInstructions() -> [BPFInstruction] {
     // Generated for DLT_EN10MB from:
     // arp or (ip and (icmp or (udp and (port 53 or port 67 or port 68))
-    // or (tcp and (port 53 or port 80)))) or
-    // (ip6 and (icmp6 or (udp and port 53) or (tcp and (port 53 or port 80))))
+    // or (tcp and port 80))) or
+    // (ip6 and (icmp6 or (udp and port 53) or (tcp and port 80)))
     [
         BPFInstruction(code: 40, jt: 0, jf: 0, k: 12),
         BPFInstruction(code: 21, jt: 42, jf: 0, k: 2054),
@@ -170,10 +170,10 @@ func watchmeWiFiBPFFilterInstructions() -> [BPFInstruction] {
         BPFInstruction(code: 69, jt: 25, jf: 0, k: 8191),
         BPFInstruction(code: 177, jt: 0, jf: 0, k: 14),
         BPFInstruction(code: 72, jt: 0, jf: 0, k: 14),
-        BPFInstruction(code: 21, jt: 21, jf: 0, k: 53),
+        BPFInstruction(code: 21, jt: 21, jf: 0, k: 80),
         BPFInstruction(code: 21, jt: 20, jf: 0, k: 80),
         BPFInstruction(code: 72, jt: 0, jf: 0, k: 16),
-        BPFInstruction(code: 21, jt: 18, jf: 17, k: 53),
+        BPFInstruction(code: 21, jt: 18, jf: 17, k: 80),
         BPFInstruction(code: 21, jt: 0, jf: 18, k: 34525),
         BPFInstruction(code: 48, jt: 0, jf: 0, k: 20),
         BPFInstruction(code: 21, jt: 15, jf: 0, k: 58),
@@ -187,10 +187,10 @@ func watchmeWiFiBPFFilterInstructions() -> [BPFInstruction] {
         BPFInstruction(code: 21, jt: 7, jf: 8, k: 53),
         BPFInstruction(code: 21, jt: 0, jf: 7, k: 6),
         BPFInstruction(code: 40, jt: 0, jf: 0, k: 54),
-        BPFInstruction(code: 21, jt: 4, jf: 0, k: 53),
+        BPFInstruction(code: 21, jt: 4, jf: 0, k: 80),
         BPFInstruction(code: 21, jt: 3, jf: 0, k: 80),
         BPFInstruction(code: 40, jt: 0, jf: 0, k: 56),
-        BPFInstruction(code: 21, jt: 1, jf: 0, k: 53),
+        BPFInstruction(code: 21, jt: 1, jf: 0, k: 80),
         BPFInstruction(code: 21, jt: 0, jf: 1, k: 80),
         BPFInstruction(code: 6, jt: 0, jf: 0, k: 524_288),
         BPFInstruction(code: 6, jt: 0, jf: 0, k: 0),
