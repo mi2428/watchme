@@ -91,7 +91,7 @@ extension PassiveBPFMonitor {
         }
         logEvent(.debug, "icmpv6_control_packet_observed", fields: fields)
         if type == 134 || type == 136 {
-            onPacketEvent("wifi.rejoin.\(icmpv6TypeName(type))", fields)
+            onPacketEvent("wifi.packet.\(icmpv6TypeName(type))", fields)
         }
     }
 }

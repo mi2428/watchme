@@ -139,6 +139,50 @@ final class ActivePacketStoreTests: XCTestCase {
         XCTAssertEqual(exchange?.timing.durationNanos, 10_000_000)
     }
 
+    func testActiveTCPExchangePairsSynWithSynAck() {
+        let store = PassivePacketStore()
+        let start = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
+        let request = ActiveTCPProbeRequest(
+            target: "neverssl.com",
+            remoteIP: "34.223.124.45",
+            port: 80,
+            interfaceName: "en0",
+            startWallNanos: start,
+            timeout: 1
+        )
+        store.registerActiveTCPProbe(request)
+
+        XCTAssertTrue(
+            store.appendTCP(
+                tcp(
+                    start + 1_000_000,
+                    destinationIP: "34.223.124.45",
+                    sourcePort: 54000,
+                    destinationPort: 80,
+                    flags: 0x02
+                )
+            )
+        )
+        XCTAssertTrue(
+            store.appendTCP(
+                tcp(
+                    start + 7_000_000,
+                    sourceIP: "34.223.124.45",
+                    destinationIP: "192.168.22.173",
+                    sourcePort: 80,
+                    destinationPort: 54000,
+                    flags: 0x12
+                )
+            )
+        )
+
+        let exchange = store.tcpConnectExchange(for: request, finishedWallNanos: start + 8_000_000, wait: 0)
+
+        XCTAssertEqual(exchange?.outcome, "connected")
+        XCTAssertEqual(exchange?.timing.timingSource, "bpf_packet")
+        XCTAssertEqual(exchange?.timing.durationNanos, 6_000_000)
+    }
+
     private func dns(
         _ nanos: UInt64,
         transactionID: UInt16,

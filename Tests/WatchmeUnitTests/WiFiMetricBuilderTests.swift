@@ -151,6 +151,14 @@ final class WiFiMetricBuilderTests: XCTestCase {
         )
         XCTAssertEqual(
             metric(
+                named: "watchme_wifi_probe_internet_tcp_success",
+                labels: ["target": "neverssl.com", "family": "ipv4", "remote_ip": "34.223.124.45", "remote_port": "80"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
                 named: "watchme_wifi_probe_gateway_icmp_success",
                 labels: ["gateway": "192.168.23.254", "outcome": "reply", "timing_source": "network_framework_callback"],
                 in: metrics
@@ -217,6 +225,13 @@ final class WiFiMetricBuilderTests: XCTestCase {
                 in: metrics
             )
         )
+        XCTAssertNil(
+            metric(
+                named: "watchme_wifi_probe_internet_tcp_success",
+                labels: ["target": "example.com", "family": "ipv4", "remote_ip": "none"],
+                in: metrics
+            )
+        )
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_internet_dns_success",
@@ -236,6 +251,14 @@ final class WiFiMetricBuilderTests: XCTestCase {
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_internet_http_success",
+                labels: ["target": "example.com", "family": "ipv4", "remote_ip": "93.184.216.34"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_tcp_success",
                 labels: ["target": "example.com", "family": "ipv4", "remote_ip": "93.184.216.34"],
                 in: metrics
             )?.value,
@@ -300,6 +323,23 @@ private func recordDisconnectedActiveProbePlaceholders(in state: inout WiFiMetri
             )
         )
     )
+    state.recordInternetTCPProbe(
+        ActiveTCPProbeResult(
+            target: "example.com",
+            family: .ipv4,
+            remoteIP: "none",
+            port: 80,
+            ok: false,
+            outcome: "no_address",
+            error: "no address",
+            timing: ActiveProbeTiming(
+                startWallNanos: 1_150_000_000,
+                finishedWallNanos: 1_150_001_000,
+                timingSource: noAddressTimingSource,
+                timestampSource: wallClockTimestampSource
+            )
+        )
+    )
 }
 
 private func recordReconnectedActiveProbeSuccesses(in state: inout WiFiMetricState) {
@@ -358,6 +398,23 @@ private func recordReconnectedActiveProbeSuccesses(in state: inout WiFiMetricSta
             )
         )
     )
+    state.recordInternetTCPProbe(
+        ActiveTCPProbeResult(
+            target: "example.com",
+            family: .ipv4,
+            remoteIP: "93.184.216.34",
+            port: 80,
+            ok: true,
+            outcome: "connected",
+            error: nil,
+            timing: ActiveProbeTiming(
+                startWallNanos: 2_150_000_000,
+                finishedWallNanos: 2_180_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
+        )
+    )
 }
 
 private func recordSampleActiveProbes(in state: inout WiFiMetricState) throws {
@@ -373,6 +430,23 @@ private func recordSampleActiveProbes(in state: inout WiFiMetricState) throws {
             timing: ActiveProbeTiming(
                 startWallNanos: 1_000_000_000,
                 finishedWallNanos: 1_180_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
+        )
+    )
+    state.recordInternetTCPProbe(
+        ActiveTCPProbeResult(
+            target: "neverssl.com",
+            family: .ipv4,
+            remoteIP: "34.223.124.45",
+            port: 80,
+            ok: true,
+            outcome: "connected",
+            error: nil,
+            timing: ActiveProbeTiming(
+                startWallNanos: 1_500_000_000,
+                finishedWallNanos: 1_540_000_000,
                 timingSource: bpfPacketTimingSource,
                 timestampSource: bpfHeaderTimestampSource
             )

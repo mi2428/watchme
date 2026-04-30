@@ -87,7 +87,7 @@ func configureBPF(fd: Int32, interfaceName: String, tags: inout [String: String]
     var one: UInt32 = 1
     var zero: UInt32 = 0
     // Immediate mode returns packets without waiting for the kernel buffer to
-    // fill, which is critical for timing DHCP/RS/RA during short rejoin windows.
+    // fill, which is critical for timing DHCP/RS/RA control-plane exchanges.
     _ = ioctl(fd, bpfIOCImmediate, &one)
     _ = ioctl(fd, bpfIOCSeeSent, &one)
     _ = ioctl(fd, bpfIOCHeaderComplete, &one)

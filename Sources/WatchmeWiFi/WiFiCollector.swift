@@ -10,10 +10,10 @@ enum WiFiCLI {
             valueName: "seconds",
             help: "Wi-Fi metric collection interval. Default: \(formatCLIDefault(WiFiDefaults.metricsInterval))"
         )
-        static let activeInterval = CLIOption(
+        static let traceInterval = CLIOption(
             "--wifi.traces.interval",
             valueName: "seconds",
-            help: "Active trace interval. Default: \(formatCLIDefault(WiFiDefaults.activeInterval))"
+            help: "Connectivity trace interval. Default: \(formatCLIDefault(WiFiDefaults.traceInterval))"
         )
         static let triggerCooldown = CLIOption(
             "--wifi.traces.cooldown",
@@ -65,6 +65,11 @@ enum WiFiCLI {
             valueName: "bool",
             help: "Enable internet ICMP probe. Default: \(WiFiDefaults.probeInternetICMP)"
         )
+        static let internetTCP = CLIOption(
+            "--wifi.probe.internet.tcp",
+            valueName: "bool",
+            help: "Enable internet TCP connect probe. Default: \(WiFiDefaults.probeInternetTCP)"
+        )
         static let internetHTTP = CLIOption(
             "--wifi.probe.internet.http",
             valueName: "bool",
@@ -74,7 +79,7 @@ enum WiFiCLI {
 
     static let usageOptions = [
         Option.metricsInterval,
-        Option.activeInterval,
+        Option.traceInterval,
         Option.triggerCooldown,
         Option.bpfEnabled,
         Option.bpfSpanMaxAge,
@@ -85,12 +90,13 @@ enum WiFiCLI {
         Option.internetTimeout,
         Option.internetDNS,
         Option.internetICMP,
+        Option.internetTCP,
         Option.internetHTTP,
     ]
 
     static let timeIntervalOptionNames = Set([
         Option.metricsInterval.name,
-        Option.activeInterval.name,
+        Option.traceInterval.name,
         Option.triggerCooldown.name,
         Option.internetTimeout.name,
         Option.gatewayInterval.name,
@@ -100,6 +106,7 @@ enum WiFiCLI {
     static let boolOptionNames = Set([
         Option.internetDNS.name,
         Option.internetICMP.name,
+        Option.internetTCP.name,
         Option.internetHTTP.name,
         Option.bpfEnabled.name,
     ])
@@ -150,18 +157,24 @@ public enum WiFiCollectorFactory: WatchmeCollectorFactory {
 struct WiFiConfig {
     var otlpURL = WatchmeDefaults.otlpURL
     var metricsInterval = WiFiDefaults.metricsInterval
-    var activeInterval = WiFiDefaults.activeInterval
+    var traceInterval = WiFiDefaults.traceInterval
     var triggerCooldown = WiFiDefaults.triggerCooldown
     var probeInternetTimeout = WiFiDefaults.probeInternetTimeout
     var probeInternetFamily = WiFiDefaults.probeInternetFamily
     var probeInternetDNS = WiFiDefaults.probeInternetDNS
     var probeInternetICMP = WiFiDefaults.probeInternetICMP
+    var probeInternetTCP = WiFiDefaults.probeInternetTCP
     var probeInternetHTTP = WiFiDefaults.probeInternetHTTP
     var probeInternetTargets = WiFiDefaults.probeInternetTargets
     var probeGatewayBurstCount = WiFiDefaults.gatewayProbeBurstCount
     var probeGatewayBurstInterval = WiFiDefaults.gatewayProbeBurstInterval
     var bpfEnabled = WiFiDefaults.bpfEnabled
     var bpfSpanMaxAge = WiFiDefaults.bpfSpanMaxAge
+    var associationTraceDelay = WiFiDefaults.associationTraceDelay
+    var associationTraceReadinessTimeout = WiFiDefaults.associationTraceReadinessTimeout
+    var connectivityReadinessPollInterval = WiFiDefaults.connectivityReadinessPollInterval
+    var packetWindowTraceDelay = WiFiDefaults.packetWindowTraceDelay
+    var packetWindowSuppressionAfterAssociation = WiFiDefaults.packetWindowSuppressionAfterAssociation
 
     static func parse(_ arguments: [String], otlpURL: URL) throws -> WiFiConfig {
         var parser = WiFiConfigParser(arguments: arguments, config: WiFiConfig(otlpURL: otlpURL))
@@ -221,8 +234,8 @@ private struct WiFiConfigParser {
         switch argument {
         case WiFiCLI.Option.metricsInterval.name:
             config.metricsInterval = try positive(value, name: "Wi-Fi metrics interval")
-        case WiFiCLI.Option.activeInterval.name:
-            config.activeInterval = try positive(value, name: "Wi-Fi active interval")
+        case WiFiCLI.Option.traceInterval.name:
+            config.traceInterval = try positive(value, name: "Wi-Fi trace interval")
         case WiFiCLI.Option.triggerCooldown.name:
             config.triggerCooldown = try nonNegative(value, name: "Wi-Fi trigger cooldown")
         case WiFiCLI.Option.internetTimeout.name:
@@ -268,6 +281,8 @@ private struct WiFiConfigParser {
             config.probeInternetDNS = value
         case WiFiCLI.Option.internetICMP.name:
             config.probeInternetICMP = value
+        case WiFiCLI.Option.internetTCP.name:
+            config.probeInternetTCP = value
         case WiFiCLI.Option.internetHTTP.name:
             config.probeInternetHTTP = value
         case WiFiCLI.Option.bpfEnabled.name:

@@ -173,8 +173,7 @@ func buildNeighborDiscoverySpans(
     let groupedNA = Dictionary(grouping: advertisements) { $0.targetAddress ?? "" }
     for (target, attempts) in groupedNS {
         // Neighbor Discovery is keyed by the IPv6 target address, not by source
-        // host. During rejoin the default router address is the stable value we
-        // need to measure resolution delay.
+        // host, so retries and replies for the same target stay paired.
         guard !target.isEmpty, let replies = groupedNA[target] else {
             continue
         }
@@ -188,11 +187,10 @@ func buildNeighborDiscoverySpans(
 }
 
 private func neighborRetrySpans(target: String, attempts: [ICMPv6Observation]) -> [SpanEvent] {
-    // Neighbor Solicitation retries often explain post-DHCP reachability delay,
-    // especially when the default router cache is cold after rejoin.
+    // Neighbor Solicitation retries often explain post-DHCP reachability delay.
     retryGaps(attempts.map(\.wallNanos)).map { gap in
         packetSpan(
-            "packet.icmpv6.default_router_neighbor_solicitation_retry_gap",
+            "packet.icmpv6.neighbor_solicitation_retry_gap",
             start: gap.start,
             end: gap.end,
             tags: [
@@ -216,11 +214,11 @@ private func neighborResolutionSpan(
     }
     var tags: [String: String] = [
         "packet.protocol": "icmpv6",
-        "packet.event": "default_router_neighbor_resolution",
+        "packet.event": "neighbor_solicitation_to_advertisement",
         "icmpv6.nd.target_address": target,
         "network.interface": reply.interfaceName,
     ]
     setTag(&tags, "icmpv6.nd.target_link_layer_address", reply.targetLinkLayerAddress)
     setTag(&tags, "icmpv6.nd.source_link_layer_address", reply.sourceLinkLayerAddress)
-    return packetSpan("packet.icmpv6.default_router_neighbor_resolution", start: request.wallNanos, end: reply.wallNanos, tags: tags)
+    return packetSpan("packet.icmpv6.neighbor_solicitation_to_advertisement", start: request.wallNanos, end: reply.wallNanos, tags: tags)
 }

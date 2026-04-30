@@ -52,9 +52,9 @@ final class PassivePacketStoreTests: XCTestCase {
         let names = spans.map(\.name)
 
         XCTAssertTrue(names.contains("packet.icmpv6.router_solicitation_to_advertisement"))
-        XCTAssertTrue(names.contains("packet.icmpv6.default_router_neighbor_solicitation_retry_gap"))
-        XCTAssertTrue(names.contains("packet.icmpv6.default_router_neighbor_resolution"))
-        let resolution = spans.first { $0.name == "packet.icmpv6.default_router_neighbor_resolution" }
+        XCTAssertTrue(names.contains("packet.icmpv6.neighbor_solicitation_retry_gap"))
+        XCTAssertTrue(names.contains("packet.icmpv6.neighbor_solicitation_to_advertisement"))
+        let resolution = spans.first { $0.name == "packet.icmpv6.neighbor_solicitation_to_advertisement" }
         XCTAssertEqual(resolution?.tags["icmpv6.nd.target_address"], "fe80::router")
         XCTAssertEqual(resolution?.tags["icmpv6.nd.target_link_layer_address"], "aa:bb:cc:dd:ee:ff")
     }

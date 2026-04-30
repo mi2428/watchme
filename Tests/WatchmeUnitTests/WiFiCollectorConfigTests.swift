@@ -7,12 +7,13 @@ final class WiFiCollectorConfigTests: XCTestCase {
         let otlpURL = try XCTUnwrap(URL(string: "http://collector.example:4318/otlp"))
         let config = try WiFiConfig.parse([
             WiFiCLI.Option.metricsInterval.name, "2.5",
-            "\(WiFiCLI.Option.activeInterval.name)=30",
+            "\(WiFiCLI.Option.traceInterval.name)=30",
             WiFiCLI.Option.triggerCooldown.name, "0",
             WiFiCLI.Option.internetTimeout.name, "3",
             WiFiCLI.Option.internetFamily.name, "ipv6",
             WiFiCLI.Option.internetDNS.name, "false",
             WiFiCLI.Option.internetICMP.name, "true",
+            WiFiCLI.Option.internetTCP.name, "false",
             WiFiCLI.Option.internetHTTP.name, "false",
             WiFiCLI.Option.gatewayCount.name, "6",
             "\(WiFiCLI.Option.gatewayInterval.name)=0.1",
@@ -26,12 +27,13 @@ final class WiFiCollectorConfigTests: XCTestCase {
         XCTAssertEqual(config.traceEndpointURL.absoluteString, "http://collector.example:4318/otlp/v1/traces")
         XCTAssertEqual(config.metricEndpointURL.absoluteString, "http://collector.example:4318/otlp/v1/metrics")
         XCTAssertEqual(config.metricsInterval, 2.5)
-        XCTAssertEqual(config.activeInterval, 30)
+        XCTAssertEqual(config.traceInterval, 30)
         XCTAssertEqual(config.triggerCooldown, 0)
         XCTAssertEqual(config.probeInternetTimeout, 3)
         XCTAssertEqual(config.probeInternetFamily, .ipv6)
         XCTAssertFalse(config.probeInternetDNS)
         XCTAssertTrue(config.probeInternetICMP)
+        XCTAssertFalse(config.probeInternetTCP)
         XCTAssertFalse(config.probeInternetHTTP)
         XCTAssertEqual(config.probeGatewayBurstCount, 6)
         XCTAssertEqual(config.probeGatewayBurstInterval, 0.1)
@@ -46,7 +48,7 @@ final class WiFiCollectorConfigTests: XCTestCase {
         XCTAssertEqual(config.probeInternetTargets, WiFiDefaults.probeInternetTargets)
         XCTAssertEqual(config.probeInternetFamily, WiFiDefaults.probeInternetFamily)
         XCTAssertEqual(config.metricsInterval, WiFiDefaults.metricsInterval)
-        XCTAssertEqual(config.activeInterval, WiFiDefaults.activeInterval)
+        XCTAssertEqual(config.traceInterval, WiFiDefaults.traceInterval)
     }
 
     func testAuthorizationTimeoutParserOnlyAllowsTimeout() throws {

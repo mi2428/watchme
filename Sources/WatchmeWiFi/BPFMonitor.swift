@@ -94,7 +94,7 @@ final class PassiveBPFMonitor {
         logEvent(.debug, "arp_packet_observed", fields: fields)
         if packet.operation == 2 {
             fields["packet.event"] = "arp_reply"
-            onPacketEvent("wifi.rejoin.arp_reply", fields)
+            onPacketEvent("wifi.packet.arp_reply", fields)
         }
     }
 
@@ -208,7 +208,7 @@ final class PassiveBPFMonitor {
         }
         logEvent(.debug, "dhcp_packet_observed", fields: fields)
         if messageType == 5 {
-            onPacketEvent("wifi.rejoin.dhcp_ack", fields)
+            onPacketEvent("wifi.packet.dhcp_ack", fields)
         }
     }
 
@@ -262,7 +262,7 @@ final class PassiveBPFMonitor {
         ), store.appendTCP(observation) else {
             return
         }
-        logActiveHTTPPacket(observation)
+        logActiveTCPPacket(observation)
     }
 
     private func handleICMPv4Packet(

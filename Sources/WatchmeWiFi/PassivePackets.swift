@@ -130,6 +130,19 @@ struct ActiveHTTPPacketExchange {
     }
 }
 
+struct ActiveTCPPacketExchange {
+    let request: TCPPacketObservation
+    let response: TCPPacketObservation
+
+    var timing: ActiveProbeTiming {
+        .bpfPacket(start: request.wallNanos, finished: response.wallNanos)
+    }
+
+    var outcome: String {
+        response.isRST ? "refused" : "connected"
+    }
+}
+
 struct ActiveDNSProbeRegistration {
     let transactionID: UInt16
     let target: String
@@ -151,6 +164,15 @@ struct ActiveICMPProbeRegistration {
 }
 
 struct ActiveHTTPProbeRegistration {
+    let target: String
+    let remoteIP: String
+    let port: UInt16
+    let interfaceName: String?
+    let startWallNanos: UInt64
+    let expiresWallNanos: UInt64
+}
+
+struct ActiveTCPProbeRegistration {
     let target: String
     let remoteIP: String
     let port: UInt16
@@ -188,6 +210,15 @@ struct ActiveHTTPProbeRequest {
     let timeout: TimeInterval
 }
 
+struct ActiveTCPProbeRequest {
+    let target: String
+    let remoteIP: String
+    let port: UInt16
+    let interfaceName: String?
+    let startWallNanos: UInt64
+    let timeout: TimeInterval
+}
+
 final class PassivePacketStore {
     let lock = NSLock()
     var dhcp: [DHCPObservation] = []
@@ -199,6 +230,7 @@ final class PassivePacketStore {
     var activeDNSProbes: [ActiveDNSProbeRegistration] = []
     var activeICMPProbes: [ActiveICMPProbeRegistration] = []
     var activeHTTPProbes: [ActiveHTTPProbeRegistration] = []
+    var activeTCPProbes: [ActiveTCPProbeRegistration] = []
     var emittedKeys = Set<String>()
 
     func appendDHCP(_ observation: DHCPObservation) {
@@ -369,11 +401,35 @@ final class PassivePacketStore {
         lock.unlock()
     }
 
+    func registerActiveTCPProbe(_ request: ActiveTCPProbeRequest) {
+        lock.lock()
+        activeTCPProbes.append(
+            ActiveTCPProbeRegistration(
+                target: normalizedDNSName(request.target),
+                remoteIP: request.remoteIP,
+                port: request.port,
+                interfaceName: request.interfaceName,
+                startWallNanos: request.startWallNanos,
+                expiresWallNanos: request.startWallNanos + activeProbeRetentionNanos(timeout: request.timeout)
+            )
+        )
+        pruneLocked()
+        lock.unlock()
+    }
+
+    func unregisterActiveTCPProbe(_ request: ActiveTCPProbeRequest) {
+        lock.lock()
+        activeTCPProbes.removeAll {
+            $0.target == normalizedDNSName(request.target) && $0.remoteIP == request.remoteIP && $0.port == request.port
+        }
+        lock.unlock()
+    }
+
     @discardableResult
     func appendTCP(_ observation: TCPPacketObservation) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard isActiveHTTPObservationLocked(observation) else {
+        guard isActiveHTTPObservationLocked(observation) || isActiveTCPObservationLocked(observation) else {
             return false
         }
         tcp.append(observation)
@@ -390,6 +446,26 @@ final class PassivePacketStore {
         while true {
             lock.lock()
             let match = httpExchangeLocked(request: request, finishedWallNanos: finishedWallNanos)
+            lock.unlock()
+            if let match {
+                return match
+            }
+            guard Date() < deadline else {
+                return nil
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+    }
+
+    func tcpConnectExchange(
+        for request: ActiveTCPProbeRequest,
+        finishedWallNanos: UInt64,
+        wait: TimeInterval = 0.05
+    ) -> ActiveTCPPacketExchange? {
+        let deadline = Date().addingTimeInterval(wait)
+        while true {
+            lock.lock()
+            let match = tcpConnectExchangeLocked(request: request, finishedWallNanos: finishedWallNanos)
             lock.unlock()
             if let match {
                 return match

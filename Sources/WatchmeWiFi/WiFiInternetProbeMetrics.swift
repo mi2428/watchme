@@ -1,6 +1,41 @@
 import WatchmeTelemetry
 
 extension WiFiMetricState {
+    func internetTCPProbeMetrics(labels: [String: String]) -> [MetricSample] {
+        internetTCPProbes.values.flatMap { result -> [MetricSample] in
+            var probeLabels = labels
+            probeLabels["target"] = result.target
+            probeLabels["family"] = result.family.metricValue
+            probeLabels["remote_ip"] = result.remoteIP
+            probeLabels["remote_port"] = "\(result.port)"
+            probeLabels["outcome"] = result.outcome
+            probeLabels["timing_source"] = result.timingSource
+            return [
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_tcp_success",
+                    help: "Whether the latest Wi-Fi-bound internet TCP connect probe succeeded.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: result.ok ? 1 : 0
+                ),
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_tcp_duration_seconds",
+                    help: "Duration of the latest Wi-Fi-bound internet TCP connect probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromDurationNanos: result.durationNanos)
+                ),
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_tcp_last_run_timestamp_seconds",
+                    help: "Unix timestamp of the latest Wi-Fi-bound internet TCP probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromWallNanos: result.finishedWallNanos)
+                ),
+            ]
+        }
+    }
+
     func internetHTTPProbeMetrics(labels: [String: String]) -> [MetricSample] {
         internetHTTPProbes.values.flatMap { result -> [MetricSample] in
             var probeLabels = labels

@@ -4,8 +4,24 @@ import WatchmeCore
 import WatchmeTelemetry
 
 extension WiFiAgent {
-    func triggerTrace(reason: String, eventTags: [String: String], force: Bool, includeActive: Bool) {
+    func triggerTrace(
+        reason: String,
+        eventTags: [String: String],
+        force: Bool,
+        includeConnectivityCheck: Bool,
+        connectivityReadinessTimeout: TimeInterval = 0
+    ) {
         triggerQueue.async {
+            if self.associationTracePending, WiFiTracePolicy.shouldSuppressEventTraceDuringAssociation(reason: reason) {
+                logEvent(
+                    .debug, "trace_trigger_suppressed",
+                    fields: [
+                        "reason": reason,
+                        "suppression_reason": "association_trace_pending",
+                    ]
+                )
+                return
+            }
             let now = Date()
             guard force || now.timeIntervalSince(self.lastTrigger) >= self.config.triggerCooldown else {
                 logEvent(
@@ -19,11 +35,63 @@ extension WiFiAgent {
             }
             self.lastTrigger = now
             logEvent(.info, "trace_trigger_accepted", fields: ["reason": reason, "force": force ? "true" : "false"])
-            self.emitTrace(reason: reason, eventTags: eventTags, consumePacketSpans: true, includeActive: includeActive)
+            self.emitTrace(
+                reason: reason,
+                eventTags: eventTags,
+                consumePacketSpans: true,
+                includeConnectivityCheck: includeConnectivityCheck,
+                connectivityReadinessTimeout: connectivityReadinessTimeout
+            )
+        }
+    }
+
+    func scheduleAssociationTrace(sourceReason: String? = nil, reason: String, eventTags: [String: String], delay: TimeInterval) {
+        associationTraceVersion += 1
+        associationTracePending = true
+        packetWindowSuppressedUntil = Date().addingTimeInterval(
+            delay + config.associationTraceReadinessTimeout + config.packetWindowSuppressionAfterAssociation
+        )
+        let version = associationTraceVersion
+        let sourceReason = sourceReason ?? reason
+        logEvent(
+            .debug, "association_trace_scheduled",
+            fields: [
+                "source_reason": sourceReason,
+                "reason": reason,
+                "delay_seconds": String(format: "%.1f", delay),
+                "readiness_timeout_seconds": String(format: "%.1f", config.associationTraceReadinessTimeout),
+            ]
+        )
+        triggerQueue.asyncAfter(deadline: .now() + delay) {
+            guard version == self.associationTraceVersion else {
+                return
+            }
+            var tags = eventTags
+            tags["association.source_reason"] = sourceReason
+            tags["association.delay_seconds"] = String(format: "%.1f", delay)
+            self.emitTrace(
+                reason: reason,
+                eventTags: tags,
+                consumePacketSpans: true,
+                includeConnectivityCheck: true,
+                connectivityReadinessTimeout: self.config.associationTraceReadinessTimeout
+            )
+            self.associationTracePending = false
+            self.packetWindowSuppressedUntil = Date().addingTimeInterval(self.config.packetWindowSuppressionAfterAssociation)
         }
     }
 
     func schedulePacketWindowTrace(sourceReason: String, eventTags: [String: String], delay: TimeInterval) {
+        if associationTracePending || Date() < packetWindowSuppressedUntil {
+            logEvent(
+                .debug, "packet_window_trace_suppressed",
+                fields: [
+                    "source_reason": sourceReason,
+                    "suppression_reason": associationTracePending ? "association_trace_pending" : "association_trace_recently_completed",
+                ]
+            )
+            return
+        }
         packetWindowVersion += 1
         let version = packetWindowVersion
         logEvent(
@@ -40,10 +108,21 @@ extension WiFiAgent {
             guard version == self.packetWindowVersion else {
                 return
             }
+            guard !self.associationTracePending, Date() >= self.packetWindowSuppressedUntil else {
+                logEvent(
+                    .debug, "packet_window_trace_suppressed",
+                    fields: [
+                        "source_reason": sourceReason,
+                        "suppression_reason": self.associationTracePending ? "association_trace_pending" : "association_trace_recently_completed",
+                    ]
+                )
+                return
+            }
             var tags = eventTags
             tags["packet.window.source_reason"] = sourceReason
             tags["packet.window.delay_seconds"] = String(format: "%.1f", delay)
-            self.emitTrace(reason: "wifi.rejoin.packet_window", eventTags: tags, consumePacketSpans: false, includeActive: true)
+            self.emitTrace(reason: "wifi.packet.window", eventTags: tags, consumePacketSpans: true, includeConnectivityCheck: true)
+            self.packetWindowSuppressedUntil = Date().addingTimeInterval(self.config.packetWindowSuppressionAfterAssociation)
         }
     }
 
@@ -62,7 +141,10 @@ extension WiFiAgent {
             self?.triggerQueue.async {
                 var eventTags = tags
                 eventTags["agent.observation"] = reason
-                self?.schedulePacketWindowTrace(sourceReason: reason, eventTags: eventTags, delay: 1.25)
+                guard let self else {
+                    return
+                }
+                self.schedulePacketWindowTrace(sourceReason: reason, eventTags: eventTags, delay: self.config.packetWindowTraceDelay)
             }
         }
         if let error = monitor.start() {
@@ -76,7 +158,7 @@ extension WiFiAgent {
         logEvent(
             .info,
             "bpf_monitor_started",
-            fields: ["interface": interfaceName, "profiles": "dhcp,icmpv6_control,active_dns,active_icmp,active_http"]
+            fields: ["interface": interfaceName, "profiles": "dhcp,icmpv6_control,active_dns,active_icmp,active_tcp,active_http"]
         )
     }
 
@@ -118,9 +200,21 @@ extension WiFiAgent {
         )
     }
 
-    func emitTrace(reason: String, eventTags: [String: String], consumePacketSpans: Bool, includeActive: Bool) {
+    func emitTrace(
+        reason: String,
+        eventTags: [String: String],
+        consumePacketSpans: Bool,
+        includeConnectivityCheck: Bool,
+        connectivityReadinessTimeout: TimeInterval = 0
+    ) {
         let traceStarted = wallClockNanos()
-        let snapshot = captureLatestSnapshot()
+        let context = traceCaptureContext(
+            includeConnectivityCheck: includeConnectivityCheck,
+            connectivityReadinessTimeout: connectivityReadinessTimeout
+        )
+        let snapshot = context.snapshot
+        let networkState = context.networkState
+        let connectivityReadiness = context.connectivityReadiness
         logIdentityStatus(snapshot)
         _ = exportMetrics(snapshot: snapshot)
         let recorder = TraceRecorder()
@@ -130,17 +224,27 @@ extension WiFiAgent {
             fields: [
                 "trace_id": recorder.traceId,
                 "reason": reason,
-                "include_active": includeActive ? "true" : "false",
+                "include_connectivity_check": includeConnectivityCheck ? "true" : "false",
+                "connectivity_readiness": connectivityReadiness.ready ? "ready" : "not_ready",
             ]
         )
 
         var rootTags = snapshot.traceTags
+        rootTags.merge(networkState.traceTags) { _, new in new }
         rootTags.merge(eventTags) { _, new in new }
         rootTags["reason"] = reason
         rootTags["otlp.url"] = config.otlpURL.absoluteString
         rootTags["bpf.enabled"] = config.bpfEnabled ? "true" : "false"
+        rootTags["connectivity_check.requested"] = includeConnectivityCheck ? "true" : "false"
+        rootTags["connectivity_check.ready"] = connectivityReadiness.ready ? "true" : "false"
+        rootTags["connectivity_check.readiness_wait_seconds"] = String(format: "%.3f", context.connectivityReadinessWait)
+        if connectivityReadinessTimeout > 0 {
+            rootTags["connectivity_check.readiness_timeout_seconds"] = String(format: "%.3f", connectivityReadinessTimeout)
+        }
+        if let skipReason = connectivityReadiness.skipReason {
+            rootTags["connectivity_check.skip_reason"] = skipReason
+        }
 
-        let networkState = currentWiFiServiceNetworkState(interfaceName: snapshot.interfaceName)
         if let bpfStats = bpfMonitor?.stats() {
             rootTags["bpf.filter"] = watchmeWiFiBPFFilterName
             rootTags["bpf.packets_received"] = "\(bpfStats.packetsReceived)"
@@ -157,9 +261,24 @@ extension WiFiAgent {
             recordPacketWindow(packetSpans, window: window, recorder: recorder, snapshot: snapshot)
         }
 
-        if includeActive {
-            recordActiveValidation(recorder: recorder, snapshot: snapshot, networkState: networkState)
+        if includeConnectivityCheck, connectivityReadiness.ready {
+            rootTags["connectivity_check.included"] = "true"
+            recordConnectivityCheck(recorder: recorder, snapshot: snapshot, networkState: networkState)
             _ = exportMetrics(snapshot: snapshot)
+        } else {
+            rootTags["connectivity_check.included"] = "false"
+            if includeConnectivityCheck {
+                logEvent(
+                    .info, "connectivity_check_skipped",
+                    fields: [
+                        "reason": reason,
+                        "skip_reason": connectivityReadiness.skipReason ?? "not_ready",
+                        "associated": snapshot.isAssociated ? "true" : "false",
+                        "power_on": snapshot.powerOn.map { $0 ? "true" : "false" } ?? "unknown",
+                        "dns_resolvers": networkState.dnsServers.joined(separator: ","),
+                    ]
+                )
+            }
         }
 
         let rootName = traceRootName(reason)
@@ -183,6 +302,47 @@ extension WiFiAgent {
             result.ok ? "trace_sent" : "trace_export_failed",
             fields: logFields
         )
+    }
+
+    private func traceCaptureContext(
+        includeConnectivityCheck: Bool,
+        connectivityReadinessTimeout: TimeInterval
+    ) -> (
+        snapshot: WiFiSnapshot,
+        networkState: WiFiServiceNetworkState,
+        connectivityReadiness: WiFiConnectivityCheckReadiness,
+        connectivityReadinessWait: TimeInterval
+    ) {
+        let waitStarted = Date()
+        var snapshot = captureLatestSnapshot()
+        var networkState = currentWiFiServiceNetworkState(interfaceName: snapshot.interfaceName)
+        var readiness = WiFiTracePolicy.connectivityCheckReadiness(
+            snapshot: snapshot,
+            networkState: networkState,
+            config: config
+        )
+
+        guard includeConnectivityCheck, connectivityReadinessTimeout > 0, !readiness.ready else {
+            return (snapshot, networkState, readiness, 0)
+        }
+
+        let deadline = waitStarted.addingTimeInterval(connectivityReadinessTimeout)
+        while Date() < deadline {
+            let remaining = deadline.timeIntervalSinceNow
+            Thread.sleep(forTimeInterval: min(max(remaining, 0.01), config.connectivityReadinessPollInterval))
+            snapshot = captureLatestSnapshot()
+            networkState = currentWiFiServiceNetworkState(interfaceName: snapshot.interfaceName)
+            readiness = WiFiTracePolicy.connectivityCheckReadiness(
+                snapshot: snapshot,
+                networkState: networkState,
+                config: config
+            )
+            if readiness.ready {
+                break
+            }
+        }
+
+        return (snapshot, networkState, readiness, Date().timeIntervalSince(waitStarted))
     }
 
     func exportMetrics(snapshot: WiFiSnapshot) -> Bool {
@@ -210,19 +370,19 @@ extension WiFiAgent {
             )
         }
         recorder.recordSpan(
-            name: "phase.wifi_rejoin_packets",
+            name: "phase.packet_window",
             id: phaseId,
-            startWallNanos: window.start,
-            durationNanos: window.duration,
+            startWallNanos: window.start > 1000 ? window.start - 1000 : window.start,
+            durationNanos: window.duration + 1000,
             tags: [
-                "phase.name": "wifi_rejoin_packets",
+                "phase.name": "packet_window",
                 "phase.source": "continuous_bpf",
                 "phase.packet_span_count": "\(packetSpans.count)",
             ]
         )
     }
 
-    private func recordActiveValidation(recorder: TraceRecorder, snapshot: WiFiSnapshot, networkState: WiFiServiceNetworkState) {
+    private func recordConnectivityCheck(recorder: TraceRecorder, snapshot: WiFiSnapshot, networkState: WiFiServiceNetworkState) {
         let phaseId = recorder.newSpanId()
         let phaseStart = wallClockNanos()
         let internetResults = runActiveInternetProbes(
@@ -239,21 +399,24 @@ extension WiFiAgent {
         }
 
         recorder.recordSpan(
-            name: "phase.active_validation",
+            name: "phase.connectivity_check",
             id: phaseId,
             startWallNanos: phaseStart,
             durationNanos: max(wallClockNanos() - phaseStart, 1000),
             tags: [
-                "phase.name": "active_validation",
-                "phase.source": "network_framework_active_probe",
-                "phase.validation_scope": "internet_dns,internet_icmp,internet_http,gateway_icmp",
+                "phase.name": "connectivity_check",
+                "phase.source": "wifi_connectivity_probe",
+                "phase.check_scope": "internet_dns,internet_icmp,internet_tcp,internet_http,gateway_icmp",
                 "probe.internet.targets": config.probeInternetTargets.joined(separator: ","),
                 "probe.internet.family": config.probeInternetFamily.metricValue,
                 "probe.internet.dns.enabled": config.probeInternetDNS ? "true" : "false",
                 "probe.internet.icmp.enabled": config.probeInternetICMP ? "true" : "false",
+                "probe.internet.tcp.enabled": config.probeInternetTCP ? "true" : "false",
                 "probe.internet.http.enabled": config.probeInternetHTTP ? "true" : "false",
+                "probe.internet.path.span_count": "\(internetResults.lanes.count)",
                 "probe.internet.dns.span_count": "\(internetResults.dns.count)",
                 "probe.internet.icmp.span_count": "\(internetResults.icmp.count)",
+                "probe.internet.tcp.span_count": "\(internetResults.tcp.count)",
                 "probe.internet.http.span_count": "\(internetResults.http.count)",
                 "probe.dns_resolvers": networkState.dnsServers.joined(separator: ","),
                 "probe.gateway": networkState.routerIPv4 ?? "",

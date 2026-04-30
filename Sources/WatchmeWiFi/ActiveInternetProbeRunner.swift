@@ -3,9 +3,50 @@ import Foundation
 import WatchmeCore
 
 struct ActiveInternetProbeResults {
+    let lanes: [ActiveInternetProbeLaneResult]
+
+    var dns: [ActiveDNSProbeResult] {
+        lanes.flatMap(\.dns)
+    }
+
+    var icmp: [ActiveICMPProbeResult] {
+        lanes.compactMap(\.icmp)
+    }
+
+    var tcp: [ActiveTCPProbeResult] {
+        lanes.compactMap(\.tcp)
+    }
+
+    var http: [ActiveInternetHTTPProbeResult] {
+        lanes.compactMap(\.http)
+    }
+}
+
+struct ActiveInternetProbeLaneResult {
+    let target: String
+    let family: InternetAddressFamily
     let dns: [ActiveDNSProbeResult]
-    let icmp: [ActiveICMPProbeResult]
-    let http: [ActiveInternetHTTPProbeResult]
+    let icmp: ActiveICMPProbeResult?
+    let tcp: ActiveTCPProbeResult?
+    let http: ActiveInternetHTTPProbeResult?
+    let startWallNanos: UInt64
+    let finishedWallNanos: UInt64
+
+    var durationNanos: UInt64 {
+        max(finishedWallNanos >= startWallNanos ? finishedWallNanos - startWallNanos : 0, 1000)
+    }
+
+    var remoteIP: String {
+        icmp?.remoteIP ?? tcp?.remoteIP ?? http?.remoteIP ?? dns.first { !$0.addresses.isEmpty }?.addresses.first ?? "none"
+    }
+
+    var ok: Bool {
+        let dnsOK = dns.isEmpty || dns.allSatisfy(\.ok)
+        let icmpOK = icmp?.ok ?? true
+        let tcpOK = tcp?.ok ?? true
+        let httpOK = http?.ok ?? true
+        return dnsOK && icmpOK && tcpOK && httpOK
+    }
 }
 
 func runActiveInternetProbes(
@@ -21,34 +62,36 @@ func runActiveInternetProbes(
         interfaceName: interfaceName,
         packetStore: packetStore
     )
-    let dnsResults = config.probeInternetDNS
-        ? runInternetDNSProbes(
-            targets: targets,
-            families: families,
-            resolvers: Array(networkState.dnsServers.prefix(2)),
-            context: context
-        )
-        : []
-    // ICMP and plain HTTP intentionally consume DNS probe output instead of
-    // calling a system resolver again. That keeps the trace internally
-    // explainable: the remote IP used by later spans came from a Wi-Fi-bound
-    // DNS span in the same active validation phase.
-    let addressPlan = internetProbeAddressPlan(targets: targets, families: families, dnsResults: dnsResults)
-    let postDNSResults = runPostDNSInternetProbes(
-        PostDNSInternetProbeInput(
-            addressPlan: addressPlan,
-            context: context,
-            icmpEnabled: config.probeInternetICMP,
-            httpEnabled: config.probeInternetHTTP
-        )
-    )
-    return ActiveInternetProbeResults(dns: dnsResults, icmp: postDNSResults.icmp, http: postDNSResults.http)
+    let resolvers = Array(networkState.dnsServers.prefix(2))
+    let laneInputs = targets.flatMap { target in
+        families.map { family in
+            InternetProbeLaneInput(
+                target: target,
+                family: family,
+                resolvers: resolvers,
+                context: context,
+                dnsEnabled: config.probeInternetDNS,
+                icmpEnabled: config.probeInternetICMP,
+                tcpEnabled: config.probeInternetTCP,
+                httpEnabled: config.probeInternetHTTP
+            )
+        }
+    }
+    let lanes = runParallelSorted(laneInputs, sortKey: internetProbeLaneSortKey) { input in
+        runInternetProbeLane(input)
+    }
+    return ActiveInternetProbeResults(lanes: lanes)
 }
 
-private struct InternetAddressPlan {
+private struct InternetProbeLaneInput {
     let target: InternetProbeTarget
     let family: InternetAddressFamily
-    let remoteIP: String?
+    let resolvers: [String]
+    let context: InternetProbeExecutionContext
+    let dnsEnabled: Bool
+    let icmpEnabled: Bool
+    let tcpEnabled: Bool
+    let httpEnabled: Bool
 }
 
 private struct InternetProbeExecutionContext {
@@ -57,123 +100,82 @@ private struct InternetProbeExecutionContext {
     let packetStore: PassivePacketStore
 }
 
-private struct InternetDNSProbeRequest {
-    let resolver: String
-    let target: InternetProbeTarget
-    let family: InternetAddressFamily
-}
+private func runInternetProbeLane(_ input: InternetProbeLaneInput) -> ActiveInternetProbeLaneResult {
+    let laneStarted = wallClockNanos()
+    let dnsResults = input.dnsEnabled
+        ? runInternetDNSProbes(
+            target: input.target,
+            family: input.family,
+            resolvers: input.resolvers,
+            context: input.context
+        )
+        : []
+    let remoteIP = literalIPAddress(input.target.host, family: input.family)
+        ?? dnsResults.first { $0.ok && !$0.addresses.isEmpty }?.addresses.first
+        ?? dnsResults.first { !$0.addresses.isEmpty }?.addresses.first
 
-private struct PostDNSInternetProbeInput {
-    let addressPlan: [InternetAddressPlan]
-    let context: InternetProbeExecutionContext
-    let icmpEnabled: Bool
-    let httpEnabled: Bool
-}
+    let icmpResult = input.icmpEnabled
+        ? runInternetICMPProbe(
+            target: input.target.host,
+            family: input.family,
+            remoteIP: remoteIP,
+            timeout: input.context.timeout,
+            interfaceName: input.context.interfaceName,
+            packetStore: input.context.packetStore
+        )
+        : nil
+    let tcpResult = input.tcpEnabled
+        ? runInternetTCPProbe(
+            target: input.target.host,
+            family: input.family,
+            remoteIP: remoteIP,
+            timeout: input.context.timeout,
+            interfaceName: input.context.interfaceName,
+            packetStore: input.context.packetStore
+        )
+        : nil
+    let httpResult = input.httpEnabled
+        ? runInternetHTTPProbe(
+            target: input.target.host,
+            family: input.family,
+            remoteIP: remoteIP,
+            timeout: input.context.timeout,
+            interfaceName: input.context.interfaceName,
+            packetStore: input.context.packetStore
+        )
+        : nil
 
-private struct PostDNSInternetProbeResults {
-    let icmp: [ActiveICMPProbeResult]
-    let http: [ActiveInternetHTTPProbeResult]
-}
-
-private func runPostDNSInternetProbes(_ input: PostDNSInternetProbeInput) -> PostDNSInternetProbeResults {
-    // After DNS has produced concrete addresses, ICMP and HTTP no longer
-    // depend on each other. Run both families of work concurrently so dual
-    // stack and multi-target validations describe the same point in time.
-    let lock = NSLock()
-    let group = DispatchGroup()
-    var icmpResults: [ActiveICMPProbeResult] = []
-    var httpResults: [ActiveInternetHTTPProbeResult] = []
-
-    if input.icmpEnabled {
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            let results = runInternetICMPProbes(
-                addressPlan: input.addressPlan,
-                context: input.context
-            )
-            lock.lock()
-            icmpResults = results
-            lock.unlock()
-            group.leave()
-        }
-    }
-
-    if input.httpEnabled {
-        group.enter()
-        DispatchQueue.global(qos: .utility).async {
-            let results = runInternetHTTPProbes(
-                addressPlan: input.addressPlan,
-                context: input.context
-            )
-            lock.lock()
-            httpResults = results
-            lock.unlock()
-            group.leave()
-        }
-    }
-
-    group.wait()
-    return PostDNSInternetProbeResults(icmp: icmpResults, http: httpResults)
+    let starts = dnsResults.map(\.startWallNanos)
+        + [icmpResult?.startWallNanos, tcpResult?.startWallNanos, httpResult?.startWallNanos].compactMap { $0 }
+    let finishes = dnsResults.map(\.finishedWallNanos)
+        + [icmpResult?.finishedWallNanos, tcpResult?.finishedWallNanos, httpResult?.finishedWallNanos].compactMap { $0 }
+    return ActiveInternetProbeLaneResult(
+        target: input.target.host,
+        family: input.family,
+        dns: dnsResults,
+        icmp: icmpResult,
+        tcp: tcpResult,
+        http: httpResult,
+        startWallNanos: min(starts.min() ?? laneStarted, laneStarted),
+        finishedWallNanos: max(finishes.max() ?? laneStarted + 1000, wallClockNanos())
+    )
 }
 
 private func runInternetDNSProbes(
-    targets: [InternetProbeTarget],
-    families: [InternetAddressFamily],
+    target: InternetProbeTarget,
+    family: InternetAddressFamily,
     resolvers: [String],
     context: InternetProbeExecutionContext
 ) -> [ActiveDNSProbeResult] {
     guard !resolvers.isEmpty else {
-        return targets.flatMap { target in
-            families.map { family in
-                noResolverDNSProbeResult(target: target.host, family: family)
-            }
-        }
-    }
-    let requests = resolvers.flatMap { resolver in
-        targets.flatMap { target in
-            families.map { family in
-                InternetDNSProbeRequest(resolver: resolver, target: target, family: family)
-            }
-        }
+        return [noResolverDNSProbeResult(target: target.host, family: family)]
     }
 
-    return runParallelSorted(requests, sortKey: dnsProbeSortKey) { request in
+    return resolvers.map { resolver in
         runInternetDNSProbe(
-            target: request.target.host,
-            family: request.family,
-            resolver: request.resolver,
-            timeout: context.timeout,
-            interfaceName: context.interfaceName,
-            packetStore: context.packetStore
-        )
-    }
-}
-
-private func runInternetICMPProbes(
-    addressPlan: [InternetAddressPlan],
-    context: InternetProbeExecutionContext
-) -> [ActiveICMPProbeResult] {
-    runParallelSorted(addressPlan, sortKey: icmpProbeSortKey) { plan in
-        runInternetICMPProbe(
-            target: plan.target.host,
-            family: plan.family,
-            remoteIP: plan.remoteIP,
-            timeout: context.timeout,
-            interfaceName: context.interfaceName,
-            packetStore: context.packetStore
-        )
-    }
-}
-
-private func runInternetHTTPProbes(
-    addressPlan: [InternetAddressPlan],
-    context: InternetProbeExecutionContext
-) -> [ActiveInternetHTTPProbeResult] {
-    runParallelSorted(addressPlan, sortKey: httpProbeSortKey) { plan in
-        runInternetHTTPProbe(
-            target: plan.target.host,
-            family: plan.family,
-            remoteIP: plan.remoteIP,
+            target: target.host,
+            family: family,
+            resolver: resolver,
             timeout: context.timeout,
             interfaceName: context.interfaceName,
             packetStore: context.packetStore
@@ -203,36 +205,8 @@ private func runParallelSorted<Input, Output>(
     }
 }
 
-private func dnsProbeSortKey(_ result: ActiveDNSProbeResult) -> String {
-    [result.target, result.family.metricValue, result.resolver].joined(separator: "|")
-}
-
-private func icmpProbeSortKey(_ result: ActiveICMPProbeResult) -> String {
-    [result.target, result.family.metricValue, result.remoteIP].joined(separator: "|")
-}
-
-private func httpProbeSortKey(_ result: ActiveInternetHTTPProbeResult) -> String {
-    [result.target, result.family.metricValue, result.remoteIP].joined(separator: "|")
-}
-
-private func internetProbeAddressPlan(
-    targets: [InternetProbeTarget],
-    families: [InternetAddressFamily],
-    dnsResults: [ActiveDNSProbeResult]
-) -> [InternetAddressPlan] {
-    targets.flatMap { target in
-        families.map { family in
-            InternetAddressPlan(
-                target: target,
-                family: family,
-                remoteIP: literalIPAddress(target.host, family: family)
-                    ?? dnsResults.first {
-                        $0.target == target.host && $0.family == family && !$0.addresses.isEmpty
-                    }?
-                    .addresses.first
-            )
-        }
-    }
+private func internetProbeLaneSortKey(_ result: ActiveInternetProbeLaneResult) -> String {
+    [result.target, result.family.metricValue].joined(separator: "|")
 }
 
 private func noResolverDNSProbeResult(target: String, family: InternetAddressFamily) -> ActiveDNSProbeResult {
@@ -274,7 +248,9 @@ private final class LockedValues<Value> {
 
     var values: [Value] {
         lock.lock()
-        defer { lock.unlock() }
+        defer {
+            lock.unlock()
+        }
         return storage
     }
 

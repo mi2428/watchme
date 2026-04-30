@@ -53,6 +53,18 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(tags["packet.timestamp_source"], bpfHeaderTimestampSource)
     }
 
+    func testTCPTagsExposeConnectTimingFields() {
+        let tags = makeAgent().activeTCPTags(result: tcpResult(), snapshot: makeSnapshot())
+
+        XCTAssertEqual(tags["span.source"], "network_framework_tcp_probe")
+        XCTAssertEqual(tags["network.family"], "ipv4")
+        XCTAssertEqual(tags["network.peer.address"], "34.223.124.45")
+        XCTAssertEqual(tags["net.peer.port"], "80")
+        XCTAssertEqual(tags["tcp.outcome"], "connected")
+        XCTAssertEqual(tags["packet.event"], "tcp_syn_to_response")
+        XCTAssertEqual(tags["packet.timestamp_source"], bpfHeaderTimestampSource)
+    }
+
     func testGatewayTagsExposeFirstHopOutcomeAndPacketTimingFields() {
         let tags = makeAgent().activeGatewayTags(result: gatewayResult(), snapshot: makeSnapshot())
 
@@ -144,6 +156,24 @@ final class ActiveProbeTelemetryTests: XCTestCase {
             timing: ActiveProbeTiming(
                 startWallNanos: 3_000_000_000,
                 finishedWallNanos: 3_080_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
+        )
+    }
+
+    private func tcpResult() -> ActiveTCPProbeResult {
+        ActiveTCPProbeResult(
+            target: "neverssl.com",
+            family: .ipv4,
+            remoteIP: "34.223.124.45",
+            port: 80,
+            ok: true,
+            outcome: "connected",
+            error: nil,
+            timing: ActiveProbeTiming(
+                startWallNanos: 2_500_000_000,
+                finishedWallNanos: 2_530_000_000,
                 timingSource: bpfPacketTimingSource,
                 timestampSource: bpfHeaderTimestampSource
             )

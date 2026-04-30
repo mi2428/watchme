@@ -18,6 +18,9 @@ final class WiFiAgent: WatchmeCollector {
     var metricsTimer: DispatchSourceTimer?
     var activeTimer: DispatchSourceTimer?
     var packetWindowVersion = 0
+    var associationTraceVersion = 0
+    var associationTracePending = false
+    var packetWindowSuppressedUntil = Date.distantPast
     var lastIdentityStatusLogSignature: String?
     var metricState = WiFiMetricState()
 
@@ -40,7 +43,12 @@ final class WiFiAgent: WatchmeCollector {
         }
         logIdentityStatus(snapshot)
         _ = exportMetrics(snapshot: snapshot)
-        emitTrace(reason: "wifi.active", eventTags: ["agent.mode": "once"], consumePacketSpans: false, includeActive: true)
+        emitTrace(
+            reason: "wifi.connectivity",
+            eventTags: ["agent.mode": "once"],
+            consumePacketSpans: false,
+            includeConnectivityCheck: true
+        )
         return 0
     }
 
@@ -50,7 +58,7 @@ final class WiFiAgent: WatchmeCollector {
             fields: [
                 "pid": "\(getpid())",
                 "metrics_interval_seconds": "\(Int(config.metricsInterval))",
-                "active_interval_seconds": "\(Int(config.activeInterval))",
+                "connectivity_interval_seconds": "\(Int(config.traceInterval))",
                 "otlp_url": config.otlpURL.absoluteString,
                 "bpf_enabled": config.bpfEnabled ? "true" : "false",
             ]
@@ -59,7 +67,12 @@ final class WiFiAgent: WatchmeCollector {
         startBPFIfNeeded(interfaceName: lastSnapshot.interfaceName)
         logIdentityStatus(lastSnapshot)
         _ = exportMetrics(snapshot: lastSnapshot)
-        emitTrace(reason: "wifi.active", eventTags: ["agent.mode": "startup"], consumePacketSpans: true, includeActive: true)
+        emitTrace(
+            reason: "wifi.connectivity",
+            eventTags: ["agent.mode": "startup"],
+            consumePacketSpans: true,
+            includeConnectivityCheck: true
+        )
 
         let metricsTimer = DispatchSource.makeTimerSource(queue: triggerQueue)
         metricsTimer.schedule(deadline: .now() + config.metricsInterval, repeating: config.metricsInterval)
@@ -76,9 +89,14 @@ final class WiFiAgent: WatchmeCollector {
         self.metricsTimer = metricsTimer
 
         let activeTimer = DispatchSource.makeTimerSource(queue: triggerQueue)
-        activeTimer.schedule(deadline: .now() + config.activeInterval, repeating: config.activeInterval)
+        activeTimer.schedule(deadline: .now() + config.traceInterval, repeating: config.traceInterval)
         activeTimer.setEventHandler { [weak self] in
-            self?.triggerTrace(reason: "wifi.active", eventTags: ["agent.observation": "active_interval"], force: true, includeActive: true)
+            self?.triggerTrace(
+                reason: "wifi.connectivity",
+                eventTags: ["agent.observation": "connectivity_interval"],
+                force: true,
+                includeConnectivityCheck: true
+            )
         }
         activeTimer.resume()
         self.activeTimer = activeTimer
@@ -137,11 +155,18 @@ final class WiFiAgent: WatchmeCollector {
             var tags = fields
             tags["agent.observation"] = event.name
             tags["wifi.transition.classification"] = reason
-            self.triggerTrace(reason: reason, eventTags: tags, force: reason == "wifi.roam" || reason == "wifi.join", includeActive: true)
 
-            if reason == "wifi.join" || reason == "wifi.roam" {
-                self.schedulePacketWindowTrace(sourceReason: reason, eventTags: tags, delay: 2.0)
+            if WiFiTracePolicy.isAssociationRecoveryReason(reason) {
+                self.scheduleAssociationTrace(reason: reason, eventTags: tags, delay: self.config.associationTraceDelay)
+                return
             }
+
+            self.triggerTrace(
+                reason: reason,
+                eventTags: tags,
+                force: false,
+                includeConnectivityCheck: WiFiTracePolicy.shouldRequestConnectivityCheck(snapshot: current)
+            )
         }
     }
 
@@ -161,10 +186,16 @@ final class WiFiAgent: WatchmeCollector {
             eventTags["current_local_ip"] = current.primaryIPv4 ?? ""
 
             if !previous.isAssociated, current.isAssociated {
-                self.triggerTrace(reason: "wifi.join", eventTags: eventTags, force: true, includeActive: true)
-                self.schedulePacketWindowTrace(sourceReason: "wifi.join", eventTags: eventTags, delay: 2.0)
+                self.scheduleAssociationTrace(reason: "wifi.join", eventTags: eventTags, delay: self.config.associationTraceDelay)
+            } else if WiFiTracePolicy.isAddressAcquisition(previous: previous, current: current) {
+                self.scheduleAssociationTrace(reason: "wifi.join", eventTags: eventTags, delay: self.config.associationTraceDelay)
             } else if previous.primaryIPv4 != current.primaryIPv4, current.isAssociated {
-                self.triggerTrace(reason: reason, eventTags: eventTags, force: false, includeActive: true)
+                self.triggerTrace(
+                    reason: reason,
+                    eventTags: eventTags,
+                    force: false,
+                    includeConnectivityCheck: WiFiTracePolicy.shouldRequestConnectivityCheck(snapshot: current)
+                )
             }
         }
     }

@@ -5,7 +5,7 @@ func requiredProbeInterface(named interfaceName: String?, timeout: TimeInterval)
     guard let interfaceName, !interfaceName.isEmpty else {
         return nil
     }
-    // Active probes must validate the Wi-Fi path itself, not the system default
+    // Probe connections must use the Wi-Fi path itself, not the system default
     // route. On Macs with Ethernet or VPN as default, this prevents a
     // successful non-Wi-Fi route from hiding Wi-Fi join failures.
     return networkInterface(named: interfaceName, timeout: min(1.0, timeout))

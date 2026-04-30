@@ -213,6 +213,7 @@ struct WiFiMetricState {
     private(set) var coreWLANEvents: [String: Int] = [:]
     private(set) var snapshotChanges: [String: Int] = [:]
     private(set) var internetHTTPProbes: [String: ActiveInternetHTTPProbeResult] = [:]
+    private(set) var internetTCPProbes: [String: ActiveTCPProbeResult] = [:]
     private(set) var dnsProbes: [String: ActiveDNSProbeResult] = [:]
     private(set) var icmpProbes: [String: ActiveICMPProbeResult] = [:]
     private(set) var gatewayProbes: [String: ActiveGatewayProbeResult] = [:]
@@ -232,6 +233,10 @@ struct WiFiMetricState {
 
     mutating func recordInternetHTTPProbe(_ result: ActiveInternetHTTPProbeResult) {
         internetHTTPProbes["\(result.target)|\(result.family.metricValue)"] = result
+    }
+
+    mutating func recordInternetTCPProbe(_ result: ActiveTCPProbeResult) {
+        internetTCPProbes["\(result.target)|\(result.family.metricValue)"] = result
     }
 
     mutating func recordDNSProbe(_ result: ActiveDNSProbeResult) {
@@ -257,9 +262,10 @@ struct WiFiMetricState {
     func metrics(labels: [String: String]) -> [MetricSample] {
         var metrics: [MetricSample] = []
         metrics.append(contentsOf: counterMetrics(labels: labels))
-        metrics.append(contentsOf: internetHTTPProbeMetrics(labels: labels))
         metrics.append(contentsOf: dnsProbeMetrics(labels: labels))
         metrics.append(contentsOf: icmpProbeMetrics(labels: labels))
+        metrics.append(contentsOf: internetTCPProbeMetrics(labels: labels))
+        metrics.append(contentsOf: internetHTTPProbeMetrics(labels: labels))
         metrics.append(contentsOf: gatewayProbeMetrics(labels: labels))
         return metrics
     }

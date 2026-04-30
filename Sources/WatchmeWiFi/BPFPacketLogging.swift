@@ -22,7 +22,7 @@ func logActiveDNSPacket(_ observation: DNSPacketObservation) {
     logEvent(.debug, "active_dns_packet_observed", fields: fields)
 }
 
-func logActiveHTTPPacket(_ observation: TCPPacketObservation) {
+func logActiveTCPPacket(_ observation: TCPPacketObservation) {
     var fields: [String: String] = [
         "interface": observation.interfaceName,
         "tcp.source_ip": observation.sourceIP,
@@ -39,7 +39,7 @@ func logActiveHTTPPacket(_ observation: TCPPacketObservation) {
             limit: 64
         )
     }
-    logEvent(.debug, "active_http_packet_observed", fields: fields)
+    logEvent(.debug, "active_tcp_packet_observed", fields: fields)
 }
 
 func logActiveICMPPacket(_ observation: ICMPPacketObservation) {

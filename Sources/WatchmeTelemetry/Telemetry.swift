@@ -278,7 +278,7 @@ public final class TraceRecorder {
         } else {
             // Passive BPF spans may start before the CoreWLAN/SystemConfiguration
             // callback that triggered export. Expand the root span so Tempo shows
-            // the whole rejoin window rather than clipping the packet history.
+            // the whole packet window rather than clipping the packet history.
             rootStart = min(rootStartWallNanos, children.map(\.startWallNanos).min() ?? rootStartWallNanos)
             let last = max(wallClockNanos(), children.map { $0.startWallNanos + $0.durationNanos }.max() ?? rootStartWallNanos)
             rootDuration = max(1000, last - rootStart)

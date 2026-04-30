@@ -9,45 +9,132 @@ extension WiFiAgent {
         recorder: TraceRecorder,
         snapshot: WiFiSnapshot
     ) {
-        for result in results.dns {
-            metricState.recordDNSProbe(result)
+        for lane in results.lanes {
+            let laneId = recorder.newSpanId()
+            let laneStart = parentSpanStart(before: lane.startWallNanos)
             recorder.recordSpan(
-                name: "probe.internet.dns.resolve",
-                id: recorder.newSpanId(),
-                startWallNanos: result.startWallNanos,
-                durationNanos: result.durationNanos,
+                name: "probe.internet.path",
+                id: laneId,
+                startWallNanos: laneStart,
+                durationNanos: lane.finishedWallNanos - laneStart,
                 parentId: phaseId,
-                tags: activeDNSTags(result: result, snapshot: snapshot),
-                statusOK: result.ok
+                tags: activeInternetLaneTags(result: lane, snapshot: snapshot),
+                statusOK: lane.ok
             )
-            logInternetDNSResult(result, traceId: recorder.traceId)
+            for result in lane.dns {
+                recordInternetDNSResult(result, parentId: laneId, recorder: recorder, snapshot: snapshot)
+            }
+            if let result = lane.icmp {
+                recordInternetICMPResult(result, parentId: laneId, recorder: recorder, snapshot: snapshot)
+            }
+            if let result = lane.tcp {
+                recordInternetTCPResult(result, parentId: laneId, recorder: recorder, snapshot: snapshot)
+            }
+            if let result = lane.http {
+                recordInternetHTTPResult(result, parentId: laneId, recorder: recorder, snapshot: snapshot)
+            }
         }
-        for result in results.icmp {
-            metricState.recordICMPProbe(result)
-            recorder.recordSpan(
-                name: "probe.internet.icmp.echo",
-                id: recorder.newSpanId(),
-                startWallNanos: result.startWallNanos,
-                durationNanos: result.durationNanos,
-                parentId: phaseId,
-                tags: activeICMPTags(result: result, snapshot: snapshot),
-                statusOK: result.ok
-            )
-            logInternetICMPResult(result, traceId: recorder.traceId)
-        }
-        for result in results.http {
-            metricState.recordInternetHTTPProbe(result)
-            recorder.recordSpan(
-                name: "probe.internet.http.head",
-                id: recorder.newSpanId(),
-                startWallNanos: result.startWallNanos,
-                durationNanos: result.durationNanos,
-                parentId: phaseId,
-                tags: activeInternetHTTPTags(result: result, snapshot: snapshot),
-                statusOK: result.ok
-            )
-            logInternetHTTPResult(result, traceId: recorder.traceId)
-        }
+    }
+
+    private func recordInternetDNSResult(
+        _ result: ActiveDNSProbeResult,
+        parentId: String,
+        recorder: TraceRecorder,
+        snapshot: WiFiSnapshot
+    ) {
+        metricState.recordDNSProbe(result)
+        recorder.recordSpan(
+            name: "probe.internet.dns.resolve",
+            id: recorder.newSpanId(),
+            startWallNanos: result.startWallNanos,
+            durationNanos: result.durationNanos,
+            parentId: parentId,
+            tags: activeDNSTags(result: result, snapshot: snapshot),
+            statusOK: result.ok
+        )
+        logInternetDNSResult(result, traceId: recorder.traceId)
+    }
+
+    private func recordInternetICMPResult(
+        _ result: ActiveICMPProbeResult,
+        parentId: String,
+        recorder: TraceRecorder,
+        snapshot: WiFiSnapshot
+    ) {
+        metricState.recordICMPProbe(result)
+        recorder.recordSpan(
+            name: "probe.internet.icmp.echo",
+            id: recorder.newSpanId(),
+            startWallNanos: result.startWallNanos,
+            durationNanos: result.durationNanos,
+            parentId: parentId,
+            tags: activeICMPTags(result: result, snapshot: snapshot),
+            statusOK: result.ok
+        )
+        logInternetICMPResult(result, traceId: recorder.traceId)
+    }
+
+    private func recordInternetTCPResult(
+        _ result: ActiveTCPProbeResult,
+        parentId: String,
+        recorder: TraceRecorder,
+        snapshot: WiFiSnapshot
+    ) {
+        metricState.recordInternetTCPProbe(result)
+        recorder.recordSpan(
+            name: "probe.internet.tcp.connect",
+            id: recorder.newSpanId(),
+            startWallNanos: result.startWallNanos,
+            durationNanos: result.durationNanos,
+            parentId: parentId,
+            tags: activeTCPTags(result: result, snapshot: snapshot),
+            statusOK: result.ok
+        )
+        logInternetTCPResult(result, traceId: recorder.traceId)
+    }
+
+    private func recordInternetHTTPResult(
+        _ result: ActiveInternetHTTPProbeResult,
+        parentId: String,
+        recorder: TraceRecorder,
+        snapshot: WiFiSnapshot
+    ) {
+        metricState.recordInternetHTTPProbe(result)
+        recorder.recordSpan(
+            name: "probe.internet.http.head",
+            id: recorder.newSpanId(),
+            startWallNanos: result.startWallNanos,
+            durationNanos: result.durationNanos,
+            parentId: parentId,
+            tags: activeInternetHTTPTags(result: result, snapshot: snapshot),
+            statusOK: result.ok
+        )
+        logInternetHTTPResult(result, traceId: recorder.traceId)
+    }
+
+    func activeInternetLaneTags(result: ActiveInternetProbeLaneResult, snapshot: WiFiSnapshot) -> [String: String] {
+        var tags = activeProbeBaseTags(
+            snapshot: snapshot,
+            timingSource: "composite",
+            timestampSource: wallClockTimestampSource,
+            spanSource: "watchme_connectivity_check"
+        )
+        tags.merge([
+            "probe.target": result.target,
+            "probe.internet.target": result.target,
+            "network.family": result.family.metricValue,
+            "network.peer.address": result.remoteIP,
+            "probe.internet.dns.span_count": "\(result.dns.count)",
+            "probe.internet.icmp.span_count": result.icmp == nil ? "0" : "1",
+            "probe.internet.tcp.span_count": result.tcp == nil ? "0" : "1",
+            "probe.internet.http.span_count": result.http == nil ? "0" : "1",
+            "probe.internet.path.status": result.ok ? "ok" : "error",
+        ]) { _, new in new }
+        return tags
+    }
+
+    private func parentSpanStart(before firstChildStart: UInt64) -> UInt64 {
+        firstChildStart > 1000 ? firstChildStart - 1000 : firstChildStart
     }
 
     func recordGatewayProbeResult(
@@ -161,6 +248,26 @@ extension WiFiAgent {
         return tags
     }
 
+    func activeTCPTags(result: ActiveTCPProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
+        var tags = activeProbeBaseTags(
+            snapshot: snapshot,
+            timingSource: result.timingSource,
+            timestampSource: result.timestampSource,
+            spanSource: "network_framework_tcp_probe"
+        )
+        tags.merge([
+            "probe.target": result.target,
+            "probe.internet.target": result.target,
+            "network.family": result.family.metricValue,
+            "network.peer.address": result.remoteIP,
+            "net.peer.port": "\(result.port)",
+            "tcp.outcome": result.outcome,
+        ]) { _, new in new }
+        addPacketTimingTags(&tags, timingSource: result.timingSource, event: "tcp_syn_to_response")
+        addErrorTag(&tags, error: result.error)
+        return tags
+    }
+
     func logInternetDNSResult(_ result: ActiveDNSProbeResult, traceId: String) {
         logEvent(
             result.ok ? .debug : .warn, "active_internet_dns_probe_completed",
@@ -210,6 +317,23 @@ extension WiFiAgent {
                 "outcome": result.outcome,
                 "status": result.ok ? "ok" : "error",
                 "status_code": result.statusCode.map(String.init) ?? "",
+                "timing_source": result.timingSource,
+                "error": result.error ?? "",
+            ]
+        )
+    }
+
+    func logInternetTCPResult(_ result: ActiveTCPProbeResult, traceId: String) {
+        logEvent(
+            result.ok ? .debug : .warn, "active_internet_tcp_probe_completed",
+            fields: [
+                "trace_id": traceId,
+                "target": result.target,
+                "network.family": result.family.metricValue,
+                "remote_ip": result.remoteIP,
+                "remote_port": "\(result.port)",
+                "outcome": result.outcome,
+                "status": result.ok ? "ok" : "error",
                 "timing_source": result.timingSource,
                 "error": result.error ?? "",
             ]
