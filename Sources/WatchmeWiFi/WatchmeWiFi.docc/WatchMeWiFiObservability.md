@@ -14,6 +14,7 @@ It is meant to be checked against the source when instrumentation changes.
 - [Implementation rationale](#implementation-rationale)
 - [Runtime entry points](#runtime-entry-points)
   - [CLI options](#cli-options)
+- [OTLP delivery and local spool](#otlp-delivery-and-local-spool)
 - [Collection points](#collection-points)
 - [Snapshot model](#snapshot-model)
 - [Metrics](#metrics)
@@ -136,6 +137,24 @@ The options below apply to `watchme wifi` and `watchme wifi once`.
 - **`--probe.internet.http`:** Boolean switch for internet plain HTTP HEAD probes.
 - **`--log.level`:** Structured log minimum level.
 
+## OTLP delivery and local spool
+
+Wi-Fi outages, disabled Wi-Fi, captive networks, VPN transitions, or collector restarts can make the OTLP endpoint unreachable exactly when WatchMe is collecting useful evidence.
+WatchMe therefore persists retryable OTLP/HTTP export failures locally.
+
+The spool stores the exact OTLP HTTP request payload that WatchMe attempted to send.
+It does not reinterpret traces or synthesize replacement timestamps.
+Pending payloads are written under `~/.watchme/otlp-spool` by default; set `WATCHME_OTLP_SPOOL_DIR` to override this directory.
+
+Delivery behavior:
+
+- Before sending a current OTLP request, WatchMe replays pending spool files oldest-first.
+- A spooled payload is removed only after the collector returns a 2xx HTTP response.
+- Retryable failures, such as connection failures, timeouts, HTTP 408, HTTP 429, or HTTP 5xx, leave the payload on disk.
+- Non-retryable HTTP status responses, such as most HTTP 4xx responses, drop that payload so a bad request does not permanently block newer signals.
+- In long-running mode, recovery is attempted on the next metrics interval, active trace, or event-triggered export.
+- In one-shot mode, pending payloads can be flushed by a later `watchme wifi once`, `watchme system once`, or long-running agent execution that can reach the collector.
+
 ## Collection points
 
 | Area | Source file | API or mechanism | What it observes |
@@ -206,9 +225,10 @@ Trace root tags always include the snapshot fields below when available:
 
 ## Metrics
 
-Metrics are recorded as OpenTelemetry metric instruments and exported through OTLP/HTTP to `<--collector.url>/v1/metrics`.
+Metrics are encoded as OTLP/HTTP JSON and exported to `<--collector.url>/v1/metrics`.
 `MetricSample` gauges become OTel gauge datapoints.
-`MetricSample` counters are tracked as monotonic OTel counters by adding source deltas; zero-valued first samples are recorded so expected series exist, and if a source counter decreases WatchMe treats it as a local source reset.
+`MetricSample` counters are emitted as cumulative monotonic OTel sum datapoints.
+WatchMe keeps a per-series local total by adding source deltas; zero-valued first samples are recorded so expected series exist, and if a source counter decreases WatchMe treats it as a local source reset.
 
 Metrics are exported:
 

@@ -26,6 +26,20 @@ Those views can be built downstream from the exported counters and gauges.
 - **`--metrics.interval`:** System metric collection interval in seconds.
 - **`--log.level`:** Structured log minimum level.
 
+## OTLP delivery and local spool
+
+`watchme system` uses the same OTLP/HTTP delivery path as `watchme wifi`.
+When a retryable export fails because the collector or network is unavailable, WatchMe writes the exact OTLP HTTP payload to a local spool.
+The default spool directory is `~/.watchme/otlp-spool`; set `WATCHME_OTLP_SPOOL_DIR` to override it.
+
+Delivery behavior:
+
+- Before sending a current OTLP request, WatchMe replays pending spool files oldest-first.
+- A spooled payload is removed only after the collector returns a 2xx HTTP response.
+- Retryable failures, such as connection failures, timeouts, HTTP 408, HTTP 429, or HTTP 5xx, leave the payload on disk.
+- Non-retryable HTTP status responses, such as most HTTP 4xx responses, drop that payload so a bad request does not permanently block newer metrics.
+- Recovery is attempted on the next metrics interval in long-running mode, or by a later `watchme system once`, `watchme wifi once`, or long-running agent execution.
+
 ## Collection points
 
 | Area | Source file | API or mechanism | What it observes |
@@ -36,9 +50,10 @@ Those views can be built downstream from the exported counters and gauges.
 
 ## Metrics
 
-Metrics are recorded as OpenTelemetry metric instruments and exported through OTLP/HTTP to `<--collector.url>/v1/metrics`.
+Metrics are encoded as OTLP/HTTP JSON and exported to `<--collector.url>/v1/metrics`.
 `MetricSample` gauges become OTel gauge datapoints.
-`MetricSample` counters are tracked as monotonic OTel counters by adding source deltas; if a source counter decreases WatchMe treats it as a local source reset.
+`MetricSample` counters are emitted as cumulative monotonic OTel sum datapoints.
+WatchMe keeps a per-series local total by adding source deltas; if a source counter decreases WatchMe treats it as a local source reset.
 
 Metrics are exported:
 
