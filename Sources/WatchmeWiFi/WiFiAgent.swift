@@ -21,6 +21,7 @@ final class WiFiAgent: WatchmeCollector {
     var packetWindowVersion = 0
     var associationTraceVersion = 0
     var associationTracePending = false
+    var lastAssociationTraceCompletedEpochNanos: UInt64?
     var packetWindowSuppressedUntil = Date.distantPast
     var lastIdentityStatusLogSignature: String?
     var metricState = WiFiMetricState()
@@ -81,24 +82,24 @@ final class WiFiAgent: WatchmeCollector {
             guard let self else {
                 return
             }
-            let previous = self.lastEventSnapshot
+            let previous = lastEventSnapshot
             let snapshot = captureLatestSnapshot()
             if !previous.isAssociated, snapshot.isAssociated {
-                self.scheduleAssociationTrace(
+                scheduleAssociationTrace(
                     sourceReason: "metrics.snapshot",
                     reason: "wifi.join",
-                    eventTags: self.snapshotTransitionTags(previous: previous, current: snapshot, observation: "metrics_snapshot"),
-                    delay: self.config.associationTraceDelay
+                    eventTags: snapshotTransitionTags(previous: previous, current: snapshot, observation: "metrics_snapshot"),
+                    delay: config.associationTraceDelay
                 )
             } else if WiFiTracePolicy.isAddressAcquisition(previous: previous, current: snapshot) {
-                self.scheduleAssociationTrace(
+                scheduleAssociationTrace(
                     sourceReason: "metrics.snapshot",
                     reason: "wifi.join",
-                    eventTags: self.snapshotTransitionTags(previous: previous, current: snapshot, observation: "metrics_snapshot"),
-                    delay: self.config.associationTraceDelay
+                    eventTags: snapshotTransitionTags(previous: previous, current: snapshot, observation: "metrics_snapshot"),
+                    delay: config.associationTraceDelay
                 )
             }
-            self.lastEventSnapshot = snapshot
+            lastEventSnapshot = snapshot
             startBPFIfNeeded(interfaceName: snapshot.interfaceName)
             logIdentityStatus(snapshot)
             _ = exportMetrics(snapshot: snapshot)
@@ -180,11 +181,22 @@ final class WiFiAgent: WatchmeCollector {
                 return
             }
 
+            let includeConnectivityCheck = WiFiTracePolicy.shouldRequestConnectivityCheck(snapshot: current)
+            guard WiFiTracePolicy.shouldEmitEventTrace(reason: reason, snapshot: current) else {
+                logEvent(
+                    .debug, "trace_trigger_suppressed",
+                    fields: [
+                        "reason": reason,
+                        "suppression_reason": "wifi_not_ready_for_event_trace",
+                    ]
+                )
+                return
+            }
             self.triggerTrace(
                 reason: reason,
                 eventTags: tags,
                 force: false,
-                includeConnectivityCheck: WiFiTracePolicy.shouldRequestConnectivityCheck(snapshot: current)
+                includeConnectivityCheck: includeConnectivityCheck
             )
         }
     }
@@ -240,6 +252,9 @@ final class WiFiAgent: WatchmeCollector {
         }
         if !previous.isAssociated, current.isAssociated {
             return "wifi.join"
+        }
+        if event == "wifi_power_changed", current.powerOn == false {
+            return "wifi.disconnect"
         }
         if event == "wifi_bssid_changed", current.isAssociated {
             if previous.ssid == current.ssid, previous.bssid != nil, current.bssid != nil, previous.bssid != current.bssid {

@@ -150,8 +150,9 @@ struct WiFiSnapshot {
         let ssid = interface?.ssid()
         let ssidData = interface?.ssidData()
         let bssid = interface?.bssid()?.lowercased()
+        let powerOn = interface.map { $0.powerOn() }
         let channel = interface?.wlanChannel()
-        let isAssociated = ssid != nil || bssid != nil || (state.isActive && !state.ipv4Addresses.isEmpty)
+        let isAssociated = wifiSnapshotAssociated(ssid: ssid, bssid: bssid, state: state, powerOn: powerOn)
         let ssidFallback = normalizedSSID(ssid: ssid, ssidData: ssidData)
 
         return WiFiSnapshot(
@@ -173,7 +174,7 @@ struct WiFiSnapshot {
             interfaceMode: coreWLANInterfaceModeName(interface?.interfaceMode()),
             countryCode: normalizedCountryCode(interface?.countryCode()),
             transmitPowerMW: interface.map { $0.transmitPower() },
-            powerOn: interface.map { $0.powerOn() },
+            powerOn: powerOn,
             serviceActive: interface.map { $0.serviceActive() },
             ipv4Addresses: state.ipv4Addresses,
             ipv6Addresses: state.ipv6Addresses
@@ -196,6 +197,13 @@ struct WiFiSnapshot {
         appendChange(&fields, "service_active", previous.serviceActive, serviceActive)
         return fields
     }
+}
+
+func wifiSnapshotAssociated(ssid: String?, bssid: String?, state: NativeInterfaceState, powerOn: Bool?) -> Bool {
+    if powerOn == false {
+        return false
+    }
+    return ssid != nil || bssid != nil || (state.isActive && !state.ipv4Addresses.isEmpty)
 }
 
 func appendChange<T: Equatable>(_ fields: inout [String], _ field: String, _ previous: T?, _ current: T?) {

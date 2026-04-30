@@ -15,6 +15,13 @@ final class WiFiTracePolicyTests: XCTestCase {
         XCTAssertFalse(WiFiTracePolicy.shouldRequestConnectivityCheck(snapshot: makeSnapshot(powerOn: false)))
     }
 
+    func testEventTracesAreSuppressedWhenWiFiIsNotReadyExceptDisconnect() {
+        XCTAssertTrue(WiFiTracePolicy.shouldEmitEventTrace(reason: "wifi.link.changed", snapshot: makeSnapshot()))
+        XCTAssertTrue(WiFiTracePolicy.shouldEmitEventTrace(reason: "wifi.disconnect", snapshot: makeSnapshot(isAssociated: false)))
+        XCTAssertFalse(WiFiTracePolicy.shouldEmitEventTrace(reason: "wifi.power.changed", snapshot: makeSnapshot(isAssociated: false)))
+        XCTAssertFalse(WiFiTracePolicy.shouldEmitEventTrace(reason: "wifi.power.changed", snapshot: makeSnapshot(powerOn: false)))
+    }
+
     func testConnectivityCheckReadinessWaitsForWiFiDNSWhenInternetProbesNeedResolution() {
         let config = WiFiConfig()
         let readyState = WiFiServiceNetworkState(
@@ -117,6 +124,39 @@ final class WiFiTracePolicyTests: XCTestCase {
         XCTAssertFalse(WiFiTracePolicy.shouldSuppressEventTraceDuringAssociation(reason: "wifi.join"))
         XCTAssertFalse(WiFiTracePolicy.shouldSuppressEventTraceDuringAssociation(reason: "wifi.roam"))
         XCTAssertFalse(WiFiTracePolicy.shouldSuppressEventTraceDuringAssociation(reason: "wifi.disconnect"))
+    }
+
+    func testCoveredAssociationEventsAreSuppressedAfterCompletedTrace() {
+        XCTAssertTrue(
+            WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(
+                eventTags: ["wifi.event_received_epoch_ns": "1000"],
+                lastCompletedEpochNanos: 2000
+            )
+        )
+        XCTAssertTrue(
+            WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(
+                eventTags: ["network.event_received_epoch_ns": "1000", "wifi.event_received_epoch_ns": "1500"],
+                lastCompletedEpochNanos: 2000
+            )
+        )
+        XCTAssertFalse(
+            WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(
+                eventTags: ["wifi.event_received_epoch_ns": "3000"],
+                lastCompletedEpochNanos: 2000
+            )
+        )
+        XCTAssertFalse(
+            WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(
+                eventTags: [:],
+                lastCompletedEpochNanos: 2000
+            )
+        )
+        XCTAssertFalse(
+            WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(
+                eventTags: ["wifi.event_received_epoch_ns": "1000"],
+                lastCompletedEpochNanos: nil
+            )
+        )
     }
 
     private func makeSnapshot(

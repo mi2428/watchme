@@ -20,12 +20,42 @@ enum WiFiTracePolicy {
         snapshot.powerOn != false && snapshot.isAssociated
     }
 
+    static func shouldEmitEventTrace(reason: String, snapshot: WiFiSnapshot) -> Bool {
+        reason == "wifi.disconnect" || shouldRequestConnectivityCheck(snapshot: snapshot)
+    }
+
     static func isAddressAcquisition(previous: WiFiSnapshot, current: WiFiSnapshot) -> Bool {
         current.isAssociated && previous.primaryIPv4 == nil && current.primaryIPv4 != nil
     }
 
     static func shouldSuppressEventTraceDuringAssociation(reason: String) -> Bool {
         !isAssociationRecoveryReason(reason) && reason != "wifi.disconnect"
+    }
+
+    static func shouldSuppressCoveredAssociationTrace(
+        eventTags: [String: String],
+        lastCompletedEpochNanos: UInt64?
+    ) -> Bool {
+        guard let lastCompletedEpochNanos else {
+            return false
+        }
+        let anchors = associationEventEpochNanos(eventTags)
+        guard let newestAnchor = anchors.max() else {
+            return false
+        }
+        return newestAnchor <= lastCompletedEpochNanos
+    }
+
+    static func associationEventEpochNanos(_ eventTags: [String: String]) -> [UInt64] {
+        [
+            eventTags["wifi.event_received_epoch_ns"],
+            eventTags["network.event_received_epoch_ns"],
+        ].compactMap { value -> UInt64? in
+            guard let value else {
+                return nil
+            }
+            return UInt64(value)
+        }
     }
 
     static func connectivityCheckReadiness(

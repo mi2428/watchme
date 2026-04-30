@@ -46,6 +46,20 @@ extension WiFiAgent {
     }
 
     func scheduleAssociationTrace(sourceReason: String? = nil, reason: String, eventTags: [String: String], delay: TimeInterval) {
+        if WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(
+            eventTags: eventTags,
+            lastCompletedEpochNanos: lastAssociationTraceCompletedEpochNanos
+        ) {
+            logEvent(
+                .debug, "association_trace_suppressed",
+                fields: [
+                    "reason": reason,
+                    "suppression_reason": "event_already_covered_by_association_trace",
+                    "last_association_trace_completed_epoch_ns": lastAssociationTraceCompletedEpochNanos.map(String.init) ?? "",
+                ]
+            )
+            return
+        }
         associationTraceVersion += 1
         associationTracePending = true
         packetWindowSuppressedUntil = Date().addingTimeInterval(
@@ -76,6 +90,7 @@ extension WiFiAgent {
                 includeConnectivityCheck: true,
                 connectivityReadinessTimeout: self.config.associationTraceReadinessTimeout
             )
+            self.lastAssociationTraceCompletedEpochNanos = wallClockNanos()
             self.associationTracePending = false
             self.packetWindowSuppressedUntil = Date().addingTimeInterval(self.config.packetWindowSuppressionAfterAssociation)
         }
@@ -113,7 +128,8 @@ extension WiFiAgent {
                     .debug, "network_attachment_trace_suppressed",
                     fields: [
                         "source_reason": sourceReason,
-                        "suppression_reason": self.associationTracePending ? "association_trace_pending" : "association_trace_recently_completed",
+                        "suppression_reason": self
+                            .associationTracePending ? "association_trace_pending" : "association_trace_recently_completed",
                     ]
                 )
                 return

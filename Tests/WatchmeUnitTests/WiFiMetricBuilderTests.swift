@@ -95,6 +95,32 @@ final class WiFiMetricBuilderTests: XCTestCase {
         XCTAssertEqual(ssid.encoding, "hex")
     }
 
+    func testAssociationHeuristicTreatsPoweredOffInterfaceAsDisconnected() {
+        let activeAddressedInterface = NativeInterfaceState(
+            isActive: true,
+            ipv4Addresses: ["192.168.22.173"],
+            ipv6Addresses: [],
+            macAddress: nil
+        )
+
+        XCTAssertFalse(
+            wifiSnapshotAssociated(
+                ssid: nil,
+                bssid: nil,
+                state: activeAddressedInterface,
+                powerOn: false
+            )
+        )
+        XCTAssertTrue(
+            wifiSnapshotAssociated(
+                ssid: nil,
+                bssid: nil,
+                state: activeAddressedInterface,
+                powerOn: true
+            )
+        )
+    }
+
     func testActiveProbeMetricsExposeInternetAndGatewayResults() throws {
         let snapshot = makeSnapshot()
         var state = WiFiMetricState()
