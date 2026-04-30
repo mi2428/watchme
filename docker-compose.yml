@@ -33,7 +33,10 @@ services:
     image: grafana/tempo:latest
     pull_policy: "${WATCHME_PULL_POLICY:-always}"
     restart: unless-stopped
-    command: ["-config.file=/etc/tempo.yaml"]
+    command:
+      - "-config.file=/etc/tempo.yaml"
+      - "-backend-worker.compaction.block-retention=24h"
+      - "-backend-scheduler.provider.work.compaction.block-retention=24h"
     volumes:
       - ./docker/tempo/tempo.yaml:/etc/tempo.yaml:ro
       - tempo-data:/var/tempo
