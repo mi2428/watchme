@@ -22,7 +22,7 @@ It is meant to be checked against the source when instrumentation changes.
   - [Trace triggers](#trace-triggers)
 - [Emitted spans](#emitted-spans)
   - [Root span](#root-span)
-  - [Active validation spans](#active-validation-spans)
+  - [Connectivity check spans](#connectivity-check-spans)
   - [Packet-window phase span](#packet-window-phase-span)
   - [DHCPv4 packet spans](#dhcpv4-packet-spans)
   - [IPv4 ARP packet spans](#ipv4-arp-packet-spans)
@@ -69,9 +69,9 @@ WatchMe Agent instead exposes the primary signals needed to build those views do
 - `watchme_wifi_corewlan_event_total` for raw CoreWLAN callback counts such as `power_did_change`, `ssid_did_change`, `bssid_did_change`, and `link_did_change`.
 - `watchme_wifi_snapshot_change_total` for observed snapshot field changes such as `associated`, `bssid`, `ssid`, `channel`, and `power_on`.
 - `watchme_wifi_info` for categorical OS state such as `phy_mode`, `channel_band`, `channel_width`, `security`, and `country_code`.
-- Root trace names such as `wifi.join`, `wifi.roam`, `wifi.power.changed`, `wifi.link.changed`, and `wifi.rejoin.packet_window`.
+- Root trace names such as `wifi.connectivity`, `wifi.join`, `wifi.roam`, `wifi.power.changed`, `wifi.link.changed`, and `wifi.packet.window`.
 - BPF packet spans for DHCPv4, IPv4 ARP, router solicitation/advertisement, and neighbor discovery timing.
-- Active internet DNS, ICMP, plain HTTP, and gateway probe metrics and spans for Wi-Fi-bound reachability.
+- Internet DNS, ICMP, TCP connect, plain HTTP, and gateway probe metrics and spans for Wi-Fi-bound reachability.
 
 Grafana dashboards, recording rules, or alert rules may define site-specific semantic views from these primary signals.
 For example, an operator can count BSSID changes from `watchme_wifi_snapshot_change_total{field="bssid"}` or define an SNR recording rule from RSSI and noise when that is appropriate for the environment.
@@ -79,21 +79,23 @@ Those derived rules should live near the operational policy that gives them mean
 
 ## Implementation rationale
 
-The current feature boundary is intentionally narrow: OS snapshot metrics, raw event counters, Wi-Fi-bound internet DNS/ICMP/plain HTTP probes, Wi-Fi gateway ICMP probing, and BPF packet timing.
+The current feature boundary is intentionally narrow: OS snapshot metrics, raw event counters, Wi-Fi-bound internet DNS/ICMP/TCP/plain HTTP probes, Wi-Fi gateway ICMP probing, and BPF packet timing.
 This keeps WatchMe focused on primary evidence rather than local interpretation.
 
-Active internet probing is split into DNS, ICMP, and plain HTTP because those checks answer different operational questions.
-DNS validates Wi-Fi-bound resolver reachability and produces the concrete remote addresses used by later probes.
+Internet probing is split into DNS, ICMP, TCP connect, and plain HTTP because those checks answer different operational questions.
+DNS checks Wi-Fi-bound resolver reachability and produces the concrete remote addresses used by later probes.
 ICMP checks address-family reachability without depending on HTTP service behavior.
+TCP connect checks whether TCP/80 can complete a transport handshake before any HTTP payload is sent.
 Plain HTTP checks TCP/80 request-to-first-response timing with packet payloads that BPF can correlate.
 Gateway ICMP probing is separate because first-hop reachability is a different failure domain from internet reachability.
 
-DNS runs before ICMP and HTTP on purpose.
-ICMP and HTTP consume the DNS probe output rather than invoking another resolver path, so the active validation trace stays explainable end to end.
-After DNS, ICMP and HTTP run concurrently across targets and address families so dual-stack and multi-target results describe the same observation point.
+WatchMe expands configured hosts and address families into independent `target + family` probe paths.
+Those paths run in parallel.
+Within each path, checks run in this order: DNS, ICMP, TCP connect, then HTTP.
+ICMP, TCP, and HTTP consume the DNS probe output rather than invoking another resolver path, so each path stays explainable end to end.
 
 BPF timestamping is used only when a probe has registered a narrow packet identity in `PassivePacketStore`.
-The monitor then keeps just the packets needed to pair a DNS query/response, ICMP request/reply, HTTP request/first-response, or gateway ICMP request/reply.
+The monitor then keeps just the packets needed to pair a DNS query/response, ICMP request/reply, TCP SYN/response, HTTP request/first-response, or gateway ICMP request/reply.
 If correlation fails, WatchMe still emits the same span and metric with callback or deadline timing and marks the `timing_source` accordingly.
 
 HTTPS, TLS handshake timing, certificate validation, browser page fetch timing, and synthetic quality scores are deliberately out of scope for the Wi-Fi collector used by `watchme agent --collector.wifi`.
@@ -102,8 +104,8 @@ They should be added as a separate monitor or downstream dashboard/rule logic un
 
 ## Runtime entry points
 
-- **`watchme agent --collector.wifi`:** Long-running WatchMe Agent execution that starts metrics, active trace, CoreWLAN/SystemConfiguration event monitors, and BPF packet monitor.
-- **`watchme agent once --collector.wifi`:** One-shot metrics export and one active trace.
+- **`watchme agent --collector.wifi`:** Long-running WatchMe Agent execution that starts metrics, connectivity traces, CoreWLAN/SystemConfiguration event monitors, and BPF packet monitor.
+- **`watchme agent once --collector.wifi`:** One-shot metrics export and one connectivity trace.
 - **`watchme agent authorize-location`:** Requests Core Location authorization so CoreWLAN can return SSID/BSSID.
 - **`scripts/watchme-app agent ...`:** Runs the `.app` bundle through LaunchServices so macOS TCC applies the app's Location grant; use this path when SSID/BSSID are required.
 
@@ -123,7 +125,7 @@ The options below apply to `watchme agent --collector.wifi` and `watchme agent o
 
 - **`--otlp.url`:** OTLP/HTTP collector base endpoint. WatchMe derives `/v1/metrics` and `/v1/traces` from this URL. Default: `http://127.0.0.1:4318`.
 - **`--wifi.metrics.interval`:** Wi-Fi metric collection interval in seconds. Default: `5`.
-- **`--wifi.traces.interval`:** Active trace interval in seconds. Default: `60`.
+- **`--wifi.traces.interval`:** Connectivity trace interval in seconds. Default: `60`.
 - **`--wifi.traces.cooldown`:** Minimum seconds between non-forced event traces. Default: `2`.
 - **`--wifi.probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/ARP/RS/RA/NDP packets. Default: `true`.
 - **`--wifi.probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds. Default: `180`.
@@ -134,6 +136,7 @@ The options below apply to `watchme agent --collector.wifi` and `watchme agent o
 - **`--wifi.probe.internet.timeout`:** Internet active probe timeout in seconds. Default: `5`.
 - **`--wifi.probe.internet.dns`:** Boolean switch for internet DNS probes. Default: `true`.
 - **`--wifi.probe.internet.icmp`:** Boolean switch for internet ICMP echo probes. Default: `true`.
+- **`--wifi.probe.internet.tcp`:** Boolean switch for internet TCP connect probes. Default: `true`.
 - **`--wifi.probe.internet.http`:** Boolean switch for internet plain HTTP HEAD probes. Default: `true`.
 - **`--log.level`:** Structured log minimum level. Default: `debug`.
 
@@ -152,7 +155,7 @@ Delivery behavior:
 - A spooled payload is removed only after the collector returns a 2xx HTTP response.
 - Retryable failures, such as connection failures, timeouts, HTTP 408, HTTP 429, or HTTP 5xx, leave the payload on disk.
 - Non-retryable HTTP status responses, such as most HTTP 4xx responses, drop that payload so a bad request does not permanently block newer signals.
-- In long-running mode, recovery is attempted on the next metrics interval, active trace, or event-triggered export.
+- In long-running mode, recovery is attempted on the next metrics interval, connectivity trace, or event-triggered export.
 - In one-shot mode, pending payloads can be flushed by a later `watchme agent once --collector.wifi`, `watchme agent once --collector.system`, or long-running WatchMe Agent execution that can reach the collector.
 
 ## Collection points
@@ -163,9 +166,10 @@ Delivery behavior:
 | Interface state and addresses | `Sources/WatchmeWiFi/WiFiSnapshot.swift` | `getifaddrs`, `getnameinfo` | Interface up/running state, IPv4 addresses, non-link-local IPv6 addresses. |
 | Wi-Fi events | `Sources/WatchmeWiFi/EventMonitors.swift` | `CWEventDelegate` | Power, SSID, BSSID, link, link quality, country code, and mode changes. |
 | Network events | `Sources/WatchmeWiFi/EventMonitors.swift` | `SCDynamicStore` notifications | Global and per-interface IPv4/IPv6/DNS/DHCP/link changes. |
-| Passive packet timing | `Sources/WatchmeBPF`, `Sources/WatchmeWiFi/BPFMonitor.swift` | `/dev/bpfN`, `BIOCSETF`, `BIOCGSTATS`, `poll`, `read` | DHCPv4, IPv4 ARP, and ICMPv6 control packets during address acquisition, plus registered active DNS, ICMP, HTTP, and gateway packets. |
+| Passive packet timing | `Sources/WatchmeBPF`, `Sources/WatchmeWiFi/BPFMonitor.swift` | `/dev/bpfN`, `BIOCSETF`, `BIOCGSTATS`, `poll`, `read` | DHCPv4, IPv4 ARP, and ICMPv6 control packets during address acquisition, plus registered DNS, ICMP, TCP, HTTP, and gateway packets. |
 | Active internet DNS probe | `Sources/WatchmeWiFi/ActiveDNSProbe.swift` | `Network.framework` UDP `NWConnection` | DNS A and AAAA query latency through Wi-Fi-bound resolver traffic. |
 | Active internet ICMP probe | `Sources/WatchmeWiFi/ActiveICMPProbe.swift` | Darwin datagram ICMP sockets with `IP_BOUND_IF` / `IPV6_BOUND_IF` | IPv4 and IPv6 internet echo reachability through the Wi-Fi interface. |
+| Active internet TCP probe | `Sources/WatchmeWiFi/ActiveTCPProbe.swift` | `Network.framework` TCP `NWConnection` | TCP/80 connect reachability through the Wi-Fi interface. |
 | Active internet HTTP probe | `Sources/WatchmeWiFi/ActiveInternetHTTPProbe.swift` | `Network.framework` TCP `NWConnection` | Plain HTTP HEAD reachability over TCP/80 through the Wi-Fi interface. |
 | Active gateway probe | `Sources/WatchmeWiFi/ActiveGatewayProbe.swift` | Darwin datagram ICMP sockets with `IP_BOUND_IF` | First-hop gateway ICMP reachability, loss, and jitter through the Wi-Fi interface. |
 | Wi-Fi service network state | `Sources/WatchmeWiFi/WiFiServiceNetworkState.swift` | `SCDynamicStoreCopyValue`, `SCDynamicStoreCopyKeyList` | DNS resolvers and router for the network service bound to the Wi-Fi interface. |
@@ -237,7 +241,7 @@ Metrics are exported:
 - every `--wifi.metrics.interval` seconds in long-running WatchMe Agent mode;
 - after CoreWLAN or SystemConfiguration events before event traces;
 - at every trace start;
-- after active validation, so the latest internet DNS, ICMP, HTTP, and gateway probe samples are available to the OTel collector or backend.
+- after connectivity checks, so the latest internet DNS, ICMP, TCP, HTTP, and gateway probe samples are available to the OTel collector or backend.
 
 Most metrics are gauges.
 CoreWLAN event and snapshot change metrics are counters.
@@ -270,6 +274,9 @@ Those can be defined downstream if an operator wants a site-specific scoring pol
 | `watchme_wifi_probe_internet_icmp_success` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `outcome`, `timing_source` | Wi-Fi-bound active internet ICMP probe | `1` when an echo reply was observed, otherwise `0`. |
 | `watchme_wifi_probe_internet_icmp_duration_seconds` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `outcome`, `timing_source` | Wi-Fi-bound active internet ICMP probe | Echo request-to-reply duration, using BPF packet timestamps when correlation succeeds. |
 | `watchme_wifi_probe_internet_icmp_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `outcome`, `timing_source` | Wi-Fi-bound active internet ICMP probe | Unix timestamp of the latest ICMP probe completion. |
+| `watchme_wifi_probe_internet_tcp_success` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `remote_port`, `outcome`, `timing_source` | Wi-Fi-bound active internet TCP probe | `1` when TCP/80 connected, otherwise `0`. |
+| `watchme_wifi_probe_internet_tcp_duration_seconds` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `remote_port`, `outcome`, `timing_source` | Wi-Fi-bound active internet TCP probe | TCP SYN-to-response or Network.framework connect duration. |
+| `watchme_wifi_probe_internet_tcp_last_run_timestamp_seconds` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `remote_port`, `outcome`, `timing_source` | Wi-Fi-bound active internet TCP probe | Unix timestamp of the latest TCP probe completion. |
 | `watchme_wifi_probe_internet_http_success` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `scheme`, `outcome`, `timing_source` | Wi-Fi-bound active internet plain HTTP probe | `1` when the latest plain HTTP HEAD probe returned status `200..<500`, otherwise `0`. |
 | `watchme_wifi_probe_internet_http_duration_seconds` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `scheme`, `outcome`, `timing_source` | Wi-Fi-bound active internet plain HTTP probe | Request-to-first-response-byte duration, using BPF packet timestamps when correlation succeeds. |
 | `watchme_wifi_probe_internet_http_status_code` | `interface`, `essid`, `bssid`, `target`, `family`, `remote_ip`, `scheme`, `outcome`, `timing_source` | Wi-Fi-bound active internet plain HTTP probe | HTTP status code from the latest probe when one was received. |
@@ -301,6 +308,13 @@ Common root tags include every tag listed in the snapshot model section, plus:
 - **`bpf.filter`:** BPF filter profile name when the monitor is active.
 - **`bpf.packets_received`:** `BIOCGSTATS` accepted packet count when available.
 - **`bpf.packets_dropped`:** `BIOCGSTATS` dropped packet count when available.
+- **`network.wifi_dns_servers`:** DNS resolvers from the Wi-Fi SystemConfiguration service.
+- **`network.wifi_gateway`:** IPv4 router from the Wi-Fi SystemConfiguration service, when present.
+- **`connectivity_check.requested`:** `true` when the trace call site asked for a connectivity check.
+- **`connectivity_check.included`:** `true` when `phase.connectivity_check` was emitted.
+- **`connectivity_check.ready`:** `true` when Wi-Fi was associated and had the network state required by enabled probes.
+- **`connectivity_check.skip_reason`:** Reason the connectivity check was skipped, such as `wifi_power_off`, `wifi_not_associated`, `wifi_interface_unknown`, or `wifi_dns_unavailable`.
+- **`connectivity_check.readiness_wait_seconds`:** Seconds spent waiting for readiness before building the trace.
 - **`trace.root_name`:** Final root span name.
 - **`trace.start_epoch_ns`:** Trace assembly start time.
 - **`trace.kind`:** `wifi_observability`.
@@ -309,22 +323,22 @@ Common root tags include every tag listed in the snapshot model section, plus:
 
 ### Trace triggers
 
-| Trigger | Root reason | Active probe | Packet spans | Notes |
+| Trigger | Root reason | Connectivity check | Packet spans | Notes |
 | --- | --- | --- | --- | --- |
-| `watchme agent once --collector.wifi` | `wifi.active` | Yes | Recent packet spans are included without consuming them. | `agent.mode=once`. |
-| WatchMe Agent startup | `wifi.active` | Yes | Recent packet spans are consumed. | `agent.mode=startup`. |
-| Active timer | `wifi.active` | Yes | Recent packet spans are consumed. | Runs every `--wifi.traces.interval` seconds. |
-| CoreWLAN join | `wifi.join` | Yes | Recent packet spans are consumed, plus delayed packet-window trace. | Forced through cooldown. |
-| CoreWLAN roam | `wifi.roam` | Yes | Recent packet spans are consumed, plus delayed packet-window trace. | Forced through cooldown. |
-| CoreWLAN disconnect | `wifi.disconnect` | Yes | Recent packet spans are consumed. | Classified from snapshot transition. |
-| Other CoreWLAN events | Normalized event name, e.g. `wifi.power.changed` | Yes | Recent packet spans are consumed. | `wifi_link_quality_changed` only updates logs and does not trigger a trace. |
-| SystemConfiguration join | `wifi.join` | Yes | Recent packet spans are consumed, plus delayed packet-window trace. | Detected when previous snapshot was not associated and current snapshot is. |
-| SystemConfiguration IPv4 change while associated | Event reason, e.g. `wifi.network.ipv4_changed` | Yes | Recent packet spans are consumed. | Subject to trigger cooldown. |
-| BPF DHCP ACK / ARP reply / ICMPv6 RA / ICMPv6 NA | `wifi.rejoin.packet_window` | Yes | Recent packet spans are included without consuming them. | Delayed 1.25 seconds from packet event. |
-| Delayed join/roam packet window | `wifi.rejoin.packet_window` | Yes | Recent packet spans are included without consuming them. | Delayed 2.0 seconds from join/roam. |
+| `watchme agent once --collector.wifi` | `wifi.connectivity` | Yes | Recent packet spans are included without consuming them. | `agent.mode=once`. |
+| WatchMe Agent startup | `wifi.connectivity` | Yes | Recent packet spans are consumed. | `agent.mode=startup`. |
+| Connectivity timer | `wifi.connectivity` | Yes | Recent packet spans are consumed. | Runs every `--wifi.traces.interval` seconds. |
+| CoreWLAN join | `wifi.join` | Yes, after readiness | Recent packet spans are consumed by the join trace. | Delayed 1.5 seconds, then waits up to 8 seconds for Wi-Fi DNS readiness so DHCP/DNS/IP acquisition is represented in the join trace. |
+| CoreWLAN roam | `wifi.roam` | Yes, after readiness | Recent packet spans are consumed by the roam trace. | Uses the same delayed readiness path as join. |
+| CoreWLAN disconnect | `wifi.disconnect` | No | Recent packet spans are consumed. | Classified from snapshot transition; connectivity checks are not meaningful once Wi-Fi is disconnected. |
+| Other CoreWLAN events | Normalized event name, e.g. `wifi.power.changed` | Only when ready | Recent packet spans are consumed. | `wifi_link_quality_changed` only updates logs and does not trigger a trace. |
+| SystemConfiguration join | `wifi.join` | Yes, after readiness | Recent packet spans are consumed by the join trace. | Detected when previous snapshot was not associated and current snapshot is. |
+| SystemConfiguration IPv4 acquisition while associated | `wifi.join` | Yes, after readiness | Recent packet spans are consumed by the join trace. | Converts the first IPv4 address after association into the same stable join trace. |
+| SystemConfiguration IPv4 change while already addressed | Event reason, e.g. `wifi.network.ipv4_changed` | Only when ready | Recent packet spans are consumed. | Subject to trigger cooldown. |
+| BPF DHCP ACK / ARP reply / ICMPv6 RA / ICMPv6 NA | `wifi.packet.window` | Only when ready | Recent packet spans are consumed by the packet-window trace. | Delayed 1.25 seconds from packet event, and suppressed while an association trace is pending or just completed. |
 
 `--wifi.traces.cooldown` suppresses non-forced event traces.
-Join, roam, startup, once, active timer, and packet-window traces bypass or avoid this suppression as implemented by their call sites.
+Join, roam, startup, once, connectivity timer, and packet-window traces bypass or avoid this suppression as implemented by their call sites.
 
 ## Emitted spans
 
@@ -334,27 +348,31 @@ This section lists spans emitted by the current code path.
 
 | Span name | Parent | Timing | Status | Tags |
 | --- | --- | --- | --- | --- |
-| Derived root name such as `wifi.active`, `wifi.join`, `wifi.roam`, `wifi.rejoin.packet_window` | None | Covers all child spans, including BPF spans that started before the trigger callback. | Always set to OK by exporter. | Common root tags listed above. |
+| Derived root name such as `wifi.connectivity`, `wifi.join`, `wifi.roam`, `wifi.packet.window` | None | Covers all child spans, including BPF spans that started before the trigger callback. | Always set to OK by exporter. | Common root tags listed above. |
 
-### Active validation spans
+### Connectivity check spans
 
-Every trace currently includes active validation because all `emitTrace` call sites pass `includeActive: true`.
+Connectivity checks are emitted only when the trace requested them and the Wi-Fi path is ready.
+Readiness requires powered-on Wi-Fi, an associated interface, a known interface name, and Wi-Fi service DNS resolvers when any internet DNS/ICMP/TCP/HTTP probe is enabled.
+If readiness is not met, the root span carries `connectivity_check.requested=true`, `connectivity_check.included=false`, `connectivity_check.ready=false`, and `connectivity_check.skip_reason`; no failed microsecond probe spans are emitted for an unavailable network path.
 
 | Span name | Parent | Timing | Status | Tags |
 | --- | --- | --- | --- | --- |
-| `phase.active_validation` | Root | Wall-clock time around all configured active targets. | OK | `phase.name=active_validation`, `phase.source=network_framework_active_probe`, `phase.validation_scope=internet_dns,internet_icmp,internet_http,gateway_icmp`, `probe.internet.targets`, `probe.internet.family`, enabled flags and span counts, `probe.dns_resolvers`, `probe.gateway`, `probe.gateway.burst_count`, `probe.gateway.burst_interval_seconds`, `probe.gateway.probe_count`, `probe.gateway.span_count`, `span.source=watchme`, `otel.status_code=OK`. |
-| `probe.internet.dns.resolve` | `phase.active_validation` | UDP DNS query-to-response duration for each active target host, address family, and up to two Wi-Fi service DNS resolvers. BPF packet timestamps are used when the query and response can be correlated; Network.framework callback timing is the fallback. | OK when rcode is `0` and at least one address is present. | `span.source=network_framework_internet_dns_probe`, `probe.target`, `probe.internet.target`, `network.family`, `probe.timing_source`, `probe.timestamp_source`, `dns.resolver`, `dns.transport`, `dns.question.type`, `dns.address_count`, optional `dns.addresses`, optional `dns.rcode`, optional `dns.answer_count`, optional `packet.event=dns_query_to_response`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
-| `probe.internet.icmp.echo` | `phase.active_validation` | ICMP echo request-to-reply duration for each active target host and address family. BPF packet timestamps are used when the request and reply can be correlated. | OK when an echo reply is observed. | `span.source=darwin_icmp_socket`, `probe.target`, `probe.internet.target`, `network.family`, `network.peer.address`, `icmp.outcome`, optional `icmp.identifier`, optional `icmp.sequence`, `probe.timing_source`, `probe.timestamp_source`, optional `packet.event=icmp_echo_request_to_reply`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
-| `probe.internet.http.head` | `phase.active_validation` | Plain HTTP HEAD request-to-first-response-byte duration for each active target host and address family. BPF packet timestamps are used when the request packet and first response packet can be correlated; Network.framework callback timing is the fallback. | OK when HTTP status is `200..<500`. | `span.source=network_framework_plain_http_probe`, `probe.target`, `probe.internet.target`, `network.family`, `network.peer.address`, `net.peer.port=80`, `url.scheme=http`, `http.request.method=HEAD`, `http.outcome`, optional `http.response.status_code`, optional `packet.event=http_request_to_first_response_byte`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
-| `probe.gateway.icmp.echo` | `phase.active_validation` | Gateway ICMP burst duration around multiple echo request/reply attempts to the Wi-Fi service router. BPF packet timestamps are used per attempt when packets can be correlated; wall-clock deadline timing is the fallback. | OK when at least one echo reply is observed. | `span.source=darwin_icmp_gateway_probe`, `probe.timing_source`, `probe.timestamp_source`, `network.family=ipv4`, `network.wifi_gateway`, `network.gateway_probe.protocol=icmp`, `network.gateway_probe.outcome`, `network.gateway_probe.reachable`, `network.gateway_probe.probe_count`, `network.gateway_probe.reply_count`, `network.gateway_probe.lost_count`, `network.gateway_probe.loss_ratio`, `network.gateway_probe.jitter_seconds`, `network.gateway_probe.burst_interval_seconds`, optional `packet.event=icmp_echo_request_to_reply`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `phase.connectivity_check` | Root | Wall-clock time around all configured probe paths. | OK | `phase.name=connectivity_check`, `phase.source=wifi_connectivity_probe`, `phase.check_scope=internet_dns,internet_icmp,internet_tcp,internet_http,gateway_icmp`, `probe.internet.targets`, `probe.internet.family`, enabled flags and span counts, `probe.dns_resolvers`, `probe.gateway`, `probe.gateway.burst_count`, `probe.gateway.burst_interval_seconds`, `probe.gateway.probe_count`, `probe.gateway.span_count`, `span.source=watchme`, `otel.status_code=OK`. |
+| `probe.internet.path` | `phase.connectivity_check` | Window around one configured target host and concrete address family. | OK only when all enabled checks in the path succeeded. | `span.source=watchme_connectivity_check`, `probe.target`, `probe.internet.target`, `network.family`, `network.peer.address`, per-protocol span counts, `probe.internet.path.status`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.internet.dns.resolve` | `probe.internet.path` | UDP DNS query-to-response duration for each active target host, address family, and up to two Wi-Fi service DNS resolvers. BPF packet timestamps are used when the query and response can be correlated; Network.framework callback timing is the fallback. | OK when rcode is `0` and at least one address is present. | `span.source=network_framework_internet_dns_probe`, `probe.target`, `probe.internet.target`, `network.family`, `probe.timing_source`, `probe.timestamp_source`, `dns.resolver`, `dns.transport`, `dns.question.type`, `dns.address_count`, optional `dns.addresses`, optional `dns.rcode`, optional `dns.answer_count`, optional `packet.event=dns_query_to_response`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.internet.icmp.echo` | `probe.internet.path` | ICMP echo request-to-reply duration for each active target host and address family. BPF packet timestamps are used when the request and reply can be correlated. | OK when an echo reply is observed. | `span.source=darwin_icmp_socket`, `probe.target`, `probe.internet.target`, `network.family`, `network.peer.address`, `icmp.outcome`, optional `icmp.identifier`, optional `icmp.sequence`, `probe.timing_source`, `probe.timestamp_source`, optional `packet.event=icmp_echo_request_to_reply`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.internet.tcp.connect` | `probe.internet.path` | TCP SYN to SYN-ACK/RST when BPF correlation succeeds, otherwise Network.framework connect timing. | OK when TCP/80 connects. | `span.source=network_framework_tcp_probe`, `probe.target`, `probe.internet.target`, `network.family`, `network.peer.address`, `net.peer.port=80`, `tcp.outcome`, `probe.timing_source`, `probe.timestamp_source`, optional `packet.event=tcp_syn_to_response`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.internet.http.head` | `probe.internet.path` | Plain HTTP HEAD request-to-first-response-byte duration for each active target host and address family. BPF packet timestamps are used when the request packet and first response packet can be correlated; Network.framework callback timing is the fallback. | OK when HTTP status is `200..<500`. | `span.source=network_framework_plain_http_probe`, `probe.target`, `probe.internet.target`, `network.family`, `network.peer.address`, `net.peer.port=80`, `url.scheme=http`, `http.request.method=HEAD`, `http.outcome`, optional `http.response.status_code`, optional `packet.event=http_request_to_first_response_byte`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
+| `probe.gateway.icmp.echo` | `phase.connectivity_check` | Gateway ICMP burst duration around multiple echo request/reply attempts to the Wi-Fi service router. BPF packet timestamps are used per attempt when packets can be correlated; wall-clock deadline timing is the fallback. | OK when at least one echo reply is observed. | `span.source=darwin_icmp_gateway_probe`, `probe.timing_source`, `probe.timestamp_source`, `network.family=ipv4`, `network.wifi_gateway`, `network.gateway_probe.protocol=icmp`, `network.gateway_probe.outcome`, `network.gateway_probe.reachable`, `network.gateway_probe.probe_count`, `network.gateway_probe.reply_count`, `network.gateway_probe.lost_count`, `network.gateway_probe.loss_ratio`, `network.gateway_probe.jitter_seconds`, `network.gateway_probe.burst_interval_seconds`, optional `packet.event=icmp_echo_request_to_reply`, optional `packet.timestamp_source=bpf_header_timeval`, optional `packet.timestamp_resolution=microsecond`, optional `error`, `active_probe.interface`, `active_probe.required_interface`, `wifi.essid`, `wifi.bssid`. |
 
 Wi-Fi service network tags:
 
-Active validation uses the SystemConfiguration service attached to the Wi-Fi interface, not the global default route.
+Connectivity checks use the SystemConfiguration service attached to the Wi-Fi interface, not the global default route.
 This matters on Macs where Ethernet, VPN, or another service owns the default route while Wi-Fi is still being measured.
 
-- **`probe.dns_resolvers`:** DNS resolvers from `State:/Network/Service/<service>/DNS`, attached to `phase.active_validation`.
-- **`probe.gateway`:** Router from `State:/Network/Service/<service>/IPv4`, attached to `phase.active_validation`.
+- **`probe.dns_resolvers`:** DNS resolvers from `State:/Network/Service/<service>/DNS`, attached to `phase.connectivity_check`.
+- **`probe.gateway`:** Router from `State:/Network/Service/<service>/IPv4`, attached to `phase.connectivity_check`.
 - **`network.wifi_gateway`:** Router used by `probe.gateway.icmp.echo`.
 - **`network.gateway_probe.protocol`:** `icmp` for gateway probes.
 - **`network.gateway_probe.outcome`:** Aggregated gateway burst outcome, such as `reply`, `partial_loss`, `loss`, `mixed`, or `no_samples`.
@@ -372,9 +390,9 @@ This phase is emitted only when `PassivePacketStore.recentPacketSpans` returns a
 
 | Span name | Parent | Timing | Status | Tags |
 | --- | --- | --- | --- | --- |
-| `phase.wifi_rejoin_packets` | Root | Window from earliest packet span start to latest packet span end. | OK | `phase.name=wifi_rejoin_packets`, `phase.source=continuous_bpf`, `phase.packet_span_count`, `span.source=watchme`, `otel.status_code=OK`. |
+| `phase.packet_window` | Root | Window from earliest packet span start to latest packet span end. | OK | `phase.name=packet_window`, `phase.source=continuous_bpf`, `phase.packet_span_count`, `span.source=watchme`, `otel.status_code=OK`. |
 
-Packet-derived spans are recorded with `phase.wifi_rejoin_packets` as their logical parent and receive additional `wifi.essid` and `wifi.bssid` context.
+Packet-derived spans are recorded with `phase.packet_window` as their logical parent and receive additional `wifi.essid` and `wifi.bssid` context.
 
 ### DHCPv4 packet spans
 
@@ -441,19 +459,20 @@ All ICMPv6 packet spans receive:
 | --- | --- | --- |
 | `packet.icmpv6.router_solicitation_retry_gap` | Between consecutive Router Solicitation packets. | `packet.protocol=icmpv6`, `icmpv6.type=133`, `packet.event=router_solicitation_retry_gap`. |
 | `packet.icmpv6.router_solicitation_to_advertisement` | Latest Router Solicitation before a Router Advertisement within 3 seconds to that Advertisement. | `packet.protocol=icmpv6`, `packet.event=router_solicitation_to_advertisement`, `icmpv6.rs.source_ip`, `icmpv6.ra.source_ip`, `icmpv6.ra.destination_ip`, `network.interface`, optional `icmpv6.ra.router_lifetime_seconds`, optional `icmpv6.ra.source_link_layer_address`. |
-| `packet.icmpv6.default_router_neighbor_solicitation_retry_gap` | Between consecutive Neighbor Solicitations for the same target address. | `packet.protocol=icmpv6`, `packet.event=neighbor_solicitation_retry_gap`, `icmpv6.nd.target_address`. |
-| `packet.icmpv6.default_router_neighbor_resolution` | Latest Neighbor Solicitation before first Neighbor Advertisement for the same target address to that Advertisement. | `packet.protocol=icmpv6`, `packet.event=default_router_neighbor_resolution`, `icmpv6.nd.target_address`, `network.interface`, optional `icmpv6.nd.target_link_layer_address`, optional `icmpv6.nd.source_link_layer_address`. |
+| `packet.icmpv6.neighbor_solicitation_retry_gap` | Between consecutive Neighbor Solicitations for the same target address. | `packet.protocol=icmpv6`, `packet.event=neighbor_solicitation_retry_gap`, `icmpv6.nd.target_address`. |
+| `packet.icmpv6.neighbor_solicitation_to_advertisement` | Latest Neighbor Solicitation before first Neighbor Advertisement for the same target address to that Advertisement. | `packet.protocol=icmpv6`, `packet.event=neighbor_solicitation_to_advertisement`, `icmpv6.nd.target_address`, `network.interface`, optional `icmpv6.nd.target_link_layer_address`, optional `icmpv6.nd.source_link_layer_address`. |
 
 ## Passive packet store behavior
 
-`PassivePacketStore` is a rolling in-memory store for DHCP, ARP, and ICMPv6 observations, plus the active DNS/ICMP/HTTP registrations and matched packets used for active probe timing correlation.
+`PassivePacketStore` is a rolling in-memory store for DHCP, ARP, and ICMPv6 observations, plus the active DNS/ICMP/TCP/HTTP registrations and matched packets used for active probe timing correlation.
 
-- DHCP, ARP, ICMPv6, active DNS, active ICMP, and active HTTP packet observations older than 600 seconds are pruned.
+- DHCP, ARP, ICMPv6, active DNS, active ICMP, active TCP, and active HTTP packet observations older than 600 seconds are pruned.
 - Active probe registrations expire after the probe timeout plus one second.
-- Active DNS, ICMP, and HTTP packet observations are retained only when they match a currently registered probe identity.
+- Active DNS, ICMP, TCP, and HTTP packet observations are retained only when they match a currently registered probe identity.
 - Trace attachment uses `--wifi.probe.bpf.span-max-age` as the lookback window; default is 180 seconds.
 - `consume=true` suppresses re-emitting the same packet span in later event-triggered traces.
-- Packet-window traces use `consume=false` so the delayed trace can show the complete recent packet window.
+- Association traces and packet-window traces use `consume=true` after collecting the recent packet window, so DHCP/ARP/ICMPv6 recovery evidence is not repeatedly attached to later event traces.
+- Non-association event traces and BPF packet-window traces are suppressed while an association trace is pending, because the association trace carries the same DHCP/ARP/ICMPv6 recovery evidence.
 - ARP packet-window attachment prefers the Wi-Fi service IPv4 router when it is known; otherwise it includes recent ARP request/reply spans without a gateway filter.
 - Emitted-span de-duplication keys include span name, start time, duration, `packet.event`, `dhcp.xid`, `icmpv6.nd.target_address`, and `arp.target_ip`.
 
@@ -479,30 +498,31 @@ The Wi-Fi BPF monitor parses Ethernet frames admitted by the filter, but it only
 - Ethernet type `0x86DD` IPv6 ICMPv6 control packets of type 133, 134, 135, or 136.
 - UDP DNS packets on port 53 that match a currently registered active DNS probe transaction ID, query type, resolver, and target host.
 - ICMP echo request/reply packets that match a currently registered active ICMP probe target address and address family.
+- TCP SYN/SYN-ACK/RST packets on port 80 that match a currently registered active TCP probe target address.
 - TCP payload packets on port 80 that match a currently registered active plain HTTP probe target address.
 
 ## Active probe details
 
-Active internet probes validate the Wi-Fi path to internet hosts, not just general host reachability.
+Active internet probes check the Wi-Fi path to internet hosts, not just general host reachability.
 The default targets are `www.wide.ad.jp` and `www.cloudflare.com`.
 These defaults are ordinary probe targets, not a guarantee that every network will permit DNS, ICMP, IPv6, or plain HTTP to them; use repeated `--wifi.probe.internet.target` options to choose targets appropriate for the environment.
 
-`--wifi.probe.internet.family=dual` expands each target into independent IPv4 and IPv6 probe work.
-`--wifi.probe.internet.family=ipv4` sends only A-record, IPv4 ICMP, and IPv4 HTTP probes.
-`--wifi.probe.internet.family=ipv6` sends only AAAA-record, IPv6 ICMP, and IPv6 HTTP probes.
-When DNS probing is enabled, target/family/resolver DNS work is executed first because hostname ICMP and HTTP probes need concrete addresses.
-After DNS planning, ICMP and HTTP work is executed in parallel across targets and address families.
+`--wifi.probe.internet.family=dual` expands each target into independent IPv4 and IPv6 probe paths.
+`--wifi.probe.internet.family=ipv4` sends only A-record, IPv4 ICMP, IPv4 TCP, and IPv4 HTTP probes.
+`--wifi.probe.internet.family=ipv6` sends only AAAA-record, IPv6 ICMP, IPv6 TCP, and IPv6 HTTP probes.
+When DNS probing is enabled, each target/family path performs DNS first because hostname ICMP, TCP, and HTTP probes need a concrete address.
+All target/family paths run in parallel, and each path records DNS -> ICMP -> TCP -> HTTP as child spans under one `probe.internet.path` span.
 
 DNS active probes use the Wi-Fi service's DNS resolvers instead of the global default route.
 For each active target host and concrete address family, WatchMe sends a raw UDP A or AAAA query over `NWConnection` with `requiredInterface` set to Wi-Fi.
-Only the first two Wi-Fi service DNS resolvers are probed to keep a bounded active trace cost.
+Only the first two Wi-Fi service DNS resolvers are probed to keep connectivity check cost bounded.
 Before sending the query, WatchMe registers the DNS transaction ID, query type, target host, resolver, and interface with `PassivePacketStore`.
 The BPF monitor only stores DNS packets that match that active registration, so normal user DNS traffic is not retained for active probe timing.
 When both the query and response are observed, `probe.internet.dns.resolve` and the DNS duration metric use BPF packet timestamps from the BPF header.
 If packet correlation fails or BPF is disabled, the same span and metric fall back to Network.framework callback wall-clock timing.
 When DNS probing is enabled but the Wi-Fi service has no DNS resolver, WatchMe emits one failed DNS result per target and concrete address family with `resolver=none` and `timing_source=no_address`.
 When `--wifi.probe.internet.dns=false`, no DNS spans or DNS metrics are emitted.
-In that mode, ICMP and HTTP probes still run, but hostname targets have no resolved remote address and produce `outcome=no_address`; literal IPv4 or IPv6 targets can still be probed for their matching address family.
+In that mode, ICMP, TCP, and HTTP probes still run, but hostname targets have no resolved remote address and produce `outcome=no_address`; literal IPv4 or IPv6 targets can still be probed for their matching address family.
 
 ICMP active probes use Darwin datagram ICMP sockets and bind the socket to the Wi-Fi interface with `IP_BOUND_IF` or `IPV6_BOUND_IF`.
 Before sending an echo request, WatchMe registers the target address, family, and interface with `PassivePacketStore`.
@@ -510,6 +530,12 @@ The BPF monitor stores only echo request/reply packets that match a registered a
 The exchange matcher prefers the generated ICMP identifier and sequence when the kernel preserves them, and falls back to the first request/reply pair for the registered target if the datagram ICMP path rewrites those fields.
 When both request and reply are observed, `probe.internet.icmp.echo` and the ICMP duration metric use BPF packet timestamps.
 When no reply is observed before timeout, the result uses `timing_source=wall_clock_deadline` because there is no response packet timestamp.
+
+TCP active probes connect to the resolved target address on TCP/80 through Network.framework with `requiredInterface` set to Wi-Fi.
+Before opening the connection, WatchMe registers the target address, port, host, and interface with `PassivePacketStore`.
+The BPF monitor stores only SYN/SYN-ACK/RST packets that match a registered active TCP probe.
+When the outbound SYN and inbound SYN-ACK or RST are observed, `probe.internet.tcp.connect` and the TCP duration metric use BPF packet timestamps.
+If packet correlation fails or BPF is disabled, the same span and metric fall back to Network.framework callback wall-clock timing.
 
 Plain HTTP active probes connect to the resolved target address on TCP/80 through Network.framework with `requiredInterface` set to Wi-Fi.
 The HTTP request is always `HEAD / HTTP/1.1` with the original target host in the `Host` header.

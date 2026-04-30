@@ -5,8 +5,8 @@ WatchMe Agent exports OpenTelemetry metrics and traces from macOS.
 ## Commands
 
 - `watchme agent`: all collectors.
-- `watchme agent --collector.wifi`: Wi-Fi metrics, event traces, active probes, and passive packet timing.
-  - `watchme agent once --collector.wifi`: one-shot Wi-Fi metrics and active trace export.
+- `watchme agent --collector.wifi`: Wi-Fi metrics, event traces, connectivity probes, and passive packet timing.
+  - `watchme agent once --collector.wifi`: one-shot Wi-Fi metrics and connectivity trace export.
   - `watchme agent authorize-location`: request Location authorization for app-bundled Wi-Fi labels.
 - `watchme agent --collector.system`: CPU, memory, and disk metrics.
   - `watchme agent once --collector.system`: one-shot CPU, memory, and disk metrics export.
