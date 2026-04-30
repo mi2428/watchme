@@ -586,7 +586,11 @@ func associationPacketSpanWindowStart(
     }
     let anchor = anchors.max() ?? traceStarted
     let lookbackNanos = UInt64(max(lookback, 0) * 1_000_000_000)
-    return anchor > lookbackNanos ? anchor - lookbackNanos : 0
+    let windowStart = anchor > lookbackNanos ? anchor - lookbackNanos : 0
+    guard let windowFloor = UInt64(eventTags["association.window_floor_epoch_ns"] ?? ""), windowFloor <= anchor else {
+        return windowStart
+    }
+    return max(windowStart, windowFloor)
 }
 
 func shouldAttachPassivePacketSpans(reason: String) -> Bool {

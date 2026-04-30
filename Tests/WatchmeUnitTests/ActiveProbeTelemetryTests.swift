@@ -176,6 +176,34 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         )
     }
 
+    func testAssociationPacketWindowDoesNotStartBeforeLastDisconnect() {
+        XCTAssertEqual(
+            associationPacketSpanWindowStart(
+                reason: "wifi.join",
+                eventTags: [
+                    "network.event_received_epoch_ns": "20000",
+                    "association.window_floor_epoch_ns": "15000",
+                ],
+                traceStarted: 21_000,
+                lookback: 0.000010
+            ),
+            15_000
+        )
+
+        XCTAssertEqual(
+            associationPacketSpanWindowStart(
+                reason: "wifi.join",
+                eventTags: [
+                    "network.event_received_epoch_ns": "20000",
+                    "association.window_floor_epoch_ns": "25000",
+                ],
+                traceStarted: 21_000,
+                lookback: 0.000010
+            ),
+            10_000
+        )
+    }
+
     func testPassivePacketSpansAttachOnlyToRecoveryTraces() {
         XCTAssertTrue(shouldAttachPassivePacketSpans(reason: "wifi.join"))
         XCTAssertTrue(shouldAttachPassivePacketSpans(reason: "wifi.roam"))

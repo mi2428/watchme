@@ -22,6 +22,7 @@ final class WiFiAgent: WatchmeCollector {
     var associationTraceVersion = 0
     var associationTracePending = false
     var lastAssociationTraceCompletedEpochNanos: UInt64?
+    var lastDisconnectionEpochNanos: UInt64?
     var packetWindowSuppressedUntil = Date.distantPast
     var lastIdentityStatusLogSignature: String?
     var metricState = WiFiMetricState()
@@ -84,18 +85,25 @@ final class WiFiAgent: WatchmeCollector {
             }
             let previous = lastEventSnapshot
             let snapshot = captureLatestSnapshot()
+            if previous.isAssociated, !snapshot.isAssociated {
+                lastDisconnectionEpochNanos = wallClockNanos()
+            }
             if !previous.isAssociated, snapshot.isAssociated {
+                var eventTags = snapshotTransitionTags(previous: previous, current: snapshot, observation: "metrics_snapshot")
+                addAssociationWindowFloor(to: &eventTags)
                 scheduleAssociationTrace(
                     sourceReason: "metrics.snapshot",
                     reason: "wifi.join",
-                    eventTags: snapshotTransitionTags(previous: previous, current: snapshot, observation: "metrics_snapshot"),
+                    eventTags: eventTags,
                     delay: config.associationTraceDelay
                 )
             } else if WiFiTracePolicy.isAddressAcquisition(previous: previous, current: snapshot) {
+                var eventTags = snapshotTransitionTags(previous: previous, current: snapshot, observation: "metrics_snapshot")
+                addAssociationWindowFloor(to: &eventTags)
                 scheduleAssociationTrace(
                     sourceReason: "metrics.snapshot",
                     reason: "wifi.join",
-                    eventTags: snapshotTransitionTags(previous: previous, current: snapshot, observation: "metrics_snapshot"),
+                    eventTags: eventTags,
                     delay: config.associationTraceDelay
                 )
             }
@@ -176,7 +184,12 @@ final class WiFiAgent: WatchmeCollector {
             tags["agent.observation"] = event.name
             tags["wifi.transition.classification"] = reason
 
+            if reason == "wifi.disconnect" {
+                self.lastDisconnectionEpochNanos = event.receivedWallNanos
+            }
+
             if WiFiTracePolicy.isAssociationRecoveryReason(reason) {
+                self.addAssociationWindowFloor(to: &tags)
                 self.scheduleAssociationTrace(reason: reason, eventTags: tags, delay: self.config.associationTraceDelay)
                 return
             }
@@ -217,9 +230,17 @@ final class WiFiAgent: WatchmeCollector {
             eventTags["previous_local_ip"] = previous.primaryIPv4 ?? ""
             eventTags["current_local_ip"] = current.primaryIPv4 ?? ""
 
+            if previous.isAssociated, !current.isAssociated,
+               let receivedEpoch = UInt64(tags["network.event_received_epoch_ns"] ?? "")
+            {
+                self.lastDisconnectionEpochNanos = receivedEpoch
+            }
+
             if !previous.isAssociated, current.isAssociated {
+                self.addAssociationWindowFloor(to: &eventTags)
                 self.scheduleAssociationTrace(reason: "wifi.join", eventTags: eventTags, delay: self.config.associationTraceDelay)
             } else if WiFiTracePolicy.isAddressAcquisition(previous: previous, current: current) {
+                self.addAssociationWindowFloor(to: &eventTags)
                 self.scheduleAssociationTrace(reason: "wifi.join", eventTags: eventTags, delay: self.config.associationTraceDelay)
             } else if previous.primaryIPv4 != current.primaryIPv4, current.isAssociated {
                 self.triggerTrace(
@@ -240,6 +261,13 @@ final class WiFiAgent: WatchmeCollector {
             "previous_local_ip": previous.primaryIPv4 ?? "",
             "current_local_ip": current.primaryIPv4 ?? "",
         ]
+    }
+
+    private func addAssociationWindowFloor(to tags: inout [String: String]) {
+        guard let lastDisconnectionEpochNanos else {
+            return
+        }
+        tags["association.window_floor_epoch_ns"] = "\(lastDisconnectionEpochNanos)"
     }
 
     private func classifyWiFiTransition(event: String, previous: WiFiSnapshot, current: WiFiSnapshot) -> String {
