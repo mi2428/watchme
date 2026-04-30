@@ -19,6 +19,7 @@ Those views can be built downstream from the exported counters and gauges.
 
 - **`watchme system`:** Long-running agent that exports CPU, memory, and disk metrics.
 - **`watchme system once`:** One-shot metrics export.
+- **`scripts/watchme-app system ...`:** Runs the same system command through the app-bundle wrapper for parity with app-bundled workflows. Location authorization is not required for system metrics.
 
 ### CLI options
 
@@ -75,4 +76,6 @@ Metrics are exported:
 ```console
 $ watchme system once
 $ watchme system --metrics.interval 5
+$ make app
+$ scripts/watchme-app system once
 ```
