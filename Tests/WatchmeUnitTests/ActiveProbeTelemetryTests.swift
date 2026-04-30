@@ -176,6 +176,37 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         )
     }
 
+    func testPassivePacketSpansAttachOnlyToRecoveryTraces() {
+        XCTAssertTrue(shouldAttachPassivePacketSpans(reason: "wifi.join"))
+        XCTAssertTrue(shouldAttachPassivePacketSpans(reason: "wifi.roam"))
+        XCTAssertTrue(shouldAttachPassivePacketSpans(reason: "wifi.network.attachment"))
+        XCTAssertFalse(shouldAttachPassivePacketSpans(reason: "wifi.disconnect"))
+        XCTAssertFalse(shouldAttachPassivePacketSpans(reason: "wifi.connectivity"))
+        XCTAssertFalse(shouldAttachPassivePacketSpans(reason: "wifi.power.changed"))
+    }
+
+    func testPassivePacketWindowUsesBoundedAttachmentTimestampLookback() {
+        XCTAssertEqual(
+            passivePacketSpanWindowStart(
+                reason: "wifi.network.attachment",
+                eventTags: ["packet.timestamp_epoch_ns": "20000"],
+                traceStarted: 30_000,
+                associationLookback: 0.000002,
+                attachmentLookback: 0.000003
+            ),
+            17_000
+        )
+        XCTAssertNil(
+            passivePacketSpanWindowStart(
+                reason: "wifi.disconnect",
+                eventTags: ["wifi.event_received_epoch_ns": "20_000"],
+                traceStarted: 30_000,
+                associationLookback: 0.000002,
+                attachmentLookback: 0.000003
+            )
+        )
+    }
+
     func testNetworkAttachmentTraceRequiresAddressAcquisitionEvidence() {
         XCTAssertTrue(
             networkAttachmentTraceHasAddressAcquisitionEvidence([

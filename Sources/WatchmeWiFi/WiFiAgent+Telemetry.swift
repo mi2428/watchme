@@ -268,24 +268,32 @@ extension WiFiAgent {
             rootTags["bpf.packets_dropped"] = "\(bpfStats.packetsDropped)"
         }
 
-        let packetSpanWindowStart = associationPacketSpanWindowStart(
+        let packetSpanWindowStart = passivePacketSpanWindowStart(
             reason: reason,
             eventTags: eventTags,
             traceStarted: traceStarted,
-            lookback: config.associationTraceDelay + connectivityReadinessTimeout + 2.0
+            associationLookback: config.associationTraceDelay + connectivityReadinessTimeout + 2.0,
+            attachmentLookback: config.associationTraceDelay + config.associationTraceReadinessTimeout + 2.0
         )
         if let packetSpanWindowStart {
             rootTags["packet_span.window_start_epoch_ns"] = "\(packetSpanWindowStart)"
         }
 
-        let packetSpans = packetStore.recentPacketSpans(
-            interfaceName: snapshot.interfaceName,
-            ipv4Gateway: networkState.routerIPv4,
-            maxAge: config.bpfSpanMaxAge,
-            since: packetSpanWindowStart,
-            consume: consumePacketSpans,
-            includeConsumed: { shouldReplayConsumedNetworkAttachmentSpan(reason: reason, span: $0, replayStart: packetSpanWindowStart) }
-        )
+        let packetSpans =
+            if shouldAttachPassivePacketSpans(reason: reason) {
+                packetStore.recentPacketSpans(
+                    interfaceName: snapshot.interfaceName,
+                    ipv4Gateway: networkState.routerIPv4,
+                    maxAge: config.bpfSpanMaxAge,
+                    since: packetSpanWindowStart,
+                    consume: consumePacketSpans,
+                    includeConsumed: {
+                        shouldReplayConsumedNetworkAttachmentSpan(reason: reason, span: $0, replayStart: packetSpanWindowStart)
+                    }
+                )
+            } else {
+                [SpanEvent]()
+            }
         if reason == "wifi.network.attachment", !networkAttachmentTraceHasAddressAcquisitionEvidence(packetSpans) {
             logEvent(
                 .debug, "network_attachment_trace_suppressed",
@@ -550,6 +558,33 @@ func associationPacketSpanWindowStart(
     }
     let anchor = anchors.max() ?? traceStarted
     let lookbackNanos = UInt64(max(lookback, 0) * 1_000_000_000)
+    return anchor > lookbackNanos ? anchor - lookbackNanos : 0
+}
+
+func shouldAttachPassivePacketSpans(reason: String) -> Bool {
+    WiFiTracePolicy.isAssociationRecoveryReason(reason) || reason == "wifi.network.attachment"
+}
+
+func passivePacketSpanWindowStart(
+    reason: String,
+    eventTags: [String: String],
+    traceStarted: UInt64,
+    associationLookback: TimeInterval,
+    attachmentLookback: TimeInterval
+) -> UInt64? {
+    if WiFiTracePolicy.isAssociationRecoveryReason(reason) {
+        return associationPacketSpanWindowStart(
+            reason: reason,
+            eventTags: eventTags,
+            traceStarted: traceStarted,
+            lookback: associationLookback
+        )
+    }
+    guard reason == "wifi.network.attachment" else {
+        return nil
+    }
+    let anchor = UInt64(eventTags["packet.timestamp_epoch_ns"] ?? "") ?? traceStarted
+    let lookbackNanos = UInt64(max(attachmentLookback, 0) * 1_000_000_000)
     return anchor > lookbackNanos ? anchor - lookbackNanos : 0
 }
 

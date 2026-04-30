@@ -325,17 +325,17 @@ Common root tags include every tag listed in the snapshot model section, plus:
 
 | Trigger | Root reason | Connectivity check | Packet spans | Notes |
 | --- | --- | --- | --- | --- |
-| `watchme agent once --collector.wifi` | `wifi.connectivity` | Yes | Recent packet spans are included without consuming them. | `agent.mode=once`. |
-| WatchMe Agent startup | `wifi.connectivity` | Yes | Recent packet spans are consumed. | `agent.mode=startup`. |
-| Connectivity timer | `wifi.connectivity` | Yes | Recent packet spans are consumed. | Runs every `--wifi.traces.interval` seconds. |
-| CoreWLAN join | `wifi.join` | Yes, after readiness | Recent packet spans are consumed by the join trace. | Delayed 1.5 seconds, then waits up to 8 seconds for Wi-Fi DNS readiness so DHCP/DNS/IP acquisition is represented in the join trace. |
-| CoreWLAN roam | `wifi.roam` | Yes, after readiness | Recent packet spans are consumed by the roam trace. | Uses the same delayed readiness path as join. |
-| CoreWLAN disconnect | `wifi.disconnect` | No | Recent packet spans are consumed. | Classified from snapshot transition; connectivity checks are not meaningful once Wi-Fi is disconnected. |
-| Other CoreWLAN events | Normalized event name, e.g. `wifi.power.changed` | Only when ready | Recent packet spans are consumed. | `wifi_link_quality_changed` only updates logs and does not trigger a trace. |
-| SystemConfiguration join | `wifi.join` | Yes, after readiness | Recent packet spans are consumed by the join trace. | Detected when previous snapshot was not associated and current snapshot is. |
-| SystemConfiguration IPv4 acquisition while associated | `wifi.join` | Yes, after readiness | Recent packet spans are consumed by the join trace. | Converts the first IPv4 address after association into the same stable join trace. |
-| SystemConfiguration IPv4 change while already addressed | Event reason, e.g. `wifi.network.ipv4_changed` | Only when ready | Recent packet spans are consumed. | Subject to trigger cooldown. |
-| BPF address-acquisition packet window | `wifi.network.attachment` | Only when ready | Recent packet spans are consumed by the network attachment trace. | Delayed 1.25 seconds from packet event, suppressed while an association trace is pending or just completed, and emitted only when recent packet spans include DHCP or RS->RA address-acquisition evidence. |
+| `watchme agent once --collector.wifi` | `wifi.connectivity` | Yes | None. | `agent.mode=once`. |
+| WatchMe Agent startup | `wifi.connectivity` | Yes | None. | `agent.mode=startup`. |
+| Connectivity timer | `wifi.connectivity` | Yes | None. | Runs every `--wifi.traces.interval` seconds. |
+| CoreWLAN join | `wifi.join` | Yes, after readiness | Event-bounded recent packet spans are consumed by the join trace. | Delayed 1.5 seconds, then waits up to 8 seconds for Wi-Fi DNS readiness so DHCP/DNS/IP acquisition is represented in the join trace. |
+| CoreWLAN roam | `wifi.roam` | Yes, after readiness | Event-bounded recent packet spans are consumed by the roam trace. | Uses the same delayed readiness path as join. |
+| CoreWLAN disconnect | `wifi.disconnect` | No | None. | Classified from snapshot transition; connectivity checks and attachment packet spans are not meaningful once Wi-Fi is disconnected. |
+| Other CoreWLAN events | Normalized event name, e.g. `wifi.power.changed` | Only when ready | None. | `wifi_link_quality_changed` only updates logs and does not trigger a trace. |
+| SystemConfiguration join | `wifi.join` | Yes, after readiness | Event-bounded recent packet spans are consumed by the join trace. | Detected when previous snapshot was not associated and current snapshot is. |
+| SystemConfiguration IPv4 acquisition while associated | `wifi.join` | Yes, after readiness | Event-bounded recent packet spans are consumed by the join trace. | Converts the first IPv4 address after association into the same stable join trace. |
+| SystemConfiguration IPv4 change while already addressed | Event reason, e.g. `wifi.network.ipv4_changed` | Only when ready | None. | Subject to trigger cooldown. |
+| BPF address-acquisition packet window | `wifi.network.attachment` | Only when ready | Packet-event-bounded recent packet spans are consumed by the network attachment trace. | Delayed 1.25 seconds from packet event, suppressed while an association trace is pending or just completed, and emitted only when recent packet spans include DHCP or RS->RA address-acquisition evidence. |
 
 `--wifi.traces.cooldown` suppresses non-forced event traces.
 Join, roam, startup, once, connectivity timer, and network attachment traces bypass or avoid this suppression as implemented by their call sites.
