@@ -340,7 +340,10 @@ final class PassivePacketStore {
     func unregisterActiveTCPProbe(_ request: ActiveTCPProbeRequest) {
         lock.lock()
         activeTCPProbes.removeAll {
-            $0.remoteIP == request.remoteIP && $0.port == request.port
+            $0.remoteIP == request.remoteIP
+                && $0.port == request.port
+                && $0.interfaceName == request.interfaceName
+                && $0.startWallNanos == request.startWallNanos
         }
         lock.unlock()
     }

@@ -173,7 +173,11 @@ extension PassivePacketStore {
             }
             .sorted { $0.wallNanos < $1.wallNanos }
         guard let syn = candidates.first(where: {
-            $0.destinationIP == request.remoteIP && $0.destinationPort == request.port && $0.isSYN && !$0.isACK
+            $0.wallNanos >= request.startWallNanos
+                && $0.destinationIP == request.remoteIP
+                && $0.destinationPort == request.port
+                && $0.isSYN
+                && !$0.isACK
         }) else {
             return nil
         }
