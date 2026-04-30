@@ -40,5 +40,5 @@ printf 'APPL????' >"${bundle}/Contents/PkgInfo"
 
 command -v codesign >/dev/null 2>&1 && codesign --force --sign - "${bundle}" >/dev/null
 printf 'bundle=%s\n' "${bundle}"
-printf 'authorize=%q %q --args wifi authorize-location\n' open "${bundle}"
+printf 'authorize=%q %q --args wifi authorize-only\n' open "${bundle}"
 printf 'run=%q wifi once\n' "${repo_root}/scripts/watchme-app"

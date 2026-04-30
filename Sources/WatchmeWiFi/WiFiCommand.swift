@@ -17,14 +17,14 @@ public struct WiFiCommand: WatchmeSubcommand {
         logger.minimumLevel = config.logLevel
 
         if config.authorizeLocation {
-            return requestWiFiLocationAuthorization(timeout: config.timeout)
+            return requestWiFiLocationAuthorization(timeout: config.probeHTTPTimeout)
         }
 
         let telemetry = TelemetryClient(
             serviceName: "watchme-macos",
-            tracesEndpoint: config.collectorURL,
-            metricsSink: PushgatewayMetricSink(baseURL: config.pushgatewayURL, timeout: config.timeout),
-            metricsTimeout: config.timeout
+            tracesEndpoint: config.tracesURL,
+            metricsSink: PushgatewayMetricSink(baseURL: config.metricsPushURL, pathPrefix: config.metricsPushPrefix),
+            metricsTimeout: config.probeHTTPTimeout
         )
         let agent = WiFiAgent(config: config, telemetry: telemetry)
         if config.once {
@@ -42,15 +42,16 @@ public struct WiFiCommand: WatchmeSubcommand {
 struct WiFiConfig {
     var once = false
     var authorizeLocation = false
-    var collectorURL = URL(string: "http://127.0.0.1:4318/v1/traces")!
-    var pushgatewayURL = URL(string: "http://127.0.0.1:9091")!
+    var tracesURL = URL(string: "http://127.0.0.1:4318/v1/traces")!
+    var metricsPushURL = URL(string: "http://127.0.0.1:9091")!
+    var metricsPushPrefix = ""
     var metricsInterval: TimeInterval = 5
     var activeInterval: TimeInterval = 60
     var triggerCooldown: TimeInterval = 2
-    var timeout: TimeInterval = 5
+    var probeHTTPTimeout: TimeInterval = 5
     var bpfEnabled = true
     var bpfSpanMaxAge: TimeInterval = 180
-    var targets = ["www.apple.com", "www.cloudflare.com"]
+    var probeHTTPTargets = ["www.apple.com", "www.cloudflare.com"]
     var logLevel: LogLevel = .debug
 
     static func parse(_ arguments: [String]) throws -> WiFiConfig {
@@ -67,12 +68,18 @@ private struct WiFiConfigParser {
 
     mutating func parse() throws -> WiFiConfig {
         consumeLeadingMode()
+        if config.authorizeLocation {
+            guard index == arguments.count else {
+                throw WatchmeError.invalidArgument("authorize-only does not accept options")
+            }
+            return config
+        }
         while index < arguments.count {
             try consumeOption()
             index += 1
         }
         if !explicitTargets.isEmpty {
-            config.targets = explicitTargets
+            config.probeHTTPTargets = explicitTargets
         }
         return config
     }
@@ -82,13 +89,11 @@ private struct WiFiConfigParser {
             return
         }
         switch arguments[index] {
-        case "authorize-location", "location-authorize":
+        case "authorize-only":
             config.authorizeLocation = true
             index += 1
         case "once":
             config.once = true
-            index += 1
-        case "agent", "run", "watch":
             index += 1
         case "help", "--help", "-h":
             printWiFiUsage()
@@ -99,21 +104,22 @@ private struct WiFiConfigParser {
     }
 
     private mutating func consumeOption() throws {
-        let argument = arguments[index]
+        let (argument, inlineValue) = splitInlineValue(arguments[index])
         switch argument {
-        case "--once":
-            config.once = true
-        case "--no-bpf":
-            config.bpfEnabled = false
-        case "--target", "-t":
-            try explicitTargets.append(requireValue(for: argument))
-        case "--collector", "--pushgateway":
-            try applyURL(argument)
-        case "--metrics-interval", "--active-interval", "--trigger-cooldown", "--timeout", "--bpf-span-max-age":
-            try applyTimeInterval(argument)
-        case "--log-level":
-            try applyLogLevel(argument)
+        case "--probe.http.target":
+            try explicitTargets.append(requireValue(for: argument, inlineValue: inlineValue))
+        case "--traces.url", "--metrics.push.url":
+            try applyURL(argument, inlineValue: inlineValue)
+        case "--metrics.push.prefix":
+            config.metricsPushPrefix = try requireValue(for: argument, inlineValue: inlineValue)
+        case "--metrics.interval", "--traces.interval", "--traces.cooldown", "--probe.http.timeout", "--probe.bpf.span-max-age":
+            try applyTimeInterval(argument, inlineValue: inlineValue)
+        case "--probe.bpf.enabled":
+            config.bpfEnabled = try parseBoolOption(argument, inlineValue: inlineValue)
+        case "--log.level":
+            try applyLogLevel(argument, inlineValue: inlineValue)
         case "--help", "-h":
+            try rejectInlineValue(argument, inlineValue)
             printWiFiUsage()
             exit(0)
         default:
@@ -121,51 +127,87 @@ private struct WiFiConfigParser {
         }
     }
 
-    private mutating func applyURL(_ argument: String) throws {
-        let value = try requireValue(for: argument)
-        guard let url = URL(string: value) else {
+    private func splitInlineValue(_ argument: String) -> (option: String, inlineValue: String?) {
+        guard let equals = argument.firstIndex(of: "=") else {
+            return (argument, nil)
+        }
+        return (String(argument[..<equals]), String(argument[argument.index(after: equals)...]))
+    }
+
+    private func rejectInlineValue(_ argument: String, _ inlineValue: String?) throws {
+        guard inlineValue == nil else {
+            throw WatchmeError.invalidArgument("\(argument) does not accept a value")
+        }
+    }
+
+    private mutating func applyURL(_ argument: String, inlineValue: String?) throws {
+        let value = try requireValue(for: argument, inlineValue: inlineValue)
+        guard
+            let url = URL(string: value),
+            let scheme = url.scheme?.lowercased(),
+            ["http", "https"].contains(scheme),
+            url.host != nil
+        else {
             throw WatchmeError.invalidArgument("Invalid URL for \(argument): \(value)")
         }
         switch argument {
-        case "--collector":
-            config.collectorURL = url
-        case "--pushgateway":
-            config.pushgatewayURL = url
+        case "--traces.url":
+            config.tracesURL = url
+        case "--metrics.push.url":
+            config.metricsPushURL = url
         default:
             break
         }
     }
 
-    private mutating func applyTimeInterval(_ argument: String) throws {
-        let rawValue = try requireValue(for: argument)
+    private mutating func applyTimeInterval(_ argument: String, inlineValue: String?) throws {
+        let rawValue = try requireValue(for: argument, inlineValue: inlineValue)
         guard let value = TimeInterval(rawValue) else {
             throw WatchmeError.invalidArgument("Invalid value for \(argument): \(rawValue)")
         }
         switch argument {
-        case "--metrics-interval":
+        case "--metrics.interval":
             config.metricsInterval = try positive(value, name: "metrics interval")
-        case "--active-interval":
+        case "--traces.interval":
             config.activeInterval = try positive(value, name: "active interval")
-        case "--trigger-cooldown":
+        case "--traces.cooldown":
             config.triggerCooldown = try nonNegative(value, name: "trigger cooldown")
-        case "--timeout":
-            config.timeout = try positive(value, name: "timeout")
-        case "--bpf-span-max-age":
+        case "--probe.http.timeout":
+            config.probeHTTPTimeout = try positive(value, name: "probe HTTP timeout")
+        case "--probe.bpf.span-max-age":
             config.bpfSpanMaxAge = try positive(value, name: "BPF span max age")
         default:
             break
         }
     }
 
-    private mutating func applyLogLevel(_ argument: String) throws {
-        let value = try requireValue(for: argument).lowercased()
+    private mutating func applyLogLevel(_ argument: String, inlineValue: String?) throws {
+        let value = try requireValue(for: argument, inlineValue: inlineValue).lowercased()
         guard let level = LogLevel(rawValue: value) else {
             throw WatchmeError.invalidArgument("Invalid log level: \(value)")
         }
         config.logLevel = level
     }
 
-    private mutating func requireValue(for argument: String) throws -> String {
+    private mutating func parseBoolOption(_ argument: String, inlineValue: String?) throws -> Bool {
+        let rawValue = try requireValue(for: argument, inlineValue: inlineValue).lowercased()
+        switch rawValue {
+        case "1", "true", "yes", "on":
+            return true
+        case "0", "false", "no", "off":
+            return false
+        default:
+            throw WatchmeError.invalidArgument("Invalid boolean for \(argument): \(rawValue)")
+        }
+    }
+
+    private mutating func requireValue(for argument: String, inlineValue: String?) throws -> String {
+        if let inlineValue {
+            guard !inlineValue.isEmpty else {
+                throw WatchmeError.invalidArgument("Missing value for \(argument)")
+            }
+            return inlineValue
+        }
         guard index + 1 < arguments.count else {
             throw WatchmeError.invalidArgument("Missing value for \(argument)")
         }
@@ -189,32 +231,50 @@ private struct WiFiConfigParser {
 }
 
 func printWiFiUsage() {
+    let commands = usageRows([
+        ("watchme wifi [options]", "Run the long-running Wi-Fi observability agent."),
+        ("watchme wifi once [options]", "Push one metrics snapshot and send one active trace."),
+        ("watchme wifi authorize-only", "Request Location authorization for the app-bundled CLI."),
+    ])
+    let options = usageRows([
+        ("--metrics.push.url URL", "Pushgateway base URL. Default: http://127.0.0.1:9091"),
+        ("--metrics.push.prefix path", "Pushgateway path prefix for reverse proxies."),
+        ("--metrics.interval seconds", "Wi-Fi metric collection interval. Default: 5"),
+        ("--traces.url URL", "OTLP/HTTP trace endpoint. Default: http://127.0.0.1:4318/v1/traces"),
+        ("--traces.interval seconds", "Active trace interval. Default: 60"),
+        ("--traces.cooldown seconds", "Minimum seconds between event traces. Default: 2"),
+        ("--probe.http.timeout seconds", "Active probe HTTP timeout. Default: 5"),
+        ("--probe.http.target target", "Active HTTP HEAD target. Can be repeated."),
+        ("--probe.bpf.enabled bool", "Enable passive BPF probe for DHCP/RS/RA/NDP. Default: true"),
+        ("--probe.bpf.span-max-age sec", "Passive probe packet span lookback window. Default: 180"),
+        ("--log.level level", "debug, info, warn, or error. Default: debug"),
+    ])
+
     print(
         """
-        WatchMe Wi-Fi - macOS Wi-Fi O11y agent
+        WatchMe Wi-Fi - macOS observability agent
 
-        Usage:
-          watchme wifi [agent] [options]
-          watchme wifi once [options]
-          watchme wifi authorize-location [options]
-          watchme wifi --once [options]
+        Commands:
+        \(commands)
 
         Options:
-          --collector URL             OTLP/HTTP trace endpoint. Default: http://127.0.0.1:4318/v1/traces
-          --pushgateway URL           Pushgateway base URL. Default: http://127.0.0.1:9091
-          --metrics-interval seconds  Wi-Fi metric collection interval. Default: 5
-          --active-interval seconds   Active trace interval. Default: 60
-          --trigger-cooldown seconds  Minimum seconds between event traces. Default: 2
-          --timeout seconds           Active probe HTTP timeout. Default: 5
-          --target, -t host-or-url    Active HTTP HEAD target. Can be repeated.
-          --no-bpf                    Disable DHCP/RS/RA/NDP passive BPF watcher.
-          --bpf-span-max-age seconds  Packet span lookback window. Default: 180
-          --log-level level           debug, info, warn, or error. Default: debug
-          --once                      Push one metric snapshot and send one active trace, then exit.
+        \(options)
 
-        Location authorization:
-          Build an app bundle, then run:
-            open .build/watchme-app/WatchMe.app --args wifi authorize-location
+        NOTE:
+          On first run, execute:
+
+            $ watchme wifi authorize-only
+
+          Press 'Allow' in the macOS Preferences popup.
         """
     )
+}
+
+private func usageRows(_ rows: [(String, String)], leftColumnWidth: Int = 34) -> String {
+    rows
+        .map { left, right in
+            let separator = String(repeating: " ", count: max(leftColumnWidth - left.count, 2))
+            return "  \(left)\(separator)\(right)"
+        }
+        .joined(separator: "\n")
 }

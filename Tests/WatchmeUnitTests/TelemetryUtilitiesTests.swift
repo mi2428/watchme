@@ -11,11 +11,16 @@ final class TelemetryUtilitiesTests: XCTestCase {
     func testPushgatewayEndpointPreservesPrefixAndEscapesGroupingKeys() throws {
         let baseURL = try XCTUnwrap(URL(string: "http://127.0.0.1:9091/proxy/api"))
 
-        let endpoint = pushgatewayEndpointURL(baseURL: baseURL, job: "watchme/wifi", instance: "mac 1/en0")
+        let endpoint = pushgatewayEndpointURL(
+            baseURL: baseURL,
+            pathPrefix: "/push gateway",
+            job: "watchme/wifi",
+            instance: "mac 1/en0"
+        )
 
         XCTAssertEqual(
             endpoint.absoluteString,
-            "http://127.0.0.1:9091/proxy/api/metrics/job/watchme%2Fwifi/instance/mac%201%2Fen0"
+            "http://127.0.0.1:9091/proxy/api/push%20gateway/metrics/job/watchme%2Fwifi/instance/mac%201%2Fen0"
         )
     }
 

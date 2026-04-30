@@ -40,8 +40,9 @@ final class WiFiAgent {
                 "pid": "\(getpid())",
                 "metrics_interval_seconds": "\(Int(config.metricsInterval))",
                 "active_interval_seconds": "\(Int(config.activeInterval))",
-                "collector_url": config.collectorURL.absoluteString,
-                "pushgateway_url": config.pushgatewayURL.absoluteString,
+                "traces_url": config.tracesURL.absoluteString,
+                "metrics_push_url": config.metricsPushURL.absoluteString,
+                "metrics_push_prefix": config.metricsPushPrefix,
                 "bpf_enabled": config.bpfEnabled ? "true" : "false",
             ]
         )

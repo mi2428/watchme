@@ -67,13 +67,15 @@ public protocol MetricSink {
 
 public final class PushgatewayMetricSink: MetricSink {
     private let baseURL: URL
+    private let pathPrefix: String
 
-    public init(baseURL: URL, timeout _: TimeInterval) {
+    public init(baseURL: URL, pathPrefix: String = "") {
         self.baseURL = baseURL
+        self.pathPrefix = pathPrefix
     }
 
     public func push(job: String, instance: String, body: String, timeout: TimeInterval) -> MetricPushResult {
-        let endpoint = pushgatewayEndpointURL(baseURL: baseURL, job: job, instance: instance)
+        let endpoint = pushgatewayEndpointURL(baseURL: baseURL, pathPrefix: pathPrefix, job: job, instance: instance)
         var request = URLRequest(url: endpoint)
         request.httpMethod = "PUT"
         request.timeoutInterval = timeout
@@ -104,17 +106,26 @@ public final class PushgatewayMetricSink: MetricSink {
     }
 }
 
-func pushgatewayEndpointURL(baseURL: URL, job: String, instance: String) -> URL {
+func pushgatewayEndpointURL(baseURL: URL, pathPrefix: String = "", job: String, instance: String) -> URL {
     let encodedJob = pathEscape(job)
     let encodedInstance = pathEscape(instance)
     var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
-    let prefix = components.percentEncodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let basePrefix = components.percentEncodedPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    let configuredPrefix = pushgatewayPathPrefix(pathPrefix)
+    let prefix = [basePrefix, configuredPrefix].filter { !$0.isEmpty }.joined(separator: "/")
     // Use percentEncodedPath because Pushgateway grouping keys are path
     // segments. A job or instance can legally contain "/", and that slash must
     // stay encoded as data rather than being interpreted as a path separator.
     let pathPrefix = prefix.isEmpty ? "" : "/\(prefix)"
     components.percentEncodedPath = "\(pathPrefix)/metrics/job/\(encodedJob)/instance/\(encodedInstance)"
     return components.url!
+}
+
+private func pushgatewayPathPrefix(_ rawPrefix: String) -> String {
+    rawPrefix
+        .split(separator: "/", omittingEmptySubsequences: true)
+        .map { pathEscape(String($0)) }
+        .joined(separator: "/")
 }
 
 public final class TelemetryClient {
@@ -135,7 +146,7 @@ public final class TelemetryClient {
         let body = PrometheusTextEncoder.encode(metrics)
         let result = metricsSink.push(job: job, instance: instance, body: body, timeout: metricsTimeout)
         var logFields = fields
-        logFields["pushgateway_url"] = result.endpoint.absoluteString
+        logFields["metrics_push_endpoint_url"] = result.endpoint.absoluteString
         logFields["status_code"] = "\(result.statusCode)"
         if let error = result.error {
             logFields["error"] = error

@@ -132,8 +132,9 @@ extension WiFiAgent {
         var rootTags = snapshot.traceTags
         rootTags.merge(eventTags) { _, new in new }
         rootTags["reason"] = reason
-        rootTags["collector.url"] = config.collectorURL.absoluteString
-        rootTags["pushgateway.url"] = config.pushgatewayURL.absoluteString
+        rootTags["traces.url"] = config.tracesURL.absoluteString
+        rootTags["metrics.push.url"] = config.metricsPushURL.absoluteString
+        rootTags["metrics.push.prefix"] = config.metricsPushPrefix
         rootTags["bpf.enabled"] = config.bpfEnabled ? "true" : "false"
 
         let packetSpans = packetStore.recentPacketSpans(
@@ -161,7 +162,7 @@ extension WiFiAgent {
                 "local_trace_id": recorder.traceId,
                 "reason": reason,
                 "spans": "\(batch.spans.count + 1)",
-                "collector_url": config.collectorURL.absoluteString,
+                "traces_url": config.tracesURL.absoluteString,
             ]
         )
     }
@@ -208,7 +209,7 @@ extension WiFiAgent {
         let phaseStart = wallClockNanos()
         let routeTags = defaultRouteTags()
 
-        for target in config.targets {
+        for target in config.probeHTTPTargets {
             recordActiveTarget(target, phaseId: phaseId, routeTags: routeTags, recorder: recorder, snapshot: snapshot)
         }
 
@@ -221,7 +222,7 @@ extension WiFiAgent {
                 "phase.name": "active_validation",
                 "phase.source": "network_framework_active_probe",
                 "phase.validation_scope": "http_head_targets",
-                "probe.targets": config.targets.joined(separator: ","),
+                "probe.targets": config.probeHTTPTargets.joined(separator: ","),
             ]
         )
     }
@@ -234,7 +235,7 @@ extension WiFiAgent {
         snapshot: WiFiSnapshot
     ) {
         let targetSpanId = recorder.newSpanId()
-        let result = runHTTPHeadProbe(target: target, timeout: config.timeout, interfaceName: snapshot.interfaceName)
+        let result = runHTTPHeadProbe(target: target, timeout: config.probeHTTPTimeout, interfaceName: snapshot.interfaceName)
         for child in result.childSpans {
             recorder.recordEvent(
                 child, parentId: targetSpanId,

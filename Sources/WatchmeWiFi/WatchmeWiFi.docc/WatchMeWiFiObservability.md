@@ -11,6 +11,7 @@ It is meant to be checked against the source when instrumentation changes.
 
 - [Scope](#scope)
 - [Runtime entry points](#runtime-entry-points)
+  - [CLI options](#cli-options)
 - [Collection points](#collection-points)
 - [Snapshot model](#snapshot-model)
 - [Metrics](#metrics)
@@ -31,7 +32,7 @@ It is meant to be checked against the source when instrumentation changes.
 
 ## Scope
 
-`watchme wifi` turns macOS Wi-Fi state into two O11y signal families:
+`watchme wifi` turns macOS Wi-Fi state into two observability signal families:
 
 - Prometheus text-format metrics pushed to Pushgateway.
 - OpenTelemetry traces exported through OTLP/HTTP.
@@ -43,18 +44,34 @@ Collection is implemented with macOS APIs and file descriptors inside the proces
 
 - **`watchme wifi`:** Long-running agent that starts metrics, active trace, CoreWLAN/SystemConfiguration event monitors, and BPF packet monitor.
 - **`watchme wifi once`:** One-shot metrics push and one active trace.
-- **`watchme wifi authorize-location`:** Requests Core Location authorization so CoreWLAN can return SSID/BSSID.
+- **`watchme wifi authorize-only`:** Requests Core Location authorization so CoreWLAN can return SSID/BSSID.
 - **`scripts/watchme-app wifi ...`:** Runs the `.app` bundle through LaunchServices so macOS TCC applies the app's Location grant; use this path when SSID/BSSID are required.
 
 For SSID/BSSID labels on modern macOS, build and authorize the app bundle:
 
 ```console
 $ make app
-$ open .build/watchme-app/WatchMe.app --args wifi authorize-location
+$ scripts/watchme-app wifi authorize-only
 $ scripts/watchme-app wifi once
 ```
 
 Running `.build/watchme-app/WatchMe.app/Contents/MacOS/watchme` directly can still behave like a plain CLI process for TCC and may return `unknown` for SSID/BSSID.
+
+### CLI options
+
+The options below apply to `watchme wifi` and `watchme wifi once`.
+
+- **`--metrics.push.url`:** Pushgateway base URL.
+- **`--metrics.push.prefix`:** Pushgateway path prefix for reverse proxies.
+- **`--metrics.interval`:** Wi-Fi metric collection interval in seconds.
+- **`--traces.url`:** OTLP/HTTP trace endpoint.
+- **`--traces.interval`:** Active trace interval in seconds.
+- **`--traces.cooldown`:** Minimum seconds between non-forced event traces.
+- **`--probe.http.timeout`:** Active probe HTTP timeout in seconds.
+- **`--probe.http.target`:** Active probe HTTP HEAD target; repeat to probe multiple targets.
+- **`--probe.bpf.enabled`:** Boolean switch for the passive BPF probe that watches DHCP/RS/RA/NDP packets.
+- **`--probe.bpf.span-max-age`:** Passive probe packet span lookback window in seconds.
+- **`--log.level`:** Structured log minimum level.
 
 ## Collection points
 
@@ -119,7 +136,7 @@ Metrics are pushed:
 
 - once immediately in `watchme wifi once`, then again at trace start;
 - at agent startup, then again at startup trace start;
-- every `--metrics-interval` seconds in agent mode;
+- every `--metrics.interval` seconds in agent mode;
 - after CoreWLAN or SystemConfiguration events before event traces;
 - at every trace start.
 
@@ -149,8 +166,9 @@ The root span name is derived from the trace reason:
 Common root tags include every tag listed in the snapshot model section, plus:
 
 - **`reason`:** Trace reason before normalization.
-- **`collector.url`:** OTLP/HTTP endpoint.
-- **`pushgateway.url`:** Pushgateway base URL.
+- **`traces.url`:** OTLP/HTTP endpoint.
+- **`metrics.push.url`:** Pushgateway base URL.
+- **`metrics.push.prefix`:** Pushgateway path prefix.
 - **`bpf.enabled`:** `true` or `false`.
 - **`trace.root_name`:** Final root span name.
 - **`trace.start_epoch_ns`:** Trace assembly start time.
@@ -164,7 +182,7 @@ Common root tags include every tag listed in the snapshot model section, plus:
 | --- | --- | --- | --- | --- |
 | `watchme wifi once` | `wifi.active` | Yes | Recent packet spans are included without consuming them. | `agent.mode=once`. |
 | Agent startup | `wifi.active` | Yes | Recent packet spans are consumed. | `agent.mode=startup`. |
-| Active timer | `wifi.active` | Yes | Recent packet spans are consumed. | Runs every `--active-interval` seconds. |
+| Active timer | `wifi.active` | Yes | Recent packet spans are consumed. | Runs every `--traces.interval` seconds. |
 | CoreWLAN join | `wifi.join` | Yes | Recent packet spans are consumed, plus delayed packet-window trace. | Forced through cooldown. |
 | CoreWLAN roam | `wifi.roam` | Yes | Recent packet spans are consumed, plus delayed packet-window trace. | Forced through cooldown. |
 | CoreWLAN disconnect | `wifi.disconnect` | Yes | Recent packet spans are consumed. | Classified from snapshot transition. |
@@ -174,7 +192,7 @@ Common root tags include every tag listed in the snapshot model section, plus:
 | BPF DHCP ACK / ICMPv6 RA / ICMPv6 NA | `wifi.rejoin.packet_window` | Yes | Recent packet spans are included without consuming them. | Delayed 1.25 seconds from packet event. |
 | Delayed join/roam packet window | `wifi.rejoin.packet_window` | Yes | Recent packet spans are included without consuming them. | Delayed 2.0 seconds from join/roam. |
 
-`--trigger-cooldown` suppresses non-forced event traces.
+`--traces.cooldown` suppresses non-forced event traces.
 Join, roam, startup, once, active timer, and packet-window traces bypass or avoid this suppression as implemented by their call sites.
 
 ## Emitted spans
@@ -263,7 +281,7 @@ All ICMPv6 packet spans receive:
 `PassivePacketStore` is a rolling in-memory store for DHCP and ICMPv6 observations.
 
 - Observations older than 600 seconds are pruned.
-- Trace attachment uses `--bpf-span-max-age` as the lookback window; default is 180 seconds.
+- Trace attachment uses `--probe.bpf.span-max-age` as the lookback window; default is 180 seconds.
 - `consume=true` suppresses re-emitting the same packet span in later event-triggered traces.
 - Packet-window traces use `consume=false` so the delayed trace can show the complete recent packet window.
 - Emitted-span de-duplication keys include span name, start time, duration, `packet.event`, `dhcp.xid`, and `icmpv6.nd.target_address`.
@@ -342,7 +360,7 @@ $ rg 'watchme_wifi_|recordSpan|SpanEvent|packetSpan' Sources
 $ make lint
 $ make test
 $ make app
-$ scripts/watchme-app wifi once --target www.apple.com
+$ scripts/watchme-app wifi once --probe.http.target www.apple.com
 ```
 
 When SSID/BSSID are expected but show as `unknown`, verify that the app bundle path is being used:
