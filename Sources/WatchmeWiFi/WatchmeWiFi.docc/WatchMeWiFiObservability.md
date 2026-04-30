@@ -77,7 +77,7 @@ The options below apply to `watchme wifi` and `watchme wifi once`.
 
 | Area | Source file | API or mechanism | What it observes |
 | --- | --- | --- | --- |
-| Wi-Fi snapshot | `Sources/WatchmeWiFi/WiFiSnapshot.swift` | `CoreWLAN.CWWiFiClient.shared().interface()` | Interface name, SSID, BSSID, RSSI, noise, transmit rate, channel. |
+| Wi-Fi snapshot | `Sources/WatchmeWiFi/WiFiSnapshot.swift` | `CoreWLAN.CWWiFiClient.shared().interface()` | Interface name, SSID, BSSID, RSSI, noise, transmit rate, channel, channel band, channel width, PHY mode, security, country code, interface mode, power state, service state, and transmit power. |
 | Interface state and addresses | `Sources/WatchmeWiFi/WiFiSnapshot.swift` | `getifaddrs`, `getnameinfo` | Interface up/running state, IPv4 addresses, non-link-local IPv6 addresses. |
 | Wi-Fi events | `Sources/WatchmeWiFi/EventMonitors.swift` | `CWEventDelegate` | Power, SSID, BSSID, link, link quality, country code, and mode changes. |
 | Network events | `Sources/WatchmeWiFi/EventMonitors.swift` | `SCDynamicStore` notifications | Global and per-interface IPv4/IPv6/DNS/DHCP/link changes. |
@@ -93,10 +93,13 @@ Every metric push and trace starts from a `WiFiSnapshot`.
 Snapshot fields:
 
 - `interfaceName`: CoreWLAN interface name, falling back to known CoreWLAN interface names.
-- `ssid` / `bssid`: CoreWLAN identity fields.
+- `ssid` / `ssidEncoding` / `bssid`: CoreWLAN identity fields.
   These can be `nil` when Location Services redacts identity.
 - `isAssociated`: true if SSID or BSSID is present, or if the interface is up, running, and has an IPv4 address.
 - `rssiDBM`, `noiseDBM`, `txRateMbps`, `channel`: CoreWLAN quantitative fields.
+- `channelBand`, `channelWidth`, `channelWidthMHz`: CoreWLAN channel metadata.
+- `phyMode`, `security`, `interfaceMode`, `countryCode`: CoreWLAN categorical state normalized to stable lowercase labels.
+- `transmitPowerMW`, `powerOn`, `serviceActive`: CoreWLAN interface state fields.
 - `ipv4Addresses`, `ipv6Addresses`: addresses from `getifaddrs`; link-local IPv6 addresses are excluded from the snapshot tag.
 
 Metric labels always include:
@@ -112,6 +115,7 @@ Trace root tags always include the snapshot fields below when available:
 - **`wifi.identity_status`:** `available`, `redacted_or_unavailable`, or `disconnected`.
 - **`wifi.essid`:** ESSID value, or `unknown`.
 - **`wifi.ssid`:** SSID value, or `unknown`.
+- **`wifi.essid_encoding`:** `utf8`, `hex`, or `unknown`.
 - **`wifi.bssid`:** BSSID value, or `unknown`.
 - **`wifi.snapshot_epoch_ns`:** Snapshot wall-clock time in nanoseconds.
 - **`wifi.snapshot_timestamp_source`:** Currently `corewlan_getifaddrs_snapshot`.
@@ -120,6 +124,16 @@ Trace root tags always include the snapshot fields below when available:
 - **`wifi.noise_dbm`:** Noise floor in dBm when present.
 - **`wifi.tx_rate_mbps`:** Transmit rate in Mbps when present.
 - **`wifi.channel`:** Wi-Fi channel when present.
+- **`wifi.channel_band`:** `2ghz`, `5ghz`, `6ghz`, or `unknown`.
+- **`wifi.channel_width`:** `20mhz`, `40mhz`, `80mhz`, `160mhz`, or `unknown`.
+- **`wifi.channel_width_mhz`:** Channel width in MHz when CoreWLAN reports a known width.
+- **`wifi.phy_mode`:** `11a`, `11b`, `11g`, `11n`, `11ac`, `11ax`, `11be`, `none`, or `unknown`.
+- **`wifi.security`:** CoreWLAN security type normalized to a lowercase label.
+- **`wifi.interface_mode`:** `station`, `ibss`, `host_ap`, `none`, or `unknown`.
+- **`wifi.country_code`:** CoreWLAN adopted country code, or `unknown`.
+- **`wifi.transmit_power_mw`:** Current transmit power in milliwatts when present.
+- **`wifi.power_on`:** `true` or `false` when present.
+- **`wifi.service_active`:** `true` or `false` when present.
 - **`network.ipv4_addresses`:** Comma-separated local IPv4 addresses.
 - **`network.ipv6_addresses`:** Comma-separated local IPv6 addresses.
 - **`network.local_ip`:** First IPv4 address when present.
@@ -140,17 +154,27 @@ Metrics are pushed:
 - after CoreWLAN or SystemConfiguration events before event traces;
 - at every trace start.
 
-All metrics are gauges.
+Most metrics are gauges.
+CoreWLAN event and snapshot change metrics are counters.
 Optional CoreWLAN fields are omitted when the OS API does not return a value.
+WatchMe does not emit derived Wi-Fi quality scores such as SNR, signal quality percent, or connection score.
+Those can be defined in Prometheus or Grafana if an operator wants a site-specific scoring policy.
 
 | Metric | Labels | Source | Meaning |
 | --- | --- | --- | --- |
 | `watchme_wifi_rssi_dbm` | `interface`, `essid`, `bssid` | `CWInterface.rssiValue()` | Received signal strength in dBm. |
 | `watchme_wifi_noise_dbm` | `interface`, `essid`, `bssid` | `CWInterface.noiseMeasurement()` | Noise floor in dBm. |
 | `watchme_wifi_tx_rate_mbps` | `interface`, `essid`, `bssid` | `CWInterface.transmitRate()` | Current transmit rate in Mbps. |
+| `watchme_wifi_channel_number` | `interface`, `essid`, `bssid` | `CWInterface.wlanChannel().channelNumber` | Current Wi-Fi channel number. |
+| `watchme_wifi_channel_width_mhz` | `interface`, `essid`, `bssid` | `CWInterface.wlanChannel().channelWidth` | Current Wi-Fi channel width in MHz when CoreWLAN reports a known width. |
+| `watchme_wifi_transmit_power_mw` | `interface`, `essid`, `bssid` | `CWInterface.transmitPower()` | Current Wi-Fi transmit power in milliwatts. |
+| `watchme_wifi_power_on` | `interface`, `essid`, `bssid` | `CWInterface.powerOn()` | `1` when Wi-Fi power is on, otherwise `0`. |
+| `watchme_wifi_service_active` | `interface`, `essid`, `bssid` | `CWInterface.serviceActive()` | `1` when the Wi-Fi network service is active, otherwise `0`. |
 | `watchme_wifi_associated` | `interface`, `essid`, `bssid` | Snapshot association heuristic | `1` when Wi-Fi appears associated, otherwise `0`. |
-| `watchme_wifi_info` | `interface`, `essid`, `bssid`, optional `channel` | Snapshot identity and channel | Constant `1` info metric carrying current identity labels. |
+| `watchme_wifi_info` | `interface`, `essid`, `bssid`, `identity_status`, `essid_encoding`, optional `channel`, `channel_band`, `channel_width`, `phy_mode`, `security`, `interface_mode`, `country_code` | CoreWLAN snapshot categorical fields | Constant `1` info metric carrying current identity and categorical OS labels. |
 | `watchme_wifi_metrics_push_timestamp_seconds` | `interface`, `essid`, `bssid` | `Date().timeIntervalSince1970` | Unix timestamp of metric generation. |
+| `watchme_wifi_corewlan_event_total` | `interface`, `essid`, `bssid`, `event` | `CWEventDelegate` callback receipt | Count of CoreWLAN event callbacks observed in this process. |
+| `watchme_wifi_snapshot_change_total` | `interface`, `essid`, `bssid`, `field` | Consecutive `WiFiSnapshot` comparison | Count of raw snapshot field changes observed in this process. |
 
 ## Trace lifecycle
 
