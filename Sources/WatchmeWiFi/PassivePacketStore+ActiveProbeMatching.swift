@@ -121,25 +121,6 @@ extension PassivePacketStore {
         return ActiveICMPPacketExchange(request: echoRequest, reply: echoReply)
     }
 
-    func isActiveTCPObservationLocked(_ observation: TCPPacketObservation) -> Bool {
-        activeTCPProbes.contains { registration in
-            guard observation.wallNanos >= registration.startWallNanos,
-                  observation.wallNanos <= registration.expiresWallNanos,
-                  registration.interfaceName == nil || observation.interfaceName == registration.interfaceName
-            else {
-                return false
-            }
-            let outboundSYN = observation.destinationIP == registration.remoteIP
-                && observation.destinationPort == registration.port
-                && observation.isSYN
-                && !observation.isACK
-            let inboundHandshakeResponse = observation.sourceIP == registration.remoteIP
-                && observation.sourcePort == registration.port
-                && (observation.isRST || (observation.isSYN && observation.isACK))
-            return outboundSYN || inboundHandshakeResponse
-        }
-    }
-
     func isActiveHTTPObservationLocked(_ observation: TCPPacketObservation) -> Bool {
         activeHTTPProbes.contains { registration in
             guard observation.wallNanos >= registration.startWallNanos,
@@ -156,42 +137,6 @@ extension PassivePacketStore {
                 && observation.payloadLength > 0
             return outboundPayload || inboundPayload
         }
-    }
-
-    func tcpConnectExchangeLocked(
-        request: ActiveTCPProbeRequest,
-        finishedWallNanos: UInt64
-    ) -> ActiveTCPPacketExchange? {
-        let (windowStart, windowEnd) = activeProbeSearchWindow(start: request.startWallNanos, finished: finishedWallNanos)
-        let candidates = tcp
-            .filter {
-                $0.wallNanos >= windowStart
-                    && $0.wallNanos <= windowEnd
-                    && (request.interfaceName == nil || $0.interfaceName == request.interfaceName)
-                    && ($0.sourceIP == request.remoteIP || $0.destinationIP == request.remoteIP)
-                    && ($0.sourcePort == request.port || $0.destinationPort == request.port)
-            }
-            .sorted { $0.wallNanos < $1.wallNanos }
-        guard let syn = candidates.first(where: {
-            $0.wallNanos >= request.startWallNanos
-                && $0.destinationIP == request.remoteIP
-                && $0.destinationPort == request.port
-                && $0.isSYN
-                && !$0.isACK
-        }) else {
-            return nil
-        }
-        guard let response = candidates.first(where: {
-            $0.wallNanos >= syn.wallNanos
-                && $0.sourceIP == request.remoteIP
-                && $0.sourcePort == request.port
-                && $0.destinationIP == syn.sourceIP
-                && $0.destinationPort == syn.sourcePort
-                && ($0.isRST || ($0.isSYN && $0.isACK))
-        }) else {
-            return nil
-        }
-        return ActiveTCPPacketExchange(syn: syn, response: response)
     }
 
     func httpExchangeLocked(
@@ -243,7 +188,6 @@ extension PassivePacketStore {
         tcp.removeAll { $0.wallNanos < cutoff }
         icmp.removeAll { $0.wallNanos < cutoff }
         activeDNSProbes.removeAll { $0.expiresWallNanos < now }
-        activeTCPProbes.removeAll { $0.expiresWallNanos < now }
         activeICMPProbes.removeAll { $0.expiresWallNanos < now }
         activeHTTPProbes.removeAll { $0.expiresWallNanos < now }
         if emittedKeys.count > 5000 {

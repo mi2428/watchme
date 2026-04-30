@@ -76,7 +76,7 @@ extension WiFiAgent {
         logEvent(
             .info,
             "bpf_monitor_started",
-            fields: ["interface": interfaceName, "profiles": "dhcp,icmpv6_control,active_dns,active_icmp,active_http,active_tcp"]
+            fields: ["interface": interfaceName, "profiles": "dhcp,icmpv6_control,active_dns,active_icmp,active_http"]
         )
     }
 

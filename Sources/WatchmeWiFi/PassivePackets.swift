@@ -111,25 +111,6 @@ struct ActiveDNSPacketExchange {
     }
 }
 
-struct ActiveTCPPacketExchange {
-    let syn: TCPPacketObservation
-    let response: TCPPacketObservation
-
-    var responseKind: String {
-        if response.isRST {
-            return "rst"
-        }
-        if response.isSYN, response.isACK {
-            return "syn_ack"
-        }
-        return "other"
-    }
-
-    var timing: ActiveProbeTiming {
-        .bpfPacket(start: syn.wallNanos, finished: response.wallNanos)
-    }
-}
-
 struct ActiveICMPPacketExchange {
     let request: ICMPPacketObservation
     let reply: ICMPPacketObservation
@@ -154,14 +135,6 @@ struct ActiveDNSProbeRegistration {
     let target: String
     let queryType: UInt16
     let resolver: String
-    let interfaceName: String?
-    let startWallNanos: UInt64
-    let expiresWallNanos: UInt64
-}
-
-struct ActiveTCPProbeRegistration {
-    let remoteIP: String
-    let port: UInt16
     let interfaceName: String?
     let startWallNanos: UInt64
     let expiresWallNanos: UInt64
@@ -196,14 +169,6 @@ struct ActiveDNSProbeRequest {
     let timeout: TimeInterval
 }
 
-struct ActiveTCPProbeRequest {
-    let remoteIP: String
-    let port: UInt16
-    let interfaceName: String?
-    let startWallNanos: UInt64
-    let timeout: TimeInterval
-}
-
 struct ActiveICMPProbeRequest {
     let family: InternetAddressFamily
     let remoteIP: String
@@ -232,7 +197,6 @@ final class PassivePacketStore {
     var tcp: [TCPPacketObservation] = []
     var icmp: [ICMPPacketObservation] = []
     var activeDNSProbes: [ActiveDNSProbeRegistration] = []
-    var activeTCPProbes: [ActiveTCPProbeRegistration] = []
     var activeICMPProbes: [ActiveICMPProbeRegistration] = []
     var activeHTTPProbes: [ActiveHTTPProbeRegistration] = []
     var emittedKeys = Set<String>()
@@ -322,32 +286,6 @@ final class PassivePacketStore {
         }
     }
 
-    func registerActiveTCPProbe(_ request: ActiveTCPProbeRequest) {
-        lock.lock()
-        activeTCPProbes.append(
-            ActiveTCPProbeRegistration(
-                remoteIP: request.remoteIP,
-                port: request.port,
-                interfaceName: request.interfaceName,
-                startWallNanos: request.startWallNanos,
-                expiresWallNanos: request.startWallNanos + activeProbeRetentionNanos(timeout: request.timeout)
-            )
-        )
-        pruneLocked()
-        lock.unlock()
-    }
-
-    func unregisterActiveTCPProbe(_ request: ActiveTCPProbeRequest) {
-        lock.lock()
-        activeTCPProbes.removeAll {
-            $0.remoteIP == request.remoteIP
-                && $0.port == request.port
-                && $0.interfaceName == request.interfaceName
-                && $0.startWallNanos == request.startWallNanos
-        }
-        lock.unlock()
-    }
-
     func registerActiveICMPProbe(_ request: ActiveICMPProbeRequest) {
         lock.lock()
         activeICMPProbes.append(
@@ -435,35 +373,12 @@ final class PassivePacketStore {
     func appendTCP(_ observation: TCPPacketObservation) -> Bool {
         lock.lock()
         defer { lock.unlock() }
-        guard isActiveTCPObservationLocked(observation) || isActiveHTTPObservationLocked(observation) else {
+        guard isActiveHTTPObservationLocked(observation) else {
             return false
         }
         tcp.append(observation)
         pruneLocked()
         return true
-    }
-
-    func tcpConnectExchange(
-        for request: ActiveTCPProbeRequest,
-        finishedWallNanos: UInt64,
-        wait: TimeInterval = 0.05
-    ) -> ActiveTCPPacketExchange? {
-        let deadline = Date().addingTimeInterval(wait)
-        while true {
-            lock.lock()
-            let match = tcpConnectExchangeLocked(
-                request: request,
-                finishedWallNanos: finishedWallNanos
-            )
-            lock.unlock()
-            if let match {
-                return match
-            }
-            guard Date() < deadline else {
-                return nil
-            }
-            Thread.sleep(forTimeInterval: 0.005)
-        }
     }
 
     func httpExchange(

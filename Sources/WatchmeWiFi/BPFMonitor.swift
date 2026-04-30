@@ -262,7 +262,7 @@ final class PassiveBPFMonitor {
         ), store.appendTCP(observation) else {
             return
         }
-        logActiveTCPPacket(observation)
+        logActiveHTTPPacket(observation)
     }
 
     private func handleICMPv4Packet(
