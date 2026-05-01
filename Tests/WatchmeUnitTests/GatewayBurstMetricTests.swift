@@ -37,6 +37,22 @@ final class GatewayBurstMetricTests: XCTestCase {
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_gateway_icmp_success",
+                labels: ["gateway": "192.168.23.254", "family": "ipv4"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_gateway_icmp_info",
+                labels: ["gateway": "192.168.23.254", "outcome": "partial_loss", "timing_source": "bpf_packet"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_gateway_icmp_result_total",
                 labels: ["gateway": "192.168.23.254", "outcome": "partial_loss", "timing_source": "bpf_packet"],
                 in: metrics
             )?.value,

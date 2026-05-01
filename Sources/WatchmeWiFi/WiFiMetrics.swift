@@ -214,9 +214,11 @@ struct WiFiMetricState {
     private(set) var snapshotChanges: [String: Int] = [:]
     private(set) var internetHTTPProbes: [String: ActiveInternetHTTPProbeResult] = [:]
     private(set) var internetTCPProbes: [String: ActiveTCPProbeResult] = [:]
+    private(set) var internetPathProbes: [String: ActiveInternetProbeLaneResult] = [:]
     private(set) var dnsProbes: [String: ActiveDNSProbeResult] = [:]
     private(set) var icmpProbes: [String: ActiveICMPProbeResult] = [:]
     private(set) var gatewayProbes: [String: ActiveGatewayProbeResult] = [:]
+    private(set) var activeProbeCounters: [String: ActiveProbeCounterState] = [:]
 
     mutating func recordCoreWLANEvent(_ event: String) {
         let name = coreWLANMetricEventName(event)
@@ -233,10 +235,40 @@ struct WiFiMetricState {
 
     mutating func recordInternetHTTPProbe(_ result: ActiveInternetHTTPProbeResult) {
         internetHTTPProbes["\(result.target)|\(result.family.metricValue)"] = result
+        recordActiveProbeCounter(
+            name: "watchme_wifi_probe_internet_http_result_total",
+            help: "Count of Wi-Fi-bound internet plain HTTP probe outcomes.",
+            labels: activeProbeHTTPStableLabels(result)
+                .merging([
+                    "outcome": result.outcome,
+                    "timing_source": result.timingSource,
+                ]) { _, new in new }
+        )
     }
 
     mutating func recordInternetTCPProbe(_ result: ActiveTCPProbeResult) {
-        internetTCPProbes["\(result.target)|\(result.family.metricValue)"] = result
+        internetTCPProbes["\(result.target)|\(result.family.metricValue)|\(result.port)"] = result
+        recordActiveProbeCounter(
+            name: "watchme_wifi_probe_internet_tcp_result_total",
+            help: "Count of Wi-Fi-bound internet TCP connect probe outcomes.",
+            labels: activeProbeTCPStableLabels(result)
+                .merging([
+                    "outcome": result.outcome,
+                    "timing_source": result.timingSource,
+                ]) { _, new in new }
+        )
+    }
+
+    mutating func recordInternetPathProbe(_ result: ActiveInternetProbeLaneResult) {
+        internetPathProbes["\(result.target)|\(result.family.metricValue)"] = result
+        recordActiveProbeCounter(
+            name: "watchme_wifi_probe_internet_path_result_total",
+            help: "Count of Wi-Fi-bound internet path probe outcomes.",
+            labels: activeProbeInternetPathStableLabels(result)
+                .merging([
+                    "outcome": internetPathOutcome(result),
+                ]) { _, new in new }
+        )
     }
 
     mutating func recordDNSProbe(_ result: ActiveDNSProbeResult) {
@@ -249,24 +281,64 @@ struct WiFiMetricState {
             dnsProbes.removeValue(forKey: "udp|none|\(familyKey)")
         }
         dnsProbes["\(result.transport)|\(result.resolver)|\(familyKey)"] = result
+        recordActiveProbeCounter(
+            name: "watchme_wifi_probe_internet_dns_result_total",
+            help: "Count of Wi-Fi-bound internet DNS probe outcomes.",
+            labels: activeProbeDNSStableLabels(result)
+                .merging([
+                    "outcome": dnsProbeOutcome(result),
+                    "timing_source": result.timingSource,
+                ]) { _, new in new }
+        )
     }
 
     mutating func recordICMPProbe(_ result: ActiveICMPProbeResult) {
         icmpProbes["\(result.target)|\(result.family.metricValue)"] = result
+        recordActiveProbeCounter(
+            name: "watchme_wifi_probe_internet_icmp_result_total",
+            help: "Count of Wi-Fi-bound internet ICMP echo probe outcomes.",
+            labels: activeProbeICMPStableLabels(result)
+                .merging([
+                    "outcome": result.outcome,
+                    "timing_source": result.timingSource,
+                ]) { _, new in new }
+        )
     }
 
     mutating func recordGatewayProbe(_ result: ActiveGatewayProbeResult) {
         gatewayProbes["\(result.gateway)|\(result.family.metricValue)"] = result
+        recordActiveProbeCounter(
+            name: "watchme_wifi_probe_gateway_icmp_result_total",
+            help: "Count of Wi-Fi-bound gateway ICMP burst probe outcomes.",
+            labels: activeProbeGatewayStableLabels(result)
+                .merging([
+                    "outcome": result.outcome,
+                    "timing_source": result.icmpTimingSource,
+                ]) { _, new in new }
+        )
+        if let resolution = result.arpResolution {
+            recordActiveProbeCounter(
+                name: "watchme_wifi_probe_gateway_resolution_result_total",
+                help: "Count of Wi-Fi-bound gateway ARP or NDP resolution probe outcomes.",
+                labels: activeProbeGatewayResolutionStableLabels(resolution)
+                    .merging([
+                        "outcome": resolution.outcome,
+                        "timing_source": resolution.timingSource,
+                    ]) { _, new in new }
+            )
+        }
     }
 
     func metrics(labels: [String: String]) -> [MetricSample] {
         var metrics: [MetricSample] = []
         metrics.append(contentsOf: counterMetrics(labels: labels))
+        metrics.append(contentsOf: internetPathProbeMetrics(labels: labels))
         metrics.append(contentsOf: dnsProbeMetrics(labels: labels))
         metrics.append(contentsOf: icmpProbeMetrics(labels: labels))
         metrics.append(contentsOf: internetTCPProbeMetrics(labels: labels))
         metrics.append(contentsOf: internetHTTPProbeMetrics(labels: labels))
         metrics.append(contentsOf: gatewayProbeMetrics(labels: labels))
+        metrics.append(contentsOf: activeProbeCounterMetrics(labels: labels))
         return metrics
     }
 
@@ -300,6 +372,38 @@ struct WiFiMetricState {
         }
         return metrics
     }
+
+    private mutating func recordActiveProbeCounter(name: String, help: String, labels: [String: String]) {
+        let key = activeProbeCounterKey(name: name, labels: labels)
+        if activeProbeCounters[key] == nil {
+            activeProbeCounters[key] = ActiveProbeCounterState(name: name, help: help, labels: labels, count: 0)
+        }
+        activeProbeCounters[key]?.count += 1
+    }
+
+    private func activeProbeCounterMetrics(labels: [String: String]) -> [MetricSample] {
+        activeProbeCounters.values.map { counter in
+            MetricSample(
+                name: counter.name,
+                help: counter.help,
+                type: .counter,
+                labels: labels.merging(counter.labels) { _, new in new },
+                value: Double(counter.count)
+            )
+        }
+    }
+}
+
+struct ActiveProbeCounterState {
+    let name: String
+    let help: String
+    let labels: [String: String]
+    var count: Int
+}
+
+private func activeProbeCounterKey(name: String, labels: [String: String]) -> String {
+    let labelKey = labels.keys.sorted().map { "\($0)=\(labels[$0] ?? "")" }.joined(separator: "\u{1f}")
+    return "\(name)\u{1e}\(labelKey)"
 }
 
 func coreWLANMetricEventName(_ event: String) -> String {
@@ -320,4 +424,85 @@ func seconds(fromDurationNanos nanos: UInt64) -> Double {
 
 func seconds(fromWallNanos nanos: UInt64) -> Double {
     Double(nanos) / 1_000_000_000.0
+}
+
+func activeProbeInternetPathStableLabels(_ result: ActiveInternetProbeLaneResult) -> [String: String] {
+    [
+        "target": result.target,
+        "family": result.family.metricValue,
+    ]
+}
+
+func activeProbeDNSStableLabels(_ result: ActiveDNSProbeResult) -> [String: String] {
+    [
+        "target": result.target,
+        "family": result.family.metricValue,
+        "resolver": result.resolver,
+        "transport": result.transport,
+        "record_type": result.recordType.name,
+    ]
+}
+
+func activeProbeICMPStableLabels(_ result: ActiveICMPProbeResult) -> [String: String] {
+    [
+        "target": result.target,
+        "family": result.family.metricValue,
+    ]
+}
+
+func activeProbeTCPStableLabels(_ result: ActiveTCPProbeResult) -> [String: String] {
+    [
+        "target": result.target,
+        "family": result.family.metricValue,
+        "remote_port": "\(result.port)",
+    ]
+}
+
+func activeProbeHTTPStableLabels(_ result: ActiveInternetHTTPProbeResult) -> [String: String] {
+    [
+        "target": result.target,
+        "family": result.family.metricValue,
+        "scheme": "http",
+    ]
+}
+
+func activeProbeGatewayStableLabels(_ result: ActiveGatewayProbeResult) -> [String: String] {
+    [
+        "gateway": result.gateway,
+        "family": result.family.metricValue,
+    ]
+}
+
+func activeProbeGatewayResolutionStableLabels(_ result: ActiveGatewayARPResult) -> [String: String] {
+    [
+        "gateway": result.gateway,
+        "family": result.family.metricValue,
+        "protocol": result.protocolName,
+    ]
+}
+
+func dnsProbeOutcome(_ result: ActiveDNSProbeResult) -> String {
+    if result.ok {
+        return "success"
+    }
+    if result.resolver == "none" {
+        return "no_resolver"
+    }
+    if let rcode = result.rcode {
+        return "rcode_\(rcode)"
+    }
+    return "error"
+}
+
+func internetPathOutcome(_ result: ActiveInternetProbeLaneResult) -> String {
+    if result.ok {
+        return "success"
+    }
+    let failedChecks = [
+        result.dns.contains { !$0.ok } ? "dns" : nil,
+        result.icmp?.ok == false ? "icmp" : nil,
+        result.tcp?.ok == false ? "tcp" : nil,
+        result.http?.ok == false ? "http" : nil,
+    ].compactMap(\.self)
+    return failedChecks.isEmpty ? "error" : failedChecks.joined(separator: "_")
 }

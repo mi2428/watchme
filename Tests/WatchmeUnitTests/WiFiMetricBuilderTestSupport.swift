@@ -153,6 +153,7 @@ func recordReconnectedActiveProbeSuccesses(in state: inout WiFiMetricState) {
 }
 
 func recordSampleActiveProbes(in state: inout WiFiMetricState) throws {
+    recordSampleInternetPathProbe(in: &state)
     recordSampleInternetHTTPProbe(in: &state)
     recordSampleInternetTCPProbe(in: &state)
     recordSampleDNSProbe(in: &state)
@@ -227,6 +228,21 @@ private func recordSampleInternetHTTPProbe(in state: inout WiFiMetricState) {
     )
 }
 
+private func recordSampleInternetPathProbe(in state: inout WiFiMetricState) {
+    state.recordInternetPathProbe(
+        ActiveInternetProbeLaneResult(
+            target: "neverssl.com",
+            family: .ipv4,
+            dns: [sampleDNSProbeResult()],
+            icmp: nil,
+            tcp: nil,
+            http: nil,
+            startWallNanos: 1_000_000_000,
+            finishedWallNanos: 1_300_000_000
+        )
+    )
+}
+
 private func recordSampleInternetTCPProbe(in state: inout WiFiMetricState) {
     state.recordInternetTCPProbe(
         ActiveTCPProbeResult(
@@ -248,24 +264,26 @@ private func recordSampleInternetTCPProbe(in state: inout WiFiMetricState) {
 }
 
 private func recordSampleDNSProbe(in state: inout WiFiMetricState) {
-    state.recordDNSProbe(
-        ActiveDNSProbeResult(
-            target: "neverssl.com",
-            family: .ipv4,
-            recordType: .a,
-            resolver: "192.168.23.254",
-            transport: "udp",
-            ok: true,
-            rcode: 0,
-            answerCount: 1,
-            addresses: ["34.223.124.45"],
-            error: nil,
-            timing: ActiveProbeTiming(
-                startWallNanos: 2_000_000_000,
-                finishedWallNanos: 2_050_000_000,
-                timingSource: bpfPacketTimingSource,
-                timestampSource: bpfHeaderTimestampSource
-            )
+    state.recordDNSProbe(sampleDNSProbeResult())
+}
+
+private func sampleDNSProbeResult() -> ActiveDNSProbeResult {
+    ActiveDNSProbeResult(
+        target: "neverssl.com",
+        family: .ipv4,
+        recordType: .a,
+        resolver: "192.168.23.254",
+        transport: "udp",
+        ok: true,
+        rcode: 0,
+        answerCount: 1,
+        addresses: ["34.223.124.45"],
+        error: nil,
+        timing: ActiveProbeTiming(
+            startWallNanos: 2_000_000_000,
+            finishedWallNanos: 2_050_000_000,
+            timingSource: bpfPacketTimingSource,
+            timestampSource: bpfHeaderTimestampSource
         )
     )
 }
@@ -311,7 +329,22 @@ private func recordSampleGatewayProbe(in state: inout WiFiMetricState) {
                     )
                 ),
             ],
-            burstIntervalSeconds: 0
+            burstIntervalSeconds: 0,
+            arpResolution: ActiveGatewayARPResult(
+                gateway: "192.168.23.254",
+                sourceIP: "192.168.22.173",
+                sourceHardwareAddress: "00:11:22:33:44:55",
+                gatewayHardwareAddress: "aa:bb:cc:dd:ee:ff",
+                ok: true,
+                outcome: "reply",
+                error: nil,
+                timing: ActiveProbeTiming(
+                    startWallNanos: 2_900_000_000,
+                    finishedWallNanos: 2_910_000_000,
+                    timingSource: bpfPacketTimingSource,
+                    timestampSource: bpfHeaderTimestampSource
+                )
+            )
         )
     )
 }

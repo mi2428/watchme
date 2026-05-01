@@ -199,6 +199,14 @@ struct ActiveGatewayProbeResult {
         aggregateGatewayString(attempts.map(\.timestampSource) + [arpResolution?.timestampSource].compactMap(\.self))
     }
 
+    var icmpTimingSource: String {
+        aggregateGatewayString(attempts.map(\.timingSource))
+    }
+
+    var icmpTimestampSource: String {
+        aggregateGatewayString(attempts.map(\.timestampSource))
+    }
+
     var latestAttempt: ActiveGatewayProbeAttempt? {
         attempts.max { $0.sequence < $1.sequence }
     }

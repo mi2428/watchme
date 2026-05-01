@@ -1,15 +1,52 @@
 import WatchmeTelemetry
 
 extension WiFiMetricState {
+    func internetPathProbeMetrics(labels: [String: String]) -> [MetricSample] {
+        internetPathProbes.values.flatMap { result -> [MetricSample] in
+            let probeLabels = labels.merging(activeProbeInternetPathStableLabels(result)) { _, new in new }
+            var infoLabels = probeLabels
+            infoLabels["remote_ip"] = result.remoteIP
+            infoLabels["outcome"] = internetPathOutcome(result)
+            return [
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_path_success",
+                    help: "Whether the latest Wi-Fi-bound internet path probe succeeded.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: result.ok ? 1 : 0
+                ),
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_path_duration_seconds",
+                    help: "Duration of the latest Wi-Fi-bound internet path probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromDurationNanos: result.durationNanos)
+                ),
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_path_last_run_timestamp_seconds",
+                    help: "Unix timestamp of the latest Wi-Fi-bound internet path probe.",
+                    type: .gauge,
+                    labels: probeLabels,
+                    value: seconds(fromWallNanos: result.finishedWallNanos)
+                ),
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_path_info",
+                    help: "Constant info metric with latest Wi-Fi-bound internet path probe metadata.",
+                    type: .gauge,
+                    labels: infoLabels,
+                    value: 1
+                ),
+            ]
+        }
+    }
+
     func internetTCPProbeMetrics(labels: [String: String]) -> [MetricSample] {
         internetTCPProbes.values.flatMap { result -> [MetricSample] in
-            var probeLabels = labels
-            probeLabels["target"] = result.target
-            probeLabels["family"] = result.family.metricValue
-            probeLabels["remote_ip"] = result.remoteIP
-            probeLabels["remote_port"] = "\(result.port)"
-            probeLabels["outcome"] = result.outcome
-            probeLabels["timing_source"] = result.timingSource
+            let probeLabels = labels.merging(activeProbeTCPStableLabels(result)) { _, new in new }
+            var infoLabels = probeLabels
+            infoLabels["remote_ip"] = result.remoteIP
+            infoLabels["outcome"] = result.outcome
+            infoLabels["timing_source"] = result.timingSource
             return [
                 MetricSample(
                     name: "watchme_wifi_probe_internet_tcp_success",
@@ -32,19 +69,24 @@ extension WiFiMetricState {
                     labels: probeLabels,
                     value: seconds(fromWallNanos: result.finishedWallNanos)
                 ),
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_tcp_info",
+                    help: "Constant info metric with latest Wi-Fi-bound internet TCP connect probe metadata.",
+                    type: .gauge,
+                    labels: infoLabels,
+                    value: 1
+                ),
             ]
         }
     }
 
     func internetHTTPProbeMetrics(labels: [String: String]) -> [MetricSample] {
         internetHTTPProbes.values.flatMap { result -> [MetricSample] in
-            var probeLabels = labels
-            probeLabels["target"] = result.target
-            probeLabels["family"] = result.family.metricValue
-            probeLabels["remote_ip"] = result.remoteIP
-            probeLabels["scheme"] = "http"
-            probeLabels["outcome"] = result.outcome
-            probeLabels["timing_source"] = result.timingSource
+            let probeLabels = labels.merging(activeProbeHTTPStableLabels(result)) { _, new in new }
+            var infoLabels = probeLabels
+            infoLabels["remote_ip"] = result.remoteIP
+            infoLabels["outcome"] = result.outcome
+            infoLabels["timing_source"] = result.timingSource
             var metrics = [
                 MetricSample(
                     name: "watchme_wifi_probe_internet_http_success",
@@ -67,6 +109,13 @@ extension WiFiMetricState {
                     labels: probeLabels,
                     value: seconds(fromWallNanos: result.finishedWallNanos)
                 ),
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_http_info",
+                    help: "Constant info metric with latest Wi-Fi-bound internet plain HTTP probe metadata.",
+                    type: .gauge,
+                    labels: infoLabels,
+                    value: 1
+                ),
             ]
             if let statusCode = result.statusCode {
                 metrics.append(
@@ -85,13 +134,10 @@ extension WiFiMetricState {
 
     func dnsProbeMetrics(labels: [String: String]) -> [MetricSample] {
         dnsProbes.values.flatMap { result -> [MetricSample] in
-            var probeLabels = labels
-            probeLabels["target"] = result.target
-            probeLabels["family"] = result.family.metricValue
-            probeLabels["resolver"] = result.resolver
-            probeLabels["transport"] = result.transport
-            probeLabels["record_type"] = result.recordType.name
-            probeLabels["timing_source"] = result.timingSource
+            let probeLabels = labels.merging(activeProbeDNSStableLabels(result)) { _, new in new }
+            var infoLabels = probeLabels
+            infoLabels["outcome"] = dnsProbeOutcome(result)
+            infoLabels["timing_source"] = result.timingSource
             var metrics = [
                 MetricSample(
                     name: "watchme_wifi_probe_internet_dns_success",
@@ -121,6 +167,13 @@ extension WiFiMetricState {
                     labels: probeLabels,
                     value: Double(result.addresses.count)
                 ),
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_dns_info",
+                    help: "Constant info metric with latest Wi-Fi-bound internet DNS probe metadata.",
+                    type: .gauge,
+                    labels: infoLabels,
+                    value: 1
+                ),
             ]
             if let rcode = result.rcode {
                 metrics.append(
@@ -139,12 +192,11 @@ extension WiFiMetricState {
 
     func icmpProbeMetrics(labels: [String: String]) -> [MetricSample] {
         icmpProbes.values.flatMap { result -> [MetricSample] in
-            var probeLabels = labels
-            probeLabels["target"] = result.target
-            probeLabels["family"] = result.family.metricValue
-            probeLabels["remote_ip"] = result.remoteIP
-            probeLabels["outcome"] = result.outcome
-            probeLabels["timing_source"] = result.timingSource
+            let probeLabels = labels.merging(activeProbeICMPStableLabels(result)) { _, new in new }
+            var infoLabels = probeLabels
+            infoLabels["remote_ip"] = result.remoteIP
+            infoLabels["outcome"] = result.outcome
+            infoLabels["timing_source"] = result.timingSource
             return [
                 MetricSample(
                     name: "watchme_wifi_probe_internet_icmp_success",
@@ -166,6 +218,13 @@ extension WiFiMetricState {
                     type: .gauge,
                     labels: probeLabels,
                     value: seconds(fromWallNanos: result.finishedWallNanos)
+                ),
+                MetricSample(
+                    name: "watchme_wifi_probe_internet_icmp_info",
+                    help: "Constant info metric with latest Wi-Fi-bound internet ICMP echo probe metadata.",
+                    type: .gauge,
+                    labels: infoLabels,
+                    value: 1
                 ),
             ]
         }

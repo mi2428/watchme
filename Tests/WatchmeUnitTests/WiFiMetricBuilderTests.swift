@@ -131,19 +131,30 @@ final class WiFiMetricBuilderTests: XCTestCase {
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_internet_http_success",
-                labels: ["target": "neverssl.com", "family": "ipv4", "remote_ip": "34.223.124.45"],
+                labels: ["target": "neverssl.com", "family": "ipv4", "scheme": "http"],
                 in: metrics
             )?.value,
             1
         )
+        XCTAssertNil(
+            metric(
+                named: "watchme_wifi_probe_internet_http_success",
+                labels: ["remote_ip": "34.223.124.45"],
+                in: metrics
+            )
+        )
         XCTAssertEqual(
-            metric(named: "watchme_wifi_probe_internet_http_status_code", labels: ["target": "neverssl.com"], in: metrics)?.value,
+            metric(
+                named: "watchme_wifi_probe_internet_http_status_code",
+                labels: ["target": "neverssl.com", "family": "ipv4", "scheme": "http"],
+                in: metrics
+            )?.value,
             200
         )
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_internet_http_duration_seconds",
-                labels: ["target": "neverssl.com", "timing_source": "bpf_packet"],
+                labels: ["target": "neverssl.com", "family": "ipv4", "scheme": "http"],
                 in: metrics
             )?
                 .value ?? -1,
@@ -152,12 +163,65 @@ final class WiFiMetricBuilderTests: XCTestCase {
         )
         XCTAssertEqual(
             metric(
+                named: "watchme_wifi_probe_internet_http_info",
+                labels: [
+                    "target": "neverssl.com",
+                    "family": "ipv4",
+                    "remote_ip": "34.223.124.45",
+                    "outcome": "response",
+                    "timing_source": "bpf_packet",
+                ],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_http_result_total",
+                labels: ["target": "neverssl.com", "family": "ipv4", "outcome": "response", "timing_source": "bpf_packet"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_path_success",
+                labels: ["target": "neverssl.com", "family": "ipv4"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_path_info",
+                labels: ["target": "neverssl.com", "family": "ipv4", "remote_ip": "34.223.124.45", "outcome": "success"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_path_result_total",
+                labels: ["target": "neverssl.com", "family": "ipv4", "outcome": "success"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
                 named: "watchme_wifi_probe_internet_dns_success",
-                labels: ["target": "neverssl.com", "family": "ipv4", "record_type": "A", "timing_source": "bpf_packet"],
+                labels: ["target": "neverssl.com", "family": "ipv4", "record_type": "A", "resolver": "192.168.23.254"],
                 in: metrics
             )?
                 .value,
             1
+        )
+        XCTAssertNil(
+            metric(
+                named: "watchme_wifi_probe_internet_dns_success",
+                labels: ["timing_source": "bpf_packet"],
+                in: metrics
+            )
         )
         XCTAssertEqual(
             metric(named: "watchme_wifi_probe_internet_dns_rcode", labels: ["resolver": "192.168.23.254"], in: metrics)?.value,
@@ -169,8 +233,37 @@ final class WiFiMetricBuilderTests: XCTestCase {
         )
         XCTAssertEqual(
             metric(
+                named: "watchme_wifi_probe_internet_dns_info",
+                labels: ["target": "neverssl.com", "outcome": "success", "timing_source": "bpf_packet"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_dns_result_total",
+                labels: ["target": "neverssl.com", "outcome": "success", "timing_source": "bpf_packet"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
                 named: "watchme_wifi_probe_internet_icmp_success",
-                labels: ["target": "neverssl.com", "family": "ipv4", "remote_ip": "34.223.124.45"],
+                labels: ["target": "neverssl.com", "family": "ipv4"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_icmp_info",
+                labels: [
+                    "target": "neverssl.com",
+                    "remote_ip": "34.223.124.45",
+                    "outcome": "reply",
+                    "timing_source": "bpf_packet",
+                ],
                 in: metrics
             )?.value,
             1
@@ -178,7 +271,20 @@ final class WiFiMetricBuilderTests: XCTestCase {
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_internet_tcp_success",
-                labels: ["target": "neverssl.com", "family": "ipv4", "remote_ip": "34.223.124.45", "remote_port": "80"],
+                labels: ["target": "neverssl.com", "family": "ipv4", "remote_port": "80"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_tcp_info",
+                labels: [
+                    "target": "neverssl.com",
+                    "remote_ip": "34.223.124.45",
+                    "outcome": "connected",
+                    "timing_source": "bpf_packet",
+                ],
                 in: metrics
             )?.value,
             1
@@ -186,13 +292,52 @@ final class WiFiMetricBuilderTests: XCTestCase {
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_gateway_icmp_success",
-                labels: ["gateway": "192.168.23.254", "outcome": "reply", "timing_source": "network_framework_callback"],
+                labels: ["gateway": "192.168.23.254", "family": "ipv4"],
                 in: metrics
             )?.value,
             1
         )
         XCTAssertEqual(
             metric(named: "watchme_wifi_probe_gateway_icmp_reply_count", labels: ["gateway": "192.168.23.254"], in: metrics)?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_gateway_icmp_info",
+                labels: ["gateway": "192.168.23.254", "outcome": "reply", "timing_source": "network_framework_callback"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_gateway_icmp_result_total",
+                labels: ["gateway": "192.168.23.254", "outcome": "reply", "timing_source": "network_framework_callback"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_gateway_resolution_success",
+                labels: ["gateway": "192.168.23.254", "family": "ipv4", "protocol": "arp"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_gateway_resolution_info",
+                labels: [
+                    "gateway": "192.168.23.254",
+                    "family": "ipv4",
+                    "protocol": "arp",
+                    "gateway_hwaddr": "aa:bb:cc:dd:ee:ff",
+                    "outcome": "reply",
+                    "timing_source": "bpf_packet",
+                ],
+                in: metrics
+            )?.value,
             1
         )
     }
@@ -239,21 +384,21 @@ final class WiFiMetricBuilderTests: XCTestCase {
         )
         XCTAssertNil(
             metric(
-                named: "watchme_wifi_probe_internet_icmp_success",
+                named: "watchme_wifi_probe_internet_icmp_info",
                 labels: ["target": "example.com", "family": "ipv4", "remote_ip": "none"],
                 in: metrics
             )
         )
         XCTAssertNil(
             metric(
-                named: "watchme_wifi_probe_internet_http_success",
+                named: "watchme_wifi_probe_internet_http_info",
                 labels: ["target": "example.com", "family": "ipv4", "remote_ip": "none"],
                 in: metrics
             )
         )
         XCTAssertNil(
             metric(
-                named: "watchme_wifi_probe_internet_tcp_success",
+                named: "watchme_wifi_probe_internet_tcp_info",
                 labels: ["target": "example.com", "family": "ipv4", "remote_ip": "none"],
                 in: metrics
             )
@@ -269,7 +414,7 @@ final class WiFiMetricBuilderTests: XCTestCase {
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_internet_icmp_success",
-                labels: ["target": "example.com", "family": "ipv4", "remote_ip": "93.184.216.34"],
+                labels: ["target": "example.com", "family": "ipv4"],
                 in: metrics
             )?.value,
             1
@@ -277,7 +422,7 @@ final class WiFiMetricBuilderTests: XCTestCase {
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_internet_http_success",
-                labels: ["target": "example.com", "family": "ipv4", "remote_ip": "93.184.216.34"],
+                labels: ["target": "example.com", "family": "ipv4", "scheme": "http"],
                 in: metrics
             )?.value,
             1
@@ -285,7 +430,47 @@ final class WiFiMetricBuilderTests: XCTestCase {
         XCTAssertEqual(
             metric(
                 named: "watchme_wifi_probe_internet_tcp_success",
+                labels: ["target": "example.com", "family": "ipv4", "remote_port": "80"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_icmp_info",
                 labels: ["target": "example.com", "family": "ipv4", "remote_ip": "93.184.216.34"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_http_info",
+                labels: ["target": "example.com", "family": "ipv4", "remote_ip": "93.184.216.34"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_tcp_info",
+                labels: ["target": "example.com", "family": "ipv4", "remote_ip": "93.184.216.34"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_icmp_result_total",
+                labels: ["target": "example.com", "family": "ipv4", "outcome": "no_address", "timing_source": "no_address"],
+                in: metrics
+            )?.value,
+            1
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_wifi_probe_internet_icmp_result_total",
+                labels: ["target": "example.com", "family": "ipv4", "outcome": "reply", "timing_source": "bpf_packet"],
                 in: metrics
             )?.value,
             1

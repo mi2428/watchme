@@ -10,6 +10,7 @@ extension WiFiAgent {
         snapshot: WiFiSnapshot
     ) {
         for lane in results.lanes {
+            metricState.recordInternetPathProbe(lane)
             let laneId = recorder.newSpanId()
             let laneStart = parentSpanStart(before: lane.startWallNanos)
             recorder.recordSpan(
@@ -411,8 +412,8 @@ extension WiFiAgent {
     func activeGatewayTags(result: ActiveGatewayProbeResult, snapshot: WiFiSnapshot) -> [String: String] {
         var tags = activeProbeBaseTags(
             snapshot: snapshot,
-            timingSource: result.timingSource,
-            timestampSource: result.timestampSource,
+            timingSource: result.icmpTimingSource,
+            timestampSource: result.icmpTimestampSource,
             spanSource: "darwin_icmp_gateway_probe"
         )
         tags.merge([
@@ -433,7 +434,7 @@ extension WiFiAgent {
         }
         addPacketTimingTags(
             &tags,
-            timingSource: result.timingSource,
+            timingSource: result.icmpTimingSource,
             event: result.family == .ipv6 ? "icmpv6_echo_request_to_reply" : "icmp_echo_request_to_reply"
         )
         addErrorTag(&tags, error: result.error)
