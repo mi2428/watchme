@@ -79,7 +79,25 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(tags["network.gateway_probe.lost_count"], "0")
         XCTAssertEqual(tags["network.gateway_probe.loss_ratio"], "0.000000")
         XCTAssertEqual(tags["network.gateway_probe.jitter_seconds"], "0.000000")
+        XCTAssertEqual(tags["network.wifi_gateway_hwaddr"], "aa:bb:cc:dd:ee:ff")
         XCTAssertEqual(tags["packet.event"], "icmp_echo_request_to_reply")
+        XCTAssertEqual(tags["packet.timestamp_source"], bpfHeaderTimestampSource)
+    }
+
+    func testGatewayARPTagsExposeResolutionFields() {
+        let tags = makeAgent().activeGatewayARPTags(result: gatewayARPResult(), snapshot: makeSnapshot())
+
+        XCTAssertEqual(tags["span.source"], "darwin_bpf_gateway_arp_probe")
+        XCTAssertEqual(tags["network.gateway_probe.protocol"], "arp")
+        XCTAssertEqual(tags["network.gateway_arp.outcome"], "reply")
+        XCTAssertEqual(tags["network.gateway_arp.resolved"], "true")
+        XCTAssertEqual(tags["network.wifi_gateway"], "192.168.23.254")
+        XCTAssertEqual(tags["network.wifi_gateway_hwaddr"], "aa:bb:cc:dd:ee:ff")
+        XCTAssertEqual(tags["arp.target_ip"], "192.168.23.254")
+        XCTAssertEqual(tags["arp.sender_ip"], "192.168.23.254")
+        XCTAssertEqual(tags["arp.sender_mac"], "aa:bb:cc:dd:ee:ff")
+        XCTAssertEqual(tags["arp.target_mac"], "00:11:22:33:44:55")
+        XCTAssertEqual(tags["packet.event"], "arp_request_to_reply")
         XCTAssertEqual(tags["packet.timestamp_source"], bpfHeaderTimestampSource)
     }
 
@@ -91,12 +109,35 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         agent.recordGatewayProbeResult(gatewayResult(), phaseId: phaseId, recorder: recorder, snapshot: makeSnapshot())
         let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
         let path = spans.first { $0.name == "probe.gateway.path" }
+        let arp = spans.first { $0.name == "probe.gateway.arp.resolve" }
         let echo = spans.first { $0.name == "probe.gateway.icmp.echo" }
 
         XCTAssertEqual(path?.parentId, phaseId)
+        XCTAssertEqual(arp?.parentId, path?.id)
         XCTAssertEqual(echo?.parentId, path?.id)
+        XCTAssertLessThan(arp?.startWallNanos ?? 0, echo?.startWallNanos ?? 0)
         XCTAssertEqual(path?.tags["probe.gateway.path.status"], "ok")
+        XCTAssertEqual(path?.tags["probe.gateway.arp.span_count"], "1")
         XCTAssertEqual(path?.tags["probe.gateway.icmp.span_count"], "1")
+        XCTAssertEqual(path?.tags["network.wifi_gateway_hwaddr"], "aa:bb:cc:dd:ee:ff")
+    }
+
+    func testGatewayProbeRecordsOnlyARPWhenResolutionFails() {
+        let agent = makeAgent()
+        let recorder = TraceRecorder()
+        let phaseId = recorder.newSpanId()
+
+        agent.recordGatewayProbeResult(gatewayARPFailureResult(), phaseId: phaseId, recorder: recorder, snapshot: makeSnapshot())
+        let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
+        let path = spans.first { $0.name == "probe.gateway.path" }
+        let arp = spans.first { $0.name == "probe.gateway.arp.resolve" }
+
+        XCTAssertNotNil(arp)
+        XCTAssertNil(spans.first { $0.name == "probe.gateway.icmp.echo" })
+        XCTAssertEqual(path?.tags["probe.gateway.path.status"], "error")
+        XCTAssertEqual(path?.tags["probe.gateway.arp.span_count"], "1")
+        XCTAssertEqual(path?.tags["probe.gateway.icmp.span_count"], "0")
+        XCTAssertEqual(path?.tags["network.gateway_probe.outcome"], "arp_timeout")
     }
 
     func testConnectivityProbeCaptureRunsGatewayBeforeInternetWhenGatewayICMPLosses() {
@@ -440,7 +481,49 @@ final class ActiveProbeTelemetryTests: XCTestCase {
                     )
                 ),
             ],
-            burstIntervalSeconds: 0
+            burstIntervalSeconds: 0,
+            arpResolution: gatewayARPResult()
+        )
+    }
+
+    private func gatewayARPResult() -> ActiveGatewayARPResult {
+        ActiveGatewayARPResult(
+            gateway: "192.168.23.254",
+            sourceIP: "192.168.22.173",
+            sourceHardwareAddress: "00:11:22:33:44:55",
+            gatewayHardwareAddress: "aa:bb:cc:dd:ee:ff",
+            ok: true,
+            outcome: "reply",
+            error: nil,
+            timing: ActiveProbeTiming(
+                startWallNanos: 3_990_000_000,
+                finishedWallNanos: 3_995_000_000,
+                timingSource: bpfPacketTimingSource,
+                timestampSource: bpfHeaderTimestampSource
+            )
+        )
+    }
+
+    private func gatewayARPFailureResult() -> ActiveGatewayProbeResult {
+        ActiveGatewayProbeResult(
+            gateway: "192.168.23.254",
+            attempts: [],
+            burstIntervalSeconds: 0,
+            arpResolution: ActiveGatewayARPResult(
+                gateway: "192.168.23.254",
+                sourceIP: "192.168.22.173",
+                sourceHardwareAddress: "00:11:22:33:44:55",
+                gatewayHardwareAddress: nil,
+                ok: false,
+                outcome: "timeout",
+                error: "BPF gateway ARP reply timed out",
+                timing: ActiveProbeTiming(
+                    startWallNanos: 3_990_000_000,
+                    finishedWallNanos: 4_000_000_000,
+                    timingSource: wallClockDeadlineTimingSource,
+                    timestampSource: wallClockTimestampSource
+                )
+            )
         )
     }
 

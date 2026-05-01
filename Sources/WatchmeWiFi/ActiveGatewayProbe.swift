@@ -33,22 +33,56 @@ struct ActiveGatewayProbeAttempt {
     }
 }
 
+struct ActiveGatewayARPResult {
+    let gateway: String
+    let sourceIP: String?
+    let sourceHardwareAddress: String?
+    let gatewayHardwareAddress: String?
+    let ok: Bool
+    let outcome: String
+    let error: String?
+    let timing: ActiveProbeTiming
+
+    var startWallNanos: UInt64 {
+        timing.startWallNanos
+    }
+
+    var finishedWallNanos: UInt64 {
+        timing.finishedWallNanos
+    }
+
+    var durationNanos: UInt64 {
+        timing.durationNanos
+    }
+
+    var timingSource: String {
+        timing.timingSource
+    }
+
+    var timestampSource: String {
+        timing.timestampSource
+    }
+}
+
 struct ActiveGatewayProbeResult {
     let gateway: String
     let family: InternetAddressFamily
     let attempts: [ActiveGatewayProbeAttempt]
     let burstIntervalSeconds: TimeInterval
+    let arpResolution: ActiveGatewayARPResult?
 
     init(
         gateway: String,
         family: InternetAddressFamily = .ipv4,
         attempts: [ActiveGatewayProbeAttempt],
-        burstIntervalSeconds: TimeInterval
+        burstIntervalSeconds: TimeInterval,
+        arpResolution: ActiveGatewayARPResult? = nil
     ) {
         self.gateway = gateway
         self.family = family
         self.attempts = attempts.sorted { $0.sequence < $1.sequence }
         self.burstIntervalSeconds = burstIntervalSeconds
+        self.arpResolution = arpResolution
     }
 
     var probeCount: Int {
@@ -78,7 +112,14 @@ struct ActiveGatewayProbeResult {
         reachableCount > 0
     }
 
+    var pathOK: Bool {
+        (arpResolution?.ok ?? true) && reachable
+    }
+
     var outcome: String {
+        if let arpResolution, !arpResolution.ok {
+            return "arp_\(arpResolution.outcome)"
+        }
         guard !attempts.isEmpty else {
             return "no_samples"
         }
@@ -93,6 +134,9 @@ struct ActiveGatewayProbeResult {
     }
 
     var error: String? {
+        if let arpResolution, !arpResolution.ok, let error = arpResolution.error, !error.isEmpty {
+            return error
+        }
         if let latestError = latestAttempt?.error, !latestError.isEmpty {
             return latestError
         }
@@ -100,31 +144,41 @@ struct ActiveGatewayProbeResult {
     }
 
     var startWallNanos: UInt64 {
-        attempts.map(\.startWallNanos).min() ?? 0
+        ([arpResolution?.startWallNanos].compactMap { $0 } + attempts.map(\.startWallNanos)).min() ?? 0
     }
 
     var finishedWallNanos: UInt64 {
-        attempts.map(\.finishedWallNanos).max() ?? max(startWallNanos + 1000, 1000)
+        ([arpResolution?.finishedWallNanos].compactMap { $0 } + attempts.map(\.finishedWallNanos)).max()
+            ?? max(startWallNanos + 1000, 1000)
     }
 
     var burstDurationNanos: UInt64 {
-        max(finishedWallNanos >= startWallNanos ? finishedWallNanos - startWallNanos : 0, 1000)
+        guard let start = attempts.map(\.startWallNanos).min(),
+              let finished = attempts.map(\.finishedWallNanos).max()
+        else {
+            return 0
+        }
+        return max(finished >= start ? finished - start : 0, 1000)
     }
 
     var durationNanos: UInt64 {
-        averageReachableDurationNanos ?? latestAttempt?.durationNanos ?? burstDurationNanos
+        averageReachableDurationNanos ?? latestAttempt?.durationNanos ?? arpResolution?.durationNanos ?? burstDurationNanos
     }
 
     var timingSource: String {
-        aggregateGatewayString(attempts.map(\.timingSource))
+        aggregateGatewayString(attempts.map(\.timingSource) + [arpResolution?.timingSource].compactMap { $0 })
     }
 
     var timestampSource: String {
-        aggregateGatewayString(attempts.map(\.timestampSource))
+        aggregateGatewayString(attempts.map(\.timestampSource) + [arpResolution?.timestampSource].compactMap { $0 })
     }
 
     var latestAttempt: ActiveGatewayProbeAttempt? {
         attempts.max { $0.sequence < $1.sequence }
+    }
+
+    var gatewayHardwareAddress: String? {
+        arpResolution?.gatewayHardwareAddress
     }
 
     private var averageReachableDurationNanos: UInt64? {
@@ -139,7 +193,6 @@ struct ActiveGatewayProbeResult {
 
 func runGatewayICMPProbe(
     gateway: String,
-    gatewayHardwareAddress: String? = nil,
     timeout: TimeInterval,
     interfaceName: String?,
     packetStore: PassivePacketStore? = nil,
@@ -149,9 +202,25 @@ func runGatewayICMPProbe(
 ) -> ActiveGatewayProbeResult {
     let count = max(burstCount, 1)
     let interval = max(burstInterval, 0)
-    let attempts = runProbeBurst(count: count, interval: interval) { sequence in
-        if useDirectBPF, let gatewayHardwareAddress, !gatewayHardwareAddress.isEmpty {
-            return runBPFGatewayICMPAttempt(
+    if useDirectBPF {
+        let arpResolution = runBPFGatewayARPResolution(
+            gateway: gateway,
+            timeout: timeout,
+            interfaceName: interfaceName
+        )
+        guard arpResolution.ok,
+              let gatewayHardwareAddress = arpResolution.gatewayHardwareAddress,
+              !gatewayHardwareAddress.isEmpty
+        else {
+            return ActiveGatewayProbeResult(
+                gateway: gateway,
+                attempts: [],
+                burstIntervalSeconds: interval,
+                arpResolution: arpResolution
+            )
+        }
+        let attempts = runProbeBurst(count: count, interval: interval) { sequence in
+            runBPFGatewayICMPAttempt(
                 sequence: sequence,
                 gateway: gateway,
                 gatewayHardwareAddress: gatewayHardwareAddress,
@@ -159,6 +228,15 @@ func runGatewayICMPProbe(
                 interfaceName: interfaceName
             )
         }
+        return ActiveGatewayProbeResult(
+            gateway: gateway,
+            attempts: attempts,
+            burstIntervalSeconds: interval,
+            arpResolution: arpResolution
+        )
+    }
+
+    let attempts = runProbeBurst(count: count, interval: interval) { sequence in
         let result = runInternetICMPProbe(
             target: gateway,
             family: .ipv4,
@@ -174,6 +252,139 @@ func runGatewayICMPProbe(
         gateway: gateway,
         attempts: attempts,
         burstIntervalSeconds: interval
+    )
+}
+
+private func runBPFGatewayARPResolution(
+    gateway: String,
+    timeout: TimeInterval,
+    interfaceName: String?
+) -> ActiveGatewayARPResult {
+    let startWallNanos = wallClockNanos()
+    guard let interfaceName, !interfaceName.isEmpty else {
+        return failedGatewayARPResolution(
+            gateway: gateway,
+            sourceIP: nil,
+            sourceHardwareAddress: nil,
+            startWallNanos: startWallNanos,
+            outcome: "interface_unavailable",
+            timingSource: networkFrameworkTimingSource,
+            error: "Wi-Fi interface was not available for BPF gateway ARP probe"
+        )
+    }
+    let interfaceState = nativeInterfaceState(interfaceName: interfaceName)
+    guard let localIP = interfaceState.ipv4Addresses.first else {
+        return failedGatewayARPResolution(
+            gateway: gateway,
+            sourceIP: nil,
+            sourceHardwareAddress: interfaceState.macAddress,
+            startWallNanos: startWallNanos,
+            outcome: "interface_unavailable",
+            timingSource: networkFrameworkTimingSource,
+            error: "Wi-Fi interface \(interfaceName) had no IPv4 address for BPF gateway ARP probe"
+        )
+    }
+    guard let sourceMAC = interfaceState.macAddress,
+          let sourceMACBytes = parseMACAddress(sourceMAC),
+          let sourceIPBytes = parseIPv4Address(localIP),
+          let gatewayIPBytes = parseIPv4Address(gateway)
+    else {
+        return failedGatewayARPResolution(
+            gateway: gateway,
+            sourceIP: localIP,
+            sourceHardwareAddress: interfaceState.macAddress,
+            startWallNanos: startWallNanos,
+            outcome: "preflight_failed",
+            timingSource: networkFrameworkTimingSource,
+            error: "BPF gateway ARP probe could not parse interface or gateway addresses"
+        )
+    }
+
+    let openResult = openBPFDevice()
+    guard let fd = openResult.fd else {
+        return failedGatewayARPResolution(
+            gateway: gateway,
+            sourceIP: localIP,
+            sourceHardwareAddress: sourceMAC,
+            startWallNanos: startWallNanos,
+            outcome: "bpf_unavailable",
+            timingSource: networkFrameworkTimingSource,
+            error: openResult.error ?? "could not open /dev/bpf for gateway ARP probe"
+        )
+    }
+    defer {
+        close(fd)
+    }
+
+    var bpfTags: [String: String] = [:]
+    guard configureBPF(fd: fd, interfaceName: interfaceName, tags: &bpfTags) else {
+        return failedGatewayARPResolution(
+            gateway: gateway,
+            sourceIP: localIP,
+            sourceHardwareAddress: sourceMAC,
+            startWallNanos: startWallNanos,
+            outcome: "bpf_unavailable",
+            timingSource: networkFrameworkTimingSource,
+            error: bpfTags["bpf.error"] ?? "could not configure BPF for gateway ARP probe"
+        )
+    }
+
+    let frame = ethernetARPRequestFrame(
+        sourceMAC: sourceMACBytes,
+        sourceIP: sourceIPBytes,
+        targetIP: gatewayIPBytes
+    )
+    let sent = frame.withUnsafeBytes { frameBuffer in
+        write(fd, frameBuffer.baseAddress, frameBuffer.count)
+    }
+    guard sent == frame.count else {
+        return failedGatewayARPResolution(
+            gateway: gateway,
+            sourceIP: localIP,
+            sourceHardwareAddress: sourceMAC,
+            startWallNanos: startWallNanos,
+            outcome: "send_failed",
+            timingSource: networkFrameworkTimingSource,
+            error: "BPF gateway ARP write failed: \(posixErrorString())"
+        )
+    }
+
+    let result = readBPFGatewayARPReply(
+        fd: fd,
+        bufferLength: Int(bpfTags["bpf.buffer_length"] ?? "4096") ?? 4096,
+        timeout: timeout,
+        localIP: localIP,
+        gateway: gateway,
+        startWallNanos: startWallNanos
+    )
+    guard result.ok,
+          let replyNanos = result.replyWallNanos,
+          let gatewayHardwareAddress = result.gatewayHardwareAddress
+    else {
+        return failedGatewayARPResolution(
+            gateway: gateway,
+            sourceIP: localIP,
+            sourceHardwareAddress: sourceMAC,
+            startWallNanos: startWallNanos,
+            outcome: "timeout",
+            timingSource: wallClockDeadlineTimingSource,
+            error: result.error ?? "BPF gateway ARP reply timed out"
+        )
+    }
+
+    let timing = ActiveProbeTiming.bpfPacket(
+        start: result.requestWallNanos ?? startWallNanos,
+        finished: replyNanos
+    )
+    return ActiveGatewayARPResult(
+        gateway: gateway,
+        sourceIP: localIP,
+        sourceHardwareAddress: macAddressString(bytes: sourceMACBytes),
+        gatewayHardwareAddress: gatewayHardwareAddress,
+        ok: true,
+        outcome: "reply",
+        error: nil,
+        timing: timing
     )
 }
 
@@ -316,6 +527,32 @@ private func runBPFGatewayICMPAttempt(
     )
 }
 
+private func failedGatewayARPResolution(
+    gateway: String,
+    sourceIP: String?,
+    sourceHardwareAddress: String?,
+    startWallNanos: UInt64,
+    outcome: String,
+    timingSource: String,
+    error: String
+) -> ActiveGatewayARPResult {
+    ActiveGatewayARPResult(
+        gateway: gateway,
+        sourceIP: sourceIP,
+        sourceHardwareAddress: sourceHardwareAddress,
+        gatewayHardwareAddress: nil,
+        ok: false,
+        outcome: outcome,
+        error: error,
+        timing: ActiveProbeTiming(
+            startWallNanos: startWallNanos,
+            finishedWallNanos: wallClockNanos(),
+            timingSource: timingSource,
+            timestampSource: wallClockTimestampSource
+        )
+    )
+}
+
 private func gatewayAttempt(sequence: Int, result: ActiveICMPProbeResult) -> ActiveGatewayProbeAttempt {
     ActiveGatewayProbeAttempt(
         sequence: sequence,
@@ -353,6 +590,14 @@ private func failedGatewayAttempt(
     )
 }
 
+private struct BPFGatewayARPReadResult {
+    let ok: Bool
+    let error: String?
+    let requestWallNanos: UInt64?
+    let replyWallNanos: UInt64?
+    let gatewayHardwareAddress: String?
+}
+
 private struct BPFGatewayICMPReadResult {
     let ok: Bool
     let error: String?
@@ -367,6 +612,112 @@ struct BPFGatewayICMPPacket {
     let destinationIP: String
     let identifier: UInt16
     let sequence: UInt16
+}
+
+private func readBPFGatewayARPReply(
+    fd: Int32,
+    bufferLength: Int,
+    timeout: TimeInterval,
+    localIP: String,
+    gateway: String,
+    startWallNanos: UInt64
+) -> BPFGatewayARPReadResult {
+    let started = DispatchTime.now().uptimeNanoseconds
+    let timeoutNanos = UInt64(max(timeout, 0.001) * 1_000_000_000)
+    var requestWallNanos: UInt64?
+    var pollDescriptor = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+    var readBuffer = [UInt8](repeating: 0, count: max(bufferLength, 4096))
+
+    while true {
+        let elapsedNanos = DispatchTime.now().uptimeNanoseconds - started
+        guard elapsedNanos < timeoutNanos else {
+            return BPFGatewayARPReadResult(
+                ok: false,
+                error: "BPF gateway ARP reply timed out",
+                requestWallNanos: requestWallNanos,
+                replyWallNanos: nil,
+                gatewayHardwareAddress: nil
+            )
+        }
+        let remainingMillis = max(1, Int((timeoutNanos - elapsedNanos) / 1_000_000))
+
+        pollDescriptor.revents = 0
+        let ready = poll(&pollDescriptor, 1, Int32(remainingMillis))
+        if ready == 0 {
+            return BPFGatewayARPReadResult(
+                ok: false,
+                error: "BPF gateway ARP reply timed out",
+                requestWallNanos: requestWallNanos,
+                replyWallNanos: nil,
+                gatewayHardwareAddress: nil
+            )
+        }
+        guard ready > 0 else {
+            return BPFGatewayARPReadResult(
+                ok: false,
+                error: "BPF gateway ARP poll failed: \(posixErrorString())",
+                requestWallNanos: requestWallNanos,
+                replyWallNanos: nil,
+                gatewayHardwareAddress: nil
+            )
+        }
+
+        let bytesRead = readBuffer.withUnsafeMutableBytes { rawBuffer in
+            read(fd, rawBuffer.baseAddress, rawBuffer.count)
+        }
+        guard bytesRead > 0 else {
+            return BPFGatewayARPReadResult(
+                ok: false,
+                error: "BPF gateway ARP read failed: \(posixErrorString())",
+                requestWallNanos: requestWallNanos,
+                replyWallNanos: nil,
+                gatewayHardwareAddress: nil
+            )
+        }
+
+        var offset = 0
+        while offset + 20 <= bytesRead {
+            let caplen = Int(readLittleUInt32(readBuffer, offset: offset + bpfHeaderCaplenOffset))
+            let headerLength = Int(readLittleUInt16(readBuffer, offset: offset + bpfHeaderHeaderLengthOffset))
+            guard headerLength > 0, caplen > 0 else {
+                break
+            }
+
+            let packetOffset = offset + headerLength
+            if packetOffset + caplen <= bytesRead,
+               caplen >= 14 + 28,
+               readBuffer[packetOffset + 12] == 0x08,
+               readBuffer[packetOffset + 13] == 0x06,
+               let packet = parseARPPacket(
+                   buffer: readBuffer,
+                   offset: packetOffset + 14,
+                   packetEnd: packetOffset + caplen
+               ) {
+                let packetWallNanos = bpfTimestampNanos(buffer: readBuffer, offset: offset) ?? wallClockNanos()
+                if packet.operation == 1,
+                   packet.senderProtocolAddress == localIP,
+                   packet.targetProtocolAddress == gateway {
+                    requestWallNanos = requestWallNanos ?? packetWallNanos
+                } else if packet.operation == 2,
+                          packet.senderProtocolAddress == gateway,
+                          packet.targetProtocolAddress == localIP {
+                    return BPFGatewayARPReadResult(
+                        ok: true,
+                        error: nil,
+                        requestWallNanos: requestWallNanos ?? startWallNanos,
+                        replyWallNanos: packetWallNanos,
+                        gatewayHardwareAddress: packet.senderHardwareAddress
+                    )
+                }
+            }
+
+            let advance = bpfWordAlign(headerLength + caplen)
+            guard advance > 0 else {
+                break
+            }
+            offset += advance
+        }
+    }
 }
 
 private func readBPFGatewayICMPReply(
@@ -397,6 +748,7 @@ private func readBPFGatewayICMPReply(
         }
         let remainingMillis = max(1, Int((timeoutNanos - elapsedNanos) / 1_000_000))
 
+        pollDescriptor.revents = 0
         let ready = poll(&pollDescriptor, 1, Int32(remainingMillis))
         if ready == 0 {
             return BPFGatewayICMPReadResult(
@@ -496,6 +848,32 @@ func parseBPFGatewayICMPPacket(buffer: [UInt8], offset: Int, length: Int) -> BPF
         identifier: readBigUInt16(buffer, offset: icmpOffset + 4),
         sequence: readBigUInt16(buffer, offset: icmpOffset + 6)
     )
+}
+
+func ethernetARPRequestFrame(
+    sourceMAC: [UInt8],
+    sourceIP: [UInt8],
+    targetIP: [UInt8]
+) -> [UInt8] {
+    var frame = [UInt8](repeating: 0, count: 14 + 28)
+
+    frame.replaceSubrange(0 ..< 6, with: [0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+    frame.replaceSubrange(6 ..< 12, with: sourceMAC)
+    frame[12] = 0x08
+    frame[13] = 0x06
+
+    let arpOffset = 14
+    writeBigUInt16(1, to: &frame, offset: arpOffset)
+    writeBigUInt16(0x0800, to: &frame, offset: arpOffset + 2)
+    frame[arpOffset + 4] = 6
+    frame[arpOffset + 5] = 4
+    writeBigUInt16(1, to: &frame, offset: arpOffset + 6)
+    frame.replaceSubrange((arpOffset + 8) ..< (arpOffset + 14), with: sourceMAC)
+    frame.replaceSubrange((arpOffset + 14) ..< (arpOffset + 18), with: sourceIP)
+    frame.replaceSubrange((arpOffset + 18) ..< (arpOffset + 24), with: [0, 0, 0, 0, 0, 0])
+    frame.replaceSubrange((arpOffset + 24) ..< (arpOffset + 28), with: targetIP)
+
+    return frame
 }
 
 func ethernetICMPEchoFrame(

@@ -523,7 +523,7 @@ extension WiFiAgent {
         let phaseTags: [String: String] = [
             "phase.name": "connectivity_check",
             "phase.source": "wifi_connectivity_probe",
-            "phase.check_scope": "internet_dns,internet_icmp,internet_tcp,internet_http,gateway_icmp",
+            "phase.check_scope": "gateway_arp,gateway_icmp,internet_dns,internet_icmp,internet_tcp,internet_http",
             "probe.internet.targets": config.probeInternetTargets.joined(separator: ","),
             "probe.internet.family": config.probeInternetFamily.metricValue,
             "probe.internet.dns.enabled": config.probeInternetDNS ? "true" : "false",
@@ -539,6 +539,7 @@ extension WiFiAgent {
             "probe.gateway": networkState.routerIPv4 ?? "",
             "probe.gateway.burst_count": "\(config.probeGatewayBurstCount)",
             "probe.gateway.burst_interval_seconds": formatGatewayProbeDouble(config.probeGatewayBurstInterval),
+            "probe.gateway.arp.span_count": probeCapture.gatewayResult?.arpResolution == nil ? "0" : "1",
             "probe.gateway.probe_count": probeCapture.gatewayResult.map { "\($0.probeCount)" } ?? "0",
             "probe.gateway.span_count": probeCapture.gatewayResult == nil ? "0" : "1",
         ]
@@ -557,7 +558,6 @@ extension WiFiAgent {
         }
         return runGatewayICMPProbe(
             gateway: gateway,
-            gatewayHardwareAddress: networkState.routerHardwareAddress,
             timeout: min(config.probeInternetTimeout, 2.0),
             interfaceName: snapshot.interfaceName,
             packetStore: packetStore,

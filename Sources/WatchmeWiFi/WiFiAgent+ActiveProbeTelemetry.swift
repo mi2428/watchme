@@ -153,22 +153,38 @@ extension WiFiAgent {
             durationNanos: result.finishedWallNanos - pathStart,
             parentId: phaseId,
             tags: activeGatewayPathTags(result: result, snapshot: snapshot),
-            statusOK: result.reachable
+            statusOK: result.pathOK
         )
-        recorder.recordSpan(
-            name: "probe.gateway.icmp.echo",
-            id: recorder.newSpanId(),
-            startWallNanos: result.startWallNanos,
-            durationNanos: result.burstDurationNanos,
-            parentId: pathId,
-            tags: activeGatewayTags(result: result, snapshot: snapshot),
-            statusOK: result.reachable
-        )
+        if let arpResolution = result.arpResolution {
+            recorder.recordSpan(
+                name: "probe.gateway.arp.resolve",
+                id: recorder.newSpanId(),
+                startWallNanos: arpResolution.startWallNanos,
+                durationNanos: arpResolution.durationNanos,
+                parentId: pathId,
+                tags: activeGatewayARPTags(result: arpResolution, snapshot: snapshot),
+                statusOK: arpResolution.ok
+            )
+        }
+        if !result.attempts.isEmpty {
+            recorder.recordSpan(
+                name: "probe.gateway.icmp.echo",
+                id: recorder.newSpanId(),
+                startWallNanos: result.attempts.map(\.startWallNanos).min() ?? result.startWallNanos,
+                durationNanos: result.burstDurationNanos,
+                parentId: pathId,
+                tags: activeGatewayTags(result: result, snapshot: snapshot),
+                statusOK: result.reachable
+            )
+        }
         logEvent(
-            result.lossRatio == 0 ? .debug : .warn, "active_gateway_probe_completed",
+            result.pathOK ? .debug : .warn, "active_gateway_probe_completed",
             fields: [
                 "trace_id": recorder.traceId,
                 "gateway": result.gateway,
+                "gateway_hwaddr": result.gatewayHardwareAddress ?? "",
+                "arp_outcome": result.arpResolution?.outcome ?? "",
+                "arp_resolved": result.arpResolution.map { $0.ok ? "true" : "false" } ?? "",
                 "outcome": result.outcome,
                 "reachable": result.reachable ? "true" : "false",
                 "probe_count": "\(result.probeCount)",
@@ -191,8 +207,9 @@ extension WiFiAgent {
             spanSource: "watchme_connectivity_check"
         )
         tags.merge([
-            "probe.gateway.path.status": result.reachable ? "ok" : "error",
-            "probe.gateway.icmp.span_count": "1",
+            "probe.gateway.path.status": result.pathOK ? "ok" : "error",
+            "probe.gateway.arp.span_count": result.arpResolution == nil ? "0" : "1",
+            "probe.gateway.icmp.span_count": result.attempts.isEmpty ? "0" : "1",
             "network.family": result.family.metricValue,
             "network.wifi_gateway": result.gateway,
             "network.gateway_probe.reachable": result.reachable ? "true" : "false",
@@ -202,6 +219,9 @@ extension WiFiAgent {
             "network.gateway_probe.lost_count": "\(result.lostCount)",
             "network.gateway_probe.loss_ratio": formatGatewayProbeDouble(result.lossRatio),
         ]) { _, new in new }
+        if let gatewayHardwareAddress = result.gatewayHardwareAddress {
+            tags["network.wifi_gateway_hwaddr"] = gatewayHardwareAddress
+        }
         addErrorTag(&tags, error: result.error)
         return tags
     }
@@ -394,7 +414,40 @@ extension WiFiAgent {
             "network.gateway_probe.jitter_seconds": formatGatewayProbeDouble(seconds(fromDurationNanos: result.jitterNanos)),
             "network.gateway_probe.burst_interval_seconds": formatGatewayProbeDouble(result.burstIntervalSeconds),
         ]) { _, new in new }
+        if let gatewayHardwareAddress = result.gatewayHardwareAddress {
+            tags["network.wifi_gateway_hwaddr"] = gatewayHardwareAddress
+        }
         addPacketTimingTags(&tags, timingSource: result.timingSource, event: "icmp_echo_request_to_reply")
+        addErrorTag(&tags, error: result.error)
+        return tags
+    }
+
+    func activeGatewayARPTags(result: ActiveGatewayARPResult, snapshot: WiFiSnapshot) -> [String: String] {
+        var tags = activeProbeBaseTags(
+            snapshot: snapshot,
+            timingSource: result.timingSource,
+            timestampSource: result.timestampSource,
+            spanSource: "darwin_bpf_gateway_arp_probe"
+        )
+        tags.merge([
+            "network.family": InternetAddressFamily.ipv4.metricValue,
+            "network.wifi_gateway": result.gateway,
+            "network.gateway": result.gateway,
+            "network.gateway_probe.protocol": "arp",
+            "network.gateway_arp.outcome": result.outcome,
+            "network.gateway_arp.resolved": result.ok ? "true" : "false",
+            "packet.protocol": "arp",
+            "arp.target_ip": result.gateway,
+            "arp.target_role": "gateway",
+        ]) { _, new in new }
+        if result.gatewayHardwareAddress != nil {
+            tags["arp.sender_ip"] = result.gateway
+            setTag(&tags, "arp.sender_mac", result.gatewayHardwareAddress)
+            setTag(&tags, "arp.target_mac", result.sourceHardwareAddress)
+        }
+        setTag(&tags, "network.wifi_gateway_hwaddr", result.gatewayHardwareAddress)
+        setTag(&tags, "active_probe.source_ip", result.sourceIP)
+        addPacketTimingTags(&tags, timingSource: result.timingSource, event: "arp_request_to_reply")
         addErrorTag(&tags, error: result.error)
         return tags
     }

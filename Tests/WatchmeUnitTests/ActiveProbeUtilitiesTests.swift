@@ -75,6 +75,25 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
         XCTAssertEqual(packet.sequence, 0x5678)
     }
 
+    func testGatewayARPRequestFrameBuildsParseableEthernetPacket() throws {
+        let frame = ethernetARPRequestFrame(
+            sourceMAC: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
+            sourceIP: [192, 168, 22, 173],
+            targetIP: [192, 168, 23, 254]
+        )
+
+        XCTAssertEqual(Array(frame[0 ..< 6]), [0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+        XCTAssertEqual(Array(frame[6 ..< 12]), [0x00, 0x11, 0x22, 0x33, 0x44, 0x55])
+        XCTAssertEqual(Array(frame[12 ..< 14]), [0x08, 0x06])
+
+        let packet = try XCTUnwrap(parseARPPacket(buffer: frame, offset: 14, packetEnd: frame.count))
+        XCTAssertEqual(packet.operation, 1)
+        XCTAssertEqual(packet.senderHardwareAddress, "00:11:22:33:44:55")
+        XCTAssertEqual(packet.senderProtocolAddress, "192.168.22.173")
+        XCTAssertEqual(packet.targetHardwareAddress, "00:00:00:00:00:00")
+        XCTAssertEqual(packet.targetProtocolAddress, "192.168.23.254")
+    }
+
     func testProbeResultTimingAccessorsExposeUnderlyingTiming() {
         let result = ActiveInternetHTTPProbeResult(
             target: "example.com",
