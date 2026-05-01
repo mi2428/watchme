@@ -271,7 +271,13 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
         recorder: GatewayBPFIORecorder,
         readARPReply: @escaping (Int32, Int, TimeInterval, String, String) -> BPFGatewayARPReadResult = { _, _, _, _, _ in
             XCTFail("unexpected ARP read")
-            return BPFGatewayARPReadResult(ok: false, error: "unexpected", requestWallNanos: nil, replyWallNanos: nil, gatewayHardwareAddress: nil)
+            return BPFGatewayARPReadResult(
+                ok: false,
+                error: "unexpected",
+                requestWallNanos: nil,
+                replyWallNanos: nil,
+                gatewayHardwareAddress: nil
+            )
         },
         readICMPReply: @escaping (GatewayICMPReadRequest) -> BPFGatewayICMPReadResult = { _ in
             XCTFail("unexpected ICMP read")
@@ -303,7 +309,13 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
             readARPReply: readARPReply,
             readNeighborAdvertisement: { _, _, _, _, _ in
                 XCTFail("unexpected NDP read")
-                return BPFGatewayNDPReadResult(ok: false, error: "unexpected", requestWallNanos: nil, replyWallNanos: nil, gatewayHardwareAddress: nil)
+                return BPFGatewayNDPReadResult(
+                    ok: false,
+                    error: "unexpected",
+                    requestWallNanos: nil,
+                    replyWallNanos: nil,
+                    gatewayHardwareAddress: nil
+                )
             },
             readICMPReply: readICMPReply,
             readICMPv6Reply: { _ in

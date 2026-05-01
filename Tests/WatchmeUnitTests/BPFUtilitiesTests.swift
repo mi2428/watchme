@@ -114,9 +114,9 @@ final class BPFUtilitiesTests: XCTestCase {
     }
 
     private func writeLittleUInt32(_ value: UInt32, to buffer: inout [UInt8], offset: Int) {
-        buffer[offset] = UInt8(value & 0x000000FF)
-        buffer[offset + 1] = UInt8((value >> 8) & 0x000000FF)
-        buffer[offset + 2] = UInt8((value >> 16) & 0x000000FF)
-        buffer[offset + 3] = UInt8((value >> 24) & 0x000000FF)
+        buffer[offset] = UInt8(value & 0x0000_00FF)
+        buffer[offset + 1] = UInt8((value >> 8) & 0x0000_00FF)
+        buffer[offset + 2] = UInt8((value >> 16) & 0x0000_00FF)
+        buffer[offset + 3] = UInt8((value >> 24) & 0x0000_00FF)
     }
 }
