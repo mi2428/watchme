@@ -1,13 +1,19 @@
 import Foundation
 import WatchmeCore
 
+/// One packet record inside a multi-record BPF read buffer.
 public struct BPFReadBufferRecord {
+    /// The original read buffer containing the BPF header and packet bytes.
     public let buffer: [UInt8]
+    /// Offset where the captured frame begins.
     public let packetOffset: Int
+    /// Captured frame length from the BPF header.
     public let caplen: Int
+    /// Packet timestamp in wall-clock nanoseconds.
     public let packetWallNanos: UInt64
 }
 
+/// Iterates over every complete BPF packet record in a read buffer.
 public func forEachBPFReadBufferRecord(
     _ readBuffer: [UInt8],
     bytesRead: Int,
@@ -24,6 +30,7 @@ public func forEachBPFReadBufferRecord(
     }
 }
 
+/// Scans BPF packet records until `match` returns a value.
 public func scanBPFReadBuffer<Result>(
     _ readBuffer: [UInt8],
     bytesRead: Int,

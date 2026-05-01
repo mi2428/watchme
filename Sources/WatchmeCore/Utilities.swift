@@ -87,6 +87,7 @@ public func requireOptionValue(
     return arguments[index]
 }
 
+/// Parses a strictly positive time interval from CLI text.
 public func positiveTimeIntervalValue(_ rawValue: String, name: String) throws -> TimeInterval {
     guard let value = TimeInterval(rawValue), value > 0 else {
         throw WatchmeError.invalidArgument("Invalid \(name)")
@@ -94,6 +95,7 @@ public func positiveTimeIntervalValue(_ rawValue: String, name: String) throws -
     return value
 }
 
+/// Parses a zero-or-positive time interval from CLI text.
 public func nonNegativeTimeIntervalValue(_ rawValue: String, name: String) throws -> TimeInterval {
     guard let value = TimeInterval(rawValue), value >= 0 else {
         throw WatchmeError.invalidArgument("Invalid \(name)")
@@ -101,6 +103,7 @@ public func nonNegativeTimeIntervalValue(_ rawValue: String, name: String) throw
     return value
 }
 
+/// Parses common CLI boolean spellings such as `true`, `false`, `on`, and `off`.
 public func booleanCLIValue(_ rawValue: String, argument: String) throws -> Bool {
     switch rawValue.lowercased() {
     case "1", "true", "yes", "on":

@@ -2,9 +2,13 @@ import Darwin
 import Foundation
 import WatchmeCore
 
+/// A single Ethernet frame read from BPF with its kernel timestamp.
 public struct BPFPacket {
+    /// Interface name the BPF descriptor is bound to.
     public let interfaceName: String
+    /// BPF header timestamp converted to wall-clock nanoseconds.
     public let timestampNanos: UInt64
+    /// Captured Ethernet frame bytes.
     public let frame: [UInt8]
 
     public init(interfaceName: String, timestampNanos: UInt64, frame: [UInt8]) {
@@ -14,6 +18,7 @@ public struct BPFPacket {
     }
 }
 
+/// Reads packets from a configured BPF descriptor on a utility queue.
 public final class BPFPacketMonitor {
     private let interfaceName: String
     private let onPacket: (BPFPacket) -> Void
@@ -36,6 +41,7 @@ public final class BPFPacketMonitor {
         queue = DispatchQueue(label: queueLabel, qos: .utility)
     }
 
+    /// Starts the read loop and returns an error string on setup failure.
     public func start() -> String? {
         let opened = openBPFDevice()
         guard let fd = opened.fd else {
@@ -63,6 +69,7 @@ public final class BPFPacketMonitor {
         return nil
     }
 
+    /// Stops the read loop and closes the BPF descriptor.
     public func stop() {
         stateLock.lock()
         running = false
@@ -74,6 +81,7 @@ public final class BPFPacketMonitor {
         }
     }
 
+    /// Returns kernel packet counters for the active descriptor.
     public func stats() -> BPFStats? {
         stateLock.lock()
         defer { stateLock.unlock() }

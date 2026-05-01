@@ -15,17 +15,26 @@ let bpfIOCGetDLT: UInt = 1_074_020_970
 let bpfIOCFlush: UInt = 536_887_912
 let bpfDLTEthernet: UInt32 = 1
 let bpfIfreqSize = 32
+/// Offset of `bh_caplen` inside macOS `bpf_hdr`.
 public let bpfHeaderCaplenOffset = 8
+/// Offset of `bh_hdrlen` inside macOS `bpf_hdr`.
 public let bpfHeaderHeaderLengthOffset = 16
 
+/// Result of opening one of macOS's numbered `/dev/bpfN` devices.
 public struct BPFOpenResult {
+    /// The opened file descriptor, when a BPF device was available.
     public let fd: Int32?
+    /// The device path that was opened, such as `/dev/bpf0`.
     public let path: String?
+    /// The last POSIX error string when no descriptor could be opened.
     public let error: String?
 }
 
+/// Kernel-level BPF packet counters.
 public struct BPFStats: Equatable {
+    /// Packets accepted by the BPF descriptor.
     public let packetsReceived: UInt64
+    /// Packets dropped by the kernel before user-space read.
     public let packetsDropped: UInt64
 
     public init(packetsReceived: UInt64, packetsDropped: UInt64) {
@@ -34,6 +43,7 @@ public struct BPFStats: Equatable {
     }
 }
 
+/// Name of the installed Wi-Fi packet filter profile.
 public let watchmeWiFiBPFFilterName = "wifi_control_active_probe_v1"
 
 struct BPFInstruction: Equatable {
@@ -53,6 +63,7 @@ struct RawBPFStats {
     var packetsDropped: UInt32 = 0
 }
 
+/// Opens the first available macOS BPF character device.
 public func openBPFDevice() -> BPFOpenResult {
     // macOS exposes BPF devices as a small numbered pool. Opening the first
     // available descriptor is the stable API; there is no interface-specific
@@ -69,6 +80,7 @@ public func openBPFDevice() -> BPFOpenResult {
     return BPFOpenResult(fd: nil, path: nil, error: lastError)
 }
 
+/// Configures a BPF descriptor for Ethernet packets on the named interface.
 public func configureBPF(fd: Int32, interfaceName: String, tags: inout [String: String]) -> Bool {
     var ifreq = [UInt8](repeating: 0, count: bpfIfreqSize)
     let nameBytes = Array(interfaceName.utf8.prefix(Int(IF_NAMESIZE) - 1))
@@ -147,6 +159,8 @@ func watchmeWiFiBPFFilterInstructions() -> [BPFInstruction] {
     // arp or (ip and (icmp or (udp and (port 53 or port 67 or port 68))
     // or (tcp and port 80))) or
     // (ip6 and (icmp6 or (udp and port 53) or (tcp and port 80)))
+    // Regenerate with `tcpdump -ddd '<filter expression>'`; the first output
+    // line is the instruction count, followed by `code jt jf k` rows.
     [
         BPFInstruction(code: 40, jt: 0, jf: 0, k: 12),
         BPFInstruction(code: 21, jt: 42, jf: 0, k: 2054),
@@ -204,6 +218,7 @@ func setNonBlocking(_ fd: Int32) {
     }
 }
 
+/// Reads a macOS BPF `timeval` header timestamp as wall-clock nanoseconds.
 public func bpfTimestampNanos(buffer: [UInt8], offset: Int) -> UInt64? {
     guard offset + 8 <= buffer.count else {
         return nil
@@ -219,16 +234,19 @@ public func bpfTimestampNanos(buffer: [UInt8], offset: Int) -> UInt64? {
     return seconds * 1_000_000_000 + microseconds * 1000
 }
 
+/// Aligns a BPF record offset to the next 32-bit boundary.
 public func bpfWordAlign(_ value: Int) -> Int {
     // BPF records in a read buffer are padded to 32-bit boundaries. Misalignment
     // corrupts every packet after the first multi-record read.
     (value + 3) & ~3
 }
 
+/// Reads a little-endian 16-bit integer from a packet buffer.
 public func readLittleUInt16(_ buffer: [UInt8], offset: Int) -> UInt16 {
     UInt16(buffer[offset]) | (UInt16(buffer[offset + 1]) << 8)
 }
 
+/// Reads a little-endian 32-bit integer from a packet buffer.
 public func readLittleUInt32(_ buffer: [UInt8], offset: Int) -> UInt32 {
     UInt32(buffer[offset])
         | (UInt32(buffer[offset + 1]) << 8)
@@ -236,6 +254,7 @@ public func readLittleUInt32(_ buffer: [UInt8], offset: Int) -> UInt32 {
         | (UInt32(buffer[offset + 3]) << 24)
 }
 
+/// Returns the POSIX error message for `errno` or the supplied code.
 public func posixErrorString(_ code: Int32 = errno) -> String {
     String(cString: strerror(code))
 }

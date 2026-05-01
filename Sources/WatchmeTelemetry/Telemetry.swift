@@ -4,16 +4,23 @@ import OpenTelemetryProtocolExporterHttp
 import OpenTelemetrySdk
 import WatchmeCore
 
+/// One metric data point before it is encoded as OTLP JSON.
 public struct MetricSample {
+    /// Supported metric encodings.
     public enum MetricType: String {
         case gauge
         case counter
     }
 
+    /// Metric name emitted to OTLP.
     public let name: String
+    /// Human-readable metric description.
     public let help: String
+    /// Gauge or monotonic counter.
     public let type: MetricType
+    /// Metric attributes.
     public let labels: [String: String]
+    /// Source value before counter normalization.
     public let value: Double
 
     public init(name: String, help: String, type: MetricType, labels: [String: String], value: Double) {
@@ -25,6 +32,7 @@ public struct MetricSample {
     }
 }
 
+/// Result of a metric export attempt.
 public struct MetricExportResult {
     public let ok: Bool
     public let endpoint: URL
@@ -32,6 +40,7 @@ public struct MetricExportResult {
     public let samples: [MetricExportedSample]
 }
 
+/// Metric sample after exporter-side normalization.
 public struct MetricExportedSample {
     public let name: String
     public let type: MetricSample.MetricType
@@ -39,6 +48,7 @@ public struct MetricExportedSample {
     public let value: Double
 }
 
+/// Result of a trace export attempt.
 public struct TraceExportResult {
     public let traceId: String
     public let ok: Bool
@@ -46,6 +56,7 @@ public struct TraceExportResult {
     public let error: String?
 }
 
+/// OpenTelemetry client used by collectors.
 public final class TelemetryClient {
     private let traces: OTelTraceExporter
     private let metrics: OTelMetricExporter
@@ -60,6 +71,7 @@ public final class TelemetryClient {
         metrics = OTelMetricExporter(serviceName: serviceName, endpoint: metricsEndpoint, timeout: metricsTimeout)
     }
 
+    /// Exports metrics and logs the export outcome.
     public func exportMetrics(name: String, fields: [String: String], metrics samples: [MetricSample]) -> Bool {
         let result = metrics.export(samples)
         var logFields = fields
@@ -76,6 +88,7 @@ public final class TelemetryClient {
         return result.ok
     }
 
+    /// Exports a trace batch through OTLP/HTTP.
     public func exportTrace(records: TraceBatch) -> TraceExportResult {
         traces.export(records)
     }
@@ -123,13 +136,21 @@ private func logFieldKeyComponent(_ key: String) -> String {
     })
 }
 
+/// Collector-neutral span model before conversion to OpenTelemetry SDK spans.
 public struct TraceSpanRecord {
+    /// Stable local span identifier used for parent mapping.
     public let id: String
+    /// Optional local parent span identifier.
     public let parentId: String?
+    /// Span name.
     public let name: String
+    /// Span start time in wall-clock nanoseconds.
     public let startWallNanos: UInt64
+    /// Span duration in nanoseconds.
     public let durationNanos: UInt64
+    /// Span attributes.
     public let tags: [String: String]
+    /// Whether the span should be exported with OK status.
     public let statusOK: Bool
 
     public init(
@@ -151,6 +172,7 @@ public struct TraceSpanRecord {
     }
 }
 
+/// A root trace and all child spans ready for export.
 public struct TraceBatch {
     public let rootName: String
     public let rootTags: [String: String]
@@ -173,6 +195,7 @@ public struct TraceBatch {
     }
 }
 
+/// Packet or probe event that can be recorded as a span.
 public struct SpanEvent {
     public let name: String
     public let startWallNanos: UInt64
@@ -189,7 +212,9 @@ public struct SpanEvent {
     }
 }
 
+/// Thread-safe collector-local trace builder.
 public final class TraceRecorder {
+    /// Local trace identifier used by structured logs before OTLP export.
     public let traceId = randomHex(bytes: 16)
     private let rootSpanId = randomHex(bytes: 8)
     private let rootStartWallNanos = wallClockNanos()
@@ -198,10 +223,12 @@ public final class TraceRecorder {
 
     public init() {}
 
+    /// Generates a local span identifier.
     public func newSpanId() -> String {
         randomHex(bytes: 8)
     }
 
+    /// Records a child span in the local trace model.
     @discardableResult
     public func recordSpan(
         name: String,
@@ -250,6 +277,7 @@ public final class TraceRecorder {
         return spanId
     }
 
+    /// Records a `SpanEvent`, preserving packet parser attributes over context tags.
     public func recordEvent(_ event: SpanEvent, parentId: String? = nil, tags extraTags: [String: String] = [:]) {
         var tags = event.tags
         // Packet parsers own protocol-specific attributes. Extra Wi-Fi tags are
@@ -265,6 +293,7 @@ public final class TraceRecorder {
         )
     }
 
+    /// Finishes the trace and expands the root to include any earlier packet spans.
     public func finish(rootName: String, rootTags: [String: String]) -> TraceBatch {
         lock.lock()
         let children = spans
