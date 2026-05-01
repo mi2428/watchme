@@ -86,6 +86,10 @@ extension WiFiAgent {
     }
 
     func scheduleAssociationTrace(sourceReason: String? = nil, reason: String, eventTags: [String: String], delay: TimeInterval) {
+        // Association recovery traces are the owner of DHCP/ARP/ICMPv6 recovery
+        // evidence. The pending/completed window fields below keep a later
+        // CoreWLAN or SystemConfiguration callback from exporting the same
+        // packet history as a second event trace.
         if WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(
             eventTags: eventTags,
             lastCompletedEpochNanos: lastAssociationTraceCompletedEpochNanos
@@ -137,6 +141,9 @@ extension WiFiAgent {
             ]
         )
         traceScheduler.asyncAfter(delay: delay) {
+            // Delayed work is cancelled by version rather than DispatchWorkItem
+            // ownership because multiple event sources can reschedule the same
+            // semantic join/roam trace while readiness is still changing.
             guard version == self.associationTraceVersion else {
                 return
             }

@@ -11,27 +11,11 @@ final class WiFiAgent: WatchmeCollector {
     let triggerQueue: DispatchQueue
     let clock: any WiFiAgentClock
     let traceScheduler: any WiFiTraceScheduler
-    var lastSnapshot = WiFiSnapshot.capture()
-    var lastEventSnapshot = WiFiSnapshot.capture()
-    var lastTrigger = Date.distantPast
-    var bpfMonitor: PassiveBPFMonitor?
-    var bpfInterface: String?
-    var coreWLANMonitor: CoreWLANEventMonitor?
-    var systemNetworkMonitor: SystemNetworkEventMonitor?
-    var metricsTimer: DispatchSourceTimer?
-    var activeTimer: DispatchSourceTimer?
-    var packetWindowVersion = 0
-    var associationTraceVersion = 0
-    var associationTracePending = false
-    var pendingAssociationTraceWindowFloorEpochNanos: UInt64?
-    var lastAssociationTraceCompletedEpochNanos: UInt64?
-    var lastAssociationTraceWindowFloorEpochNanos: UInt64?
-    var lastDisconnectionEpochNanos: UInt64?
-    var disconnectTraceEmittedForCurrentOutage = false
-    var packetWindowSuppressedUntil = Date.distantPast
-    var lastIdentityStatusLogSignature: String?
-    var metricState = WiFiMetricState()
-    var traceEmissionHandler: ((WiFiTraceEmission) -> Void)?
+    /// Runtime state is grouped by ownership so lifecycle, packet monitor, and
+    /// trace-suppression changes do not grow into independent mutable fields.
+    /// Long-running event mutations happen on triggerQueue through traceScheduler;
+    /// start/stop and one-shot mode touch the same state before or after timers run.
+    var state = WiFiAgentState()
 
     init(
         config: WiFiConfig,
