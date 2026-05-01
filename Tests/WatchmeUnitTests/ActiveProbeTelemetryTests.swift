@@ -46,9 +46,12 @@ final class ActiveProbeTelemetryTests: XCTestCase {
 
         XCTAssertEqual(tags["span.source"], "network_framework_plain_http_probe")
         XCTAssertEqual(tags["net.peer.port"], "80")
-        XCTAssertEqual(tags["url.scheme"], "http")
-        XCTAssertEqual(tags["http.request.method"], "HEAD")
-        XCTAssertEqual(tags["http.response.status_code"], "204")
+        XCTAssertEqual(tags["probe.internet.http.scheme"], "http")
+        XCTAssertEqual(tags["probe.internet.http.method"], "HEAD")
+        XCTAssertEqual(tags["probe.internet.http.status_code"], "204")
+        XCTAssertNil(tags["url.scheme"])
+        XCTAssertNil(tags["http.request.method"])
+        XCTAssertNil(tags["http.response.status_code"])
         XCTAssertEqual(tags["packet.event"], "http_request_to_first_response_byte")
         XCTAssertEqual(tags["packet.timestamp_source"], bpfHeaderTimestampSource)
     }
@@ -206,7 +209,9 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         let phaseId = recorder.newSpanId()
 
         agent.recordInternetProbeResults(
-            ActiveInternetProbeResults(lanes: [internetLaneResult()]),
+            ActiveInternetProbeResults(lanes: [internetLaneResult(
+                icmp: icmpResult(family: .ipv4, remoteIP: "34.223.124.45")
+            )]),
             phaseId: phaseId,
             recorder: recorder,
             snapshot: makeSnapshot()
@@ -214,13 +219,22 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
         let path = spans.first { $0.name == "probe.internet.path.ipv4" }
         let dns = spans.first { $0.name == "probe.internet.dns.resolve" }
+        let icmp = spans.first { $0.name == "probe.internet.icmp.echo" }
         let tcp = spans.first { $0.name == "probe.internet.tcp.connect" }
         let http = spans.first { $0.name == "probe.internet.http.head" }
 
         XCTAssertEqual(path?.parentId, phaseId)
         XCTAssertEqual(path?.tags["network.family"], "ipv4")
         XCTAssertEqual(path?.tags["probe.internet.path.status"], "ok")
+        XCTAssertEqual(path?.tags["probe.internet.checks.summary"], "DNS=ok,ICMP=ok,TCP=ok,HTTP=ok")
+        XCTAssertEqual(path?.tags["probe.internet.checks.ok"], "DNS,ICMP,TCP,HTTP")
+        XCTAssertEqual(path?.tags["probe.internet.checks.failed"], "")
+        XCTAssertEqual(path?.tags["probe.internet.check.dns.status"], "ok")
+        XCTAssertEqual(path?.tags["probe.internet.check.icmp.status"], "ok")
+        XCTAssertEqual(path?.tags["probe.internet.check.tcp.status"], "ok")
+        XCTAssertEqual(path?.tags["probe.internet.check.http.status"], "ok")
         XCTAssertEqual(dns?.parentId, path?.id)
+        XCTAssertEqual(icmp?.parentId, path?.id)
         XCTAssertEqual(tcp?.parentId, path?.id)
         XCTAssertEqual(http?.parentId, path?.id)
     }

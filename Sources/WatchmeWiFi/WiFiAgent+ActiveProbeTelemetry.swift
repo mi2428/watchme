@@ -120,6 +120,9 @@ extension WiFiAgent {
             timestampSource: wallClockTimestampSource,
             spanSource: "watchme_connectivity_check"
         )
+        let checkStatuses = internetProbeCheckStatuses(result)
+        let okChecks = internetProbeChecks(with: "ok", in: checkStatuses)
+        let failedChecks = internetProbeChecks(with: "error", in: checkStatuses)
         tags.merge([
             "probe.target": result.target,
             "probe.internet.target": result.target,
@@ -130,8 +133,64 @@ extension WiFiAgent {
             "probe.internet.tcp.span_count": result.tcp == nil ? "0" : "1",
             "probe.internet.http.span_count": result.http == nil ? "0" : "1",
             "probe.internet.path.status": result.ok ? "ok" : "error",
+            "probe.internet.checks.summary": internetProbeCheckSummary(checkStatuses),
+            "probe.internet.checks.ok": okChecks.joined(separator: ","),
+            "probe.internet.checks.failed": failedChecks.joined(separator: ","),
         ]) { _, new in new }
+        for checkStatus in checkStatuses {
+            tags["probe.internet.check.\(checkStatus.key).status"] = checkStatus.status
+        }
         return tags
+    }
+
+    private struct InternetProbeCheckStatus {
+        let key: String
+        let label: String
+        let status: String
+    }
+
+    private func internetProbeCheckStatuses(_ result: ActiveInternetProbeLaneResult) -> [InternetProbeCheckStatus] {
+        var statuses: [InternetProbeCheckStatus] = []
+        if !result.dns.isEmpty {
+            statuses.append(InternetProbeCheckStatus(
+                key: "dns",
+                label: "DNS",
+                status: result.dns.allSatisfy(\.ok) ? "ok" : "error"
+            ))
+        }
+        if let icmp = result.icmp {
+            statuses.append(InternetProbeCheckStatus(
+                key: "icmp",
+                label: "ICMP",
+                status: icmp.ok ? "ok" : "error"
+            ))
+        }
+        if let tcp = result.tcp {
+            statuses.append(InternetProbeCheckStatus(
+                key: "tcp",
+                label: "TCP",
+                status: tcp.ok ? "ok" : "error"
+            ))
+        }
+        if let http = result.http {
+            statuses.append(InternetProbeCheckStatus(
+                key: "http",
+                label: "HTTP",
+                status: http.ok ? "ok" : "error"
+            ))
+        }
+        return statuses
+    }
+
+    private func internetProbeChecks(
+        with status: String,
+        in statuses: [InternetProbeCheckStatus]
+    ) -> [String] {
+        statuses.filter { $0.status == status }.map(\.label)
+    }
+
+    private func internetProbeCheckSummary(_ statuses: [InternetProbeCheckStatus]) -> String {
+        statuses.map { "\($0.label)=\($0.status)" }.joined(separator: ",")
     }
 
     private func parentSpanStart(before firstChildStart: UInt64) -> UInt64 {
@@ -319,12 +378,12 @@ extension WiFiAgent {
             "network.family": result.family.metricValue,
             "network.peer.address": result.remoteIP,
             "net.peer.port": "80",
-            "url.scheme": "http",
-            "http.request.method": "HEAD",
-            "http.outcome": result.outcome,
+            "probe.internet.http.scheme": "http",
+            "probe.internet.http.method": "HEAD",
+            "probe.internet.http.outcome": result.outcome,
         ]) { _, new in new }
         if let statusCode = result.statusCode {
-            tags["http.response.status_code"] = "\(statusCode)"
+            tags["probe.internet.http.status_code"] = "\(statusCode)"
         }
         addPacketTimingTags(&tags, timingSource: result.timingSource, event: "http_request_to_first_response_byte")
         addErrorTag(&tags, error: result.error)

@@ -36,11 +36,14 @@ extension ActiveProbeTelemetryTests {
         )
     }
 
-    func icmpResult() -> ActiveICMPProbeResult {
+    func icmpResult(
+        family: InternetAddressFamily = .ipv6,
+        remoteIP: String = "2606:4700:4700::1111"
+    ) -> ActiveICMPProbeResult {
         ActiveICMPProbeResult(
             target: "neverssl.com",
-            family: .ipv6,
-            remoteIP: "2606:4700:4700::1111",
+            family: family,
+            remoteIP: remoteIP,
             identifier: 0xBEEF,
             sequence: 9,
             ok: true,
@@ -220,12 +223,12 @@ extension ActiveProbeTelemetryTests {
         )
     }
 
-    func internetLaneResult() -> ActiveInternetProbeLaneResult {
+    func internetLaneResult(icmp: ActiveICMPProbeResult? = nil) -> ActiveInternetProbeLaneResult {
         ActiveInternetProbeLaneResult(
             target: "neverssl.com",
             family: .ipv4,
             dns: [dnsResult(timingSource: networkFrameworkTimingSource, timestampSource: wallClockTimestampSource)],
-            icmp: nil,
+            icmp: icmp,
             tcp: tcpResult(),
             http: httpResult(),
             startWallNanos: 1_000_000_000,
