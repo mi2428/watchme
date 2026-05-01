@@ -245,6 +245,39 @@ final class WiFiTracePolicyTests: XCTestCase {
         )
     }
 
+    func testPendingAssociationWindowSuppressesDuplicateRecoveryTrace() {
+        XCTAssertTrue(
+            WiFiTracePolicy.shouldSuppressPendingAssociationWindowTrace(
+                eventTags: ["association.window_floor_epoch_ns": "1000"],
+                pendingWindowFloorEpochNanos: 1000
+            )
+        )
+        XCTAssertTrue(
+            WiFiTracePolicy.shouldSuppressPendingAssociationWindowTrace(
+                eventTags: ["association.window_floor_epoch_ns": "900"],
+                pendingWindowFloorEpochNanos: 1000
+            )
+        )
+        XCTAssertFalse(
+            WiFiTracePolicy.shouldSuppressPendingAssociationWindowTrace(
+                eventTags: ["association.window_floor_epoch_ns": "2000"],
+                pendingWindowFloorEpochNanos: 1000
+            )
+        )
+        XCTAssertFalse(
+            WiFiTracePolicy.shouldSuppressPendingAssociationWindowTrace(
+                eventTags: [:],
+                pendingWindowFloorEpochNanos: 1000
+            )
+        )
+        XCTAssertFalse(
+            WiFiTracePolicy.shouldSuppressPendingAssociationWindowTrace(
+                eventTags: ["association.window_floor_epoch_ns": "1000"],
+                pendingWindowFloorEpochNanos: nil
+            )
+        )
+    }
+
     private func makeSnapshot(
         isAssociated: Bool = true,
         powerOn: Bool? = true,

@@ -21,6 +21,7 @@ final class WiFiAgent: WatchmeCollector {
     var packetWindowVersion = 0
     var associationTraceVersion = 0
     var associationTracePending = false
+    var pendingAssociationTraceWindowFloorEpochNanos: UInt64?
     var lastAssociationTraceCompletedEpochNanos: UInt64?
     var lastAssociationTraceWindowFloorEpochNanos: UInt64?
     var lastDisconnectionEpochNanos: UInt64?

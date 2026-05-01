@@ -103,8 +103,24 @@ extension WiFiAgent {
             )
             return
         }
+        if WiFiTracePolicy.shouldSuppressPendingAssociationWindowTrace(
+            eventTags: eventTags,
+            pendingWindowFloorEpochNanos: pendingAssociationTraceWindowFloorEpochNanos
+        ) {
+            logEvent(
+                .debug, "association_trace_suppressed",
+                fields: [
+                    "reason": reason,
+                    "suppression_reason": "association_trace_already_pending_for_recovery_window",
+                    "pending_association_trace_window_floor_epoch_ns": pendingAssociationTraceWindowFloorEpochNanos.map(String.init) ?? "",
+                    "incoming_association_trace_window_floor_epoch_ns": eventTags["association.window_floor_epoch_ns"] ?? "",
+                ]
+            )
+            return
+        }
         associationTraceVersion += 1
         associationTracePending = true
+        pendingAssociationTraceWindowFloorEpochNanos = UInt64(eventTags["association.window_floor_epoch_ns"] ?? "")
         packetWindowSuppressedUntil = Date().addingTimeInterval(
             delay + config.associationTraceReadinessTimeout + config.packetWindowSuppressionAfterAssociation
         )
@@ -136,6 +152,7 @@ extension WiFiAgent {
             self.lastAssociationTraceCompletedEpochNanos = wallClockNanos()
             self.lastAssociationTraceWindowFloorEpochNanos = UInt64(tags["association.window_floor_epoch_ns"] ?? "")
             self.associationTracePending = false
+            self.pendingAssociationTraceWindowFloorEpochNanos = nil
             self.packetWindowSuppressedUntil = Date().addingTimeInterval(self.config.packetWindowSuppressionAfterAssociation)
         }
     }
