@@ -488,10 +488,10 @@ extension WiFiAgent {
             }
         )
 
-        recordInternetProbeResults(probeCapture.internetResults, phaseId: phaseId, recorder: recorder, snapshot: snapshot)
         if let gatewayResult = probeCapture.gatewayResult {
             recordGatewayProbeResult(gatewayResult, phaseId: phaseId, recorder: recorder, snapshot: snapshot)
         }
+        recordInternetProbeResults(probeCapture.internetResults, phaseId: phaseId, recorder: recorder, snapshot: snapshot)
 
         let phaseTags: [String: String] = [
             "phase.name": "connectivity_check",
@@ -550,8 +550,8 @@ func collectConnectivityProbeResults(
     gatewayProbe: () -> ActiveGatewayProbeResult?,
     internetProbes: () -> ActiveInternetProbeResults
 ) -> ConnectivityProbeCapture {
-    let internetResults = internetProbes()
     let gatewayResult = gatewayProbe()
+    let internetResults = internetProbes()
     return ConnectivityProbeCapture(gatewayResult: gatewayResult, internetResults: internetResults)
 }
 

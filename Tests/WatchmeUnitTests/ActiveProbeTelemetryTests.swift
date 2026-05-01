@@ -99,19 +99,23 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(path?.tags["probe.gateway.icmp.span_count"], "1")
     }
 
-    func testConnectivityProbeCaptureRunsInternetWhenGatewayICMPLosses() {
+    func testConnectivityProbeCaptureRunsGatewayBeforeInternetWhenGatewayICMPLosses() {
         var internetProbeRan = false
+        var order: [String] = []
 
         let capture = collectConnectivityProbeResults(
             gatewayProbe: {
-                self.gatewayLossResult()
+                order.append("gateway")
+                return self.gatewayLossResult()
             },
             internetProbes: {
+                order.append("internet")
                 internetProbeRan = true
                 return ActiveInternetProbeResults(lanes: [self.internetLaneResult()])
             }
         )
 
+        XCTAssertEqual(order, ["gateway", "internet"])
         XCTAssertTrue(internetProbeRan)
         XCTAssertEqual(capture.gatewayResult?.reachable, false)
         XCTAssertEqual(capture.internetResults.lanes.count, 1)
