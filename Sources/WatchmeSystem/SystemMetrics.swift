@@ -1,3 +1,5 @@
+// swiftlint:disable file_length
+
 import Darwin
 import Foundation
 import IOKit
@@ -673,14 +675,14 @@ private let ignoredMountPrefixes = [
     "/System/Volumes/xarts",
 ]
 
-private func fixedCString<T>(from tuple: T) -> String {
+private func fixedCString(from tuple: some Any) -> String {
     withUnsafeBytes(of: tuple) { rawBuffer in
         let end = rawBuffer.firstIndex(of: 0) ?? rawBuffer.count
-        return String(decoding: rawBuffer[..<end], as: UTF8.self)
+        return String(bytes: rawBuffer[..<end], encoding: .utf8) ?? ""
     }
 }
 
-private func nonNegativeUInt64<T: BinaryInteger>(_ value: T) -> UInt64 {
+private func nonNegativeUInt64(_ value: some BinaryInteger) -> UInt64 {
     value > 0 ? UInt64(value) : 0
 }
 

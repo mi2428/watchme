@@ -7,8 +7,8 @@ final class SelfMetricBuilderTests: XCTestCase {
         let snapshot = SelfSnapshot(
             cpu: SelfCPUTimeSnapshot(user: 1.5, system: 0.25),
             task: SelfTaskSnapshot(
-                residentMemoryBytes: 10_000,
-                virtualMemoryBytes: 20_000,
+                residentMemoryBytes: 10000,
+                virtualMemoryBytes: 20000,
                 threadCount: 7
             ),
             openFileDescriptorCount: 12
@@ -32,8 +32,8 @@ final class SelfMetricBuilderTests: XCTestCase {
             metric(named: "watchme_self_process_cpu_time_seconds_total", labels: ["mode": "system"], in: metrics)?.value,
             0.25
         )
-        XCTAssertEqual(metric(named: "watchme_self_process_resident_memory_bytes", in: metrics)?.value, 10_000)
-        XCTAssertEqual(metric(named: "watchme_self_process_virtual_memory_bytes", in: metrics)?.value, 20_000)
+        XCTAssertEqual(metric(named: "watchme_self_process_resident_memory_bytes", in: metrics)?.value, 10000)
+        XCTAssertEqual(metric(named: "watchme_self_process_virtual_memory_bytes", in: metrics)?.value, 20000)
         XCTAssertEqual(metric(named: "watchme_self_process_threads", in: metrics)?.value, 7)
         XCTAssertEqual(metric(named: "watchme_self_process_open_fds", in: metrics)?.value, 12)
     }

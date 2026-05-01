@@ -3,6 +3,7 @@ import WatchmeTelemetry
 @testable import WatchmeWiFi
 import XCTest
 
+// swiftlint:disable:next type_body_length
 final class WiFiMetricBuilderTests: XCTestCase {
     func testMetricsAlwaysIncludeEssidAndBssidLabels() {
         let snapshot = makeSnapshot(ssid: nil, bssid: nil)
@@ -121,6 +122,7 @@ final class WiFiMetricBuilderTests: XCTestCase {
         )
     }
 
+    // swiftlint:disable:next function_body_length
     func testActiveProbeMetricsExposeInternetAndGatewayResults() throws {
         let snapshot = makeSnapshot()
         var state = WiFiMetricState()
@@ -366,6 +368,7 @@ final class WiFiMetricBuilderTests: XCTestCase {
         )
     }
 
+    // swiftlint:disable:next function_body_length
     func testActiveProbeMetricsReplaceDisconnectedPlaceholderSeries() {
         let snapshot = makeSnapshot()
         var state = WiFiMetricState()

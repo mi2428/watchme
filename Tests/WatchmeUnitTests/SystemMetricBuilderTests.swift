@@ -3,6 +3,7 @@ import WatchmeTelemetry
 import XCTest
 
 final class SystemMetricBuilderTests: XCTestCase {
+    // swiftlint:disable:next function_body_length
     func testMetricsExposeCPUTimeMemoryAndDiskCounters() {
         let snapshot = SystemSnapshot(
             cpu: CPUTimeSnapshot(user: 12.5, system: 3.25, idle: 100, nice: 1),
