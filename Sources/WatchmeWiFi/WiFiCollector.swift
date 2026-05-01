@@ -127,23 +127,8 @@ public enum WiFiCollectorFactory: WatchmeCollectorFactory {
         return WiFiAgent(config: config, telemetry: telemetry)
     }
 
-    public static func authorizeLocation(timeout: TimeInterval) -> Int32 {
-        requestWiFiLocationAuthorization(timeout: timeout)
-    }
-
-    public static func authorizationTimeout(arguments: [String]) throws -> TimeInterval {
-        var timeout = WiFiDefaults.probeInternetTimeout
-        var index = 0
-        while index < arguments.count {
-            let (argument, inlineValue) = splitInlineValue(arguments[index])
-            guard argument == WiFiCLI.Option.internetTimeout.name else {
-                throw WatchmeError.invalidArgument("authorize-location only accepts \(WiFiCLI.Option.internetTimeout.name)")
-            }
-            let rawValue = try requireOptionValue(arguments: arguments, index: &index, argument: argument, inlineValue: inlineValue)
-            timeout = try positiveTimeIntervalValue(rawValue, name: "internet probe timeout")
-            index += 1
-        }
-        return timeout
+    public static func authorizeLocation() -> Int32 {
+        requestWiFiLocationAuthorization(timeout: WiFiDefaults.probeInternetTimeout)
     }
 
     public static func usageRows() -> [(String, String)] {

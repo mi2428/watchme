@@ -51,17 +51,6 @@ final class WiFiCollectorConfigTests: XCTestCase {
         XCTAssertEqual(config.traceInterval, WiFiDefaults.traceInterval)
     }
 
-    func testAuthorizationTimeoutParserOnlyAllowsTimeout() throws {
-        XCTAssertEqual(try WiFiCollectorFactory.authorizationTimeout(arguments: []), WiFiDefaults.probeInternetTimeout)
-        XCTAssertEqual(
-            try WiFiCollectorFactory.authorizationTimeout(arguments: [WiFiCLI.Option.internetTimeout.name, "12"]),
-            12
-        )
-
-        XCTAssertThrowsError(try WiFiCollectorFactory.authorizationTimeout(arguments: [WiFiCLI.Option.metricsInterval.name, "1"]))
-        XCTAssertThrowsError(try WiFiCollectorFactory.authorizationTimeout(arguments: [WiFiCLI.Option.internetTimeout.name, "0"]))
-    }
-
     func testRejectsUnknownAndInvalidArguments() throws {
         let otlpURL = WatchmeDefaults.otlpURL
 

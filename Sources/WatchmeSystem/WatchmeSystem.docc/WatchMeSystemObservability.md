@@ -17,9 +17,9 @@ Those views can be built downstream from the exported counters and gauges.
 
 ## Runtime entry points
 
-- **`watchme agent --collector.system`:** Long-running WatchMe Agent execution that exports host system metrics.
-- **`watchme agent once --collector.system`:** One-shot metrics export.
-- **`scripts/watchme-app agent ...`:** Runs the same `watchme agent` command through the app-bundle wrapper for parity with app-bundled workflows. Location authorization is not required for system metrics.
+- **`./scripts/watchme agent --collector.system`:** Long-running WatchMe Agent execution that exports host system metrics.
+- **`./scripts/watchme agent once --collector.system`:** One-shot metrics export.
+- **`./scripts/watchme agent ...`:** Runs the same `watchme agent` command through the app-bundle wrapper for parity with app-bundled workflows. Location authorization is not required for system metrics.
 
 ### CLI options
 
@@ -88,8 +88,8 @@ Metrics are exported:
 ## Operational checks
 
 ```console
-$ watchme agent once --collector.system
-$ watchme agent --collector.system --system.metrics.interval 5
+$ ./scripts/watchme agent once --collector.system
+$ ./scripts/watchme agent --collector.system --system.metrics.interval 5
 $ make app
-$ scripts/watchme-app agent once --collector.system
+$ ./scripts/watchme agent once --collector.system
 ```

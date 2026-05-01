@@ -104,17 +104,17 @@ They should be added as a separate monitor or downstream dashboard/rule logic un
 
 ## Runtime entry points
 
-- **`watchme agent --collector.wifi`:** Long-running WatchMe Agent execution that starts metrics, connectivity traces, CoreWLAN/SystemConfiguration event monitors, and BPF packet monitor.
-- **`watchme agent once --collector.wifi`:** One-shot metrics export and one connectivity trace.
-- **`watchme agent authorize-location`:** Requests Core Location authorization so CoreWLAN can return SSID/BSSID.
-- **`scripts/watchme-app agent ...`:** Runs the `.app` bundle through LaunchServices so macOS TCC applies the app's Location grant; use this path when SSID/BSSID are required.
+- **`./scripts/watchme agent --collector.wifi`:** Long-running WatchMe Agent execution that starts metrics, connectivity traces, CoreWLAN/SystemConfiguration event monitors, and BPF packet monitor.
+- **`./scripts/watchme agent once --collector.wifi`:** One-shot metrics export and one connectivity trace.
+- **`./scripts/watchme agent authorize-location`:** Requests Core Location authorization so CoreWLAN can return SSID/BSSID.
+- **`./scripts/watchme agent ...`:** Runs the `.app` bundle through LaunchServices so macOS TCC applies the app's Location grant; use this path when SSID/BSSID are required.
 
 For SSID/BSSID labels on modern macOS, build and authorize the app bundle:
 
 ```console
 $ make app
-$ scripts/watchme-app agent authorize-location
-$ scripts/watchme-app agent once --collector.wifi
+$ ./scripts/watchme agent authorize-location
+$ ./scripts/watchme agent once --collector.wifi
 ```
 
 Running `.build/watchme-app/WatchMe.app/Contents/MacOS/watchme` directly can still behave like a plain CLI process for TCC and may return `unknown` for SSID/BSSID.
@@ -604,13 +604,13 @@ $ rg 'watchme_wifi_|recordSpan|SpanEvent|packetSpan' Sources
 $ make lint
 $ make test
 $ make app
-$ scripts/watchme-app agent once --collector.wifi --wifi.probe.internet.target www.wide.ad.jp --wifi.probe.internet.target www.cloudflare.com
+$ ./scripts/watchme agent once --collector.wifi --wifi.probe.internet.target www.wide.ad.jp --wifi.probe.internet.target www.cloudflare.com
 ```
 
 When SSID/BSSID are expected but show as `unknown`, verify that the app bundle path is being used:
 
 ```console
-$ scripts/watchme-app agent once --collector.wifi
+$ ./scripts/watchme agent once --collector.wifi
 ```
 
 Do not run `.build/watchme-app/WatchMe.app/Contents/MacOS/watchme` directly when validating Location-gated Wi-Fi identity fields.

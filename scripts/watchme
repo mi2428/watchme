@@ -2,9 +2,14 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 
-die() { printf 'watchme-app: %s\n' "$*" >&2; exit 2; }
+die() { printf 'watchme: %s\n' "$*" >&2; exit 2; }
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
+
+if [[ "${1:-}" == "agent" && "${2:-}" == "authorize-location" && "$#" -gt 2 ]]; then
+    die "authorize-location does not accept options or arguments"
+fi
+
 bundle="${WATCHME_APP_BUNDLE:-${repo_root}/.build/watchme-app/WatchMe.app}"
 [[ -d "${bundle}" ]] || die "missing app bundle: ${bundle}; run make app"
 bin="${bundle}/Contents/MacOS/watchme"
@@ -14,7 +19,7 @@ case "${1:-}:${2:-}" in
     : | help:* | -h:* | --help:* | -V:* | --version:* | agent:help | agent:-h | agent:--help) exec "${bin}" "$@" ;;
 esac
 
-tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/watchme-app.XXXXXX")"
+tmpdir="$(mktemp -d "${TMPDIR:-/tmp}/watchme.XXXXXX")"
 mkfifo "${tmpdir}/stdout" "${tmpdir}/stderr"
 trap 'rm -rf -- "${tmpdir}"' EXIT
 trap 'pkill -TERM -f "${bundle}/Contents/MacOS/watchme" 2>/dev/null || true; exit 130' INT TERM

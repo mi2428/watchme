@@ -17,8 +17,8 @@ It does not calculate health scores or overhead percentages; those can be derive
 
 ## Runtime entry points
 
-- **`watchme agent --collector.self`:** Long-running WatchMe Agent execution that exports WatchMe process metrics.
-- **`watchme agent once --collector.self`:** One-shot self metric export.
+- **`./scripts/watchme agent --collector.self`:** Long-running WatchMe Agent execution that exports WatchMe process metrics.
+- **`./scripts/watchme agent once --collector.self`:** One-shot self metric export.
 
 ### CLI options
 
@@ -57,6 +57,6 @@ Metrics are exported:
 ## Operational checks
 
 ```console
-$ watchme agent once --collector.self
-$ watchme agent --collector.self --self.metrics.interval 5
+$ ./scripts/watchme agent once --collector.self
+$ ./scripts/watchme agent --collector.self --self.metrics.interval 5
 ```

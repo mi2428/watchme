@@ -27,7 +27,7 @@ public struct AgentCommand: WatchmeCommand {
         logger.minimumLevel = config.logLevel
 
         if config.mode == .authorizeLocation {
-            return WiFiCollectorFactory.authorizeLocation(timeout: config.wifiAuthorizationTimeout)
+            return WiFiCollectorFactory.authorizeLocation()
         }
 
         if config.mode == .once {
@@ -107,7 +107,6 @@ struct AgentConfig {
     var logLevel = WatchmeDefaults.logLevel
     var enabledCollectors: [String] = []
     var collectorArguments: [String: [String]] = [:]
-    var wifiAuthorizationTimeout: TimeInterval = 0
 
     static func parse(_ arguments: [String], factories: [any WatchmeCollectorFactory.Type]) throws -> AgentConfig {
         var parser = AgentConfigParser(arguments: arguments, factories: factories)
@@ -152,6 +151,10 @@ private struct AgentConfigParser {
 
     mutating func parse() throws -> AgentConfig {
         consumeLeadingMode()
+        if config.mode == .authorizeLocation {
+            try finalizeAuthorization()
+            return config
+        }
         while index < arguments.count {
             try consumeOption()
             index += 1
@@ -269,17 +272,9 @@ private struct AgentConfigParser {
         guard config.mode == .authorizeLocation else {
             return
         }
-        if explicitlySelectedCollectors {
-            throw WatchmeError
-                .invalidArgument("\(WatchmeCLI.Mode.authorizeLocation) does not accept \(WatchmeCLI.Collector.wildcard) options")
+        guard index == arguments.count else {
+            throw WatchmeError.invalidArgument("\(WatchmeCLI.Mode.authorizeLocation) does not accept options or arguments")
         }
-        let nonWiFiArguments = config.collectorArguments.keys.filter { $0 != WiFiCollectorFactory.name }
-        guard nonWiFiArguments.isEmpty else {
-            throw WatchmeError.invalidArgument("authorize-location only accepts Wi-Fi options")
-        }
-        config.wifiAuthorizationTimeout = try WiFiCollectorFactory.authorizationTimeout(
-            arguments: config.collectorArguments[WiFiCollectorFactory.name] ?? []
-        )
     }
 
     private mutating func requireValue(_ argument: String, inlineValue: String?) throws -> String {
@@ -314,7 +309,7 @@ public func agentUsageText() -> String {
     Usage:
       \(WatchmeCLI.Command.executable) \(AgentCommand.name) [options]
       \(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.once) [options]
-      \(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.authorizeLocation) [options]
+      \(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.authorizeLocation)
       \(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Option.help)
 
     Collectors:

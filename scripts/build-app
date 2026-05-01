@@ -58,7 +58,7 @@ fi
 command -v codesign >/dev/null 2>&1 && codesign --force --sign - "${bundle}" >/dev/null
 printf 'bundle=%s\n' "${bundle}"
 printf 'authorize=%q %q --args agent authorize-location\n' open "${bundle}"
-printf 'version=%q --version\n' "${repo_root}/scripts/watchme-app"
-printf 'run-all=%q agent\n' "${repo_root}/scripts/watchme-app"
-printf 'run-wifi=%q agent once --collector.wifi\n' "${repo_root}/scripts/watchme-app"
-printf 'run-system=%q agent once --collector.system\n' "${repo_root}/scripts/watchme-app"
+printf 'version=%q --version\n' "${repo_root}/scripts/watchme"
+printf 'run-all=%q agent\n' "${repo_root}/scripts/watchme"
+printf 'run-wifi=%q agent once --collector.wifi\n' "${repo_root}/scripts/watchme"
+printf 'run-system=%q agent once --collector.system\n' "${repo_root}/scripts/watchme"

@@ -79,11 +79,9 @@ final class AgentCommandTests: XCTestCase {
     func testParseAuthorizationMode() throws {
         let config = try AgentConfig.parse([
             WatchmeCLI.Mode.authorizeLocation,
-            WiFiCLI.Option.internetTimeout.name, "9",
         ], factories: factories)
 
         XCTAssertEqual(config.mode, .authorizeLocation)
-        XCTAssertEqual(config.wifiAuthorizationTimeout, 9)
         XCTAssertTrue(try config.makeCollectors(factories: factories).isEmpty)
     }
 
@@ -93,7 +91,8 @@ final class AgentCommandTests: XCTestCase {
         XCTAssertTrue(usage.contains(WatchmeCLI.displayName))
         XCTAssertTrue(usage.contains("\(WatchmeCLI.Command.executable) \(AgentCommand.name) [options]"))
         XCTAssertTrue(usage.contains("\(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.once) [options]"))
-        XCTAssertTrue(usage
+        XCTAssertTrue(usage.contains("\(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.authorizeLocation)"))
+        XCTAssertFalse(usage
             .contains("\(WatchmeCLI.Command.executable) \(AgentCommand.name) \(WatchmeCLI.Mode.authorizeLocation) [options]"))
         XCTAssertTrue(usage.contains(WatchmeCLI.Collector.option(SystemCollectorFactory.name)))
         XCTAssertTrue(usage.contains(WatchmeCLI.Collector.option(SelfCollectorFactory.name)))
@@ -114,6 +113,24 @@ final class AgentCommandTests: XCTestCase {
         XCTAssertThrowsError(try AgentConfig.parse(["--unknown"], factories: factories))
         XCTAssertThrowsError(
             try AgentConfig.parse(["\(WatchmeCLI.Collector.option(WiFiCollectorFactory.name))=false"], factories: factories)
+        )
+        XCTAssertThrowsError(
+            try AgentConfig.parse([
+                WatchmeCLI.Mode.authorizeLocation,
+                WatchmeCLI.Option.otlpURL.name, "http://collector.example:4318",
+            ], factories: factories)
+        )
+        XCTAssertThrowsError(
+            try AgentConfig.parse([
+                WatchmeCLI.Mode.authorizeLocation,
+                WatchmeCLI.Option.logLevel.name, "info",
+            ], factories: factories)
+        )
+        XCTAssertThrowsError(
+            try AgentConfig.parse([
+                WatchmeCLI.Mode.authorizeLocation,
+                WiFiCLI.Option.internetTimeout.name, "9",
+            ], factories: factories)
         )
         XCTAssertThrowsError(
             try AgentConfig.parse([
