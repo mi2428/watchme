@@ -146,9 +146,9 @@ private func runInternetProbeLane(_ input: InternetProbeLaneInput) -> ActiveInte
         : nil
 
     let starts = dnsResults.map(\.startWallNanos)
-        + [icmpResult?.startWallNanos, tcpResult?.startWallNanos, httpResult?.startWallNanos].compactMap { $0 }
+        + [icmpResult?.startWallNanos, tcpResult?.startWallNanos, httpResult?.startWallNanos].compactMap(\.self)
     let finishes = dnsResults.map(\.finishedWallNanos)
-        + [icmpResult?.finishedWallNanos, tcpResult?.finishedWallNanos, httpResult?.finishedWallNanos].compactMap { $0 }
+        + [icmpResult?.finishedWallNanos, tcpResult?.finishedWallNanos, httpResult?.finishedWallNanos].compactMap(\.self)
     return ActiveInternetProbeLaneResult(
         target: input.target.host,
         family: input.family,

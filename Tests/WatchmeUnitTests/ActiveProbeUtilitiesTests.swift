@@ -51,13 +51,15 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
 
     func testGatewayICMPEchoFrameBuildsParseableEthernetPacket() throws {
         let frame = ethernetICMPEchoFrame(
-            sourceMAC: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
-            destinationMAC: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
-            sourceIP: [192, 168, 22, 173],
-            destinationIP: [192, 168, 23, 254],
-            identifier: 0x1234,
-            sequence: 0x5678,
-            payloadSize: 4
+            EthernetICMPEchoFrame(
+                sourceMAC: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
+                destinationMAC: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
+                sourceIP: [192, 168, 22, 173],
+                destinationIP: [192, 168, 23, 254],
+                identifier: 0x1234,
+                sequence: 0x5678,
+                payloadSize: 4
+            )
         )
 
         XCTAssertEqual(Array(frame[0 ..< 6]), [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])
@@ -79,13 +81,15 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
         let sourceIP: [UInt8] = [0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0x04, 0x91, 0x53, 0x41, 0x80, 0x6B, 0x7B, 0x1B]
         let gatewayIP: [UInt8] = [0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0xB4, 0x99, 0xE5, 0xFF, 0xFE, 0x2B, 0xF8, 0xCC]
         let frame = ethernetICMPv6EchoFrame(
-            sourceMAC: [0x50, 0xF2, 0x65, 0xF2, 0x4A, 0x63],
-            destinationMAC: [0xB6, 0x99, 0xE5, 0x2B, 0xF8, 0xCC],
-            sourceIP: sourceIP,
-            destinationIP: gatewayIP,
-            identifier: 0x1234,
-            sequence: 0x5678,
-            payloadSize: 4
+            EthernetICMPv6EchoFrame(
+                sourceMAC: [0x50, 0xF2, 0x65, 0xF2, 0x4A, 0x63],
+                destinationMAC: [0xB6, 0x99, 0xE5, 0x2B, 0xF8, 0xCC],
+                sourceIP: sourceIP,
+                destinationIP: gatewayIP,
+                identifier: 0x1234,
+                sequence: 0x5678,
+                payloadSize: 4
+            )
         )
 
         XCTAssertEqual(Array(frame[0 ..< 6]), [0xB6, 0x99, 0xE5, 0x2B, 0xF8, 0xCC])

@@ -64,13 +64,23 @@ private final class TCPConnectState {
         semaphore.signal()
     }
 
-    func result() -> (outcome: String, error: String?, completedWallNanos: UInt64) {
+    func result() -> TCPConnectResult {
         lock.lock()
         defer {
             lock.unlock()
         }
-        return (outcome, errorMessage, completedWallNanos ?? wallClockNanos())
+        return TCPConnectResult(
+            outcome: outcome,
+            error: errorMessage,
+            completedWallNanos: completedWallNanos ?? wallClockNanos()
+        )
     }
+}
+
+private struct TCPConnectResult {
+    let outcome: String
+    let error: String?
+    let completedWallNanos: UInt64
 }
 
 func runInternetTCPProbe(
@@ -171,7 +181,7 @@ private func performTCPConnect(
     port: UInt16,
     selectedInterface: NWInterface,
     timeout: TimeInterval
-) -> (outcome: String, error: String?, completedWallNanos: UInt64) {
+) -> TCPConnectResult {
     let parameters = NWParameters.tcp
     parameters.requiredInterface = selectedInterface
     let connection = NWConnection(
