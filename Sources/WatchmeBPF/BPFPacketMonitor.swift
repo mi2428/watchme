@@ -107,27 +107,9 @@ public final class BPFPacketMonitor {
     }
 
     private func parseBPFReadBuffer(_ buffer: [UInt8], bytesRead: Int) {
-        var offset = 0
-        while offset + 20 <= bytesRead {
-            // A single BPF read can contain multiple bpf_hdr + frame records.
-            // Each record is word-aligned, so offset advancement must follow
-            // BPF_WORDALIGN semantics or the next packet will be misread.
-            let caplen = Int(readLittleUInt32(buffer, offset: offset + bpfHeaderCaplenOffset))
-            let headerLength = Int(readLittleUInt16(buffer, offset: offset + bpfHeaderHeaderLengthOffset))
-            guard caplen > 0, headerLength > 0 else {
-                break
-            }
-            let packetOffset = offset + headerLength
-            if packetOffset + caplen <= bytesRead {
-                let timestamp = bpfTimestampNanos(buffer: buffer, offset: offset) ?? wallClockNanos()
-                let frame = Array(buffer[packetOffset ..< (packetOffset + caplen)])
-                onPacket(BPFPacket(interfaceName: interfaceName, timestampNanos: timestamp, frame: frame))
-            }
-            let advance = bpfWordAlign(headerLength + caplen)
-            guard advance > 0 else {
-                break
-            }
-            offset += advance
+        forEachBPFReadBufferRecord(buffer, bytesRead: bytesRead) { record in
+            let frame = Array(record.buffer[record.packetOffset ..< (record.packetOffset + record.caplen)])
+            onPacket(BPFPacket(interfaceName: interfaceName, timestampNanos: record.packetWallNanos, frame: frame))
         }
     }
 }

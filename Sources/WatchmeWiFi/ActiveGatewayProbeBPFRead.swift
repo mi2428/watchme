@@ -302,17 +302,10 @@ private struct GatewayBPFReadLoopContext {
     let readFailurePrefix: String
 }
 
-private struct GatewayBPFRecord {
-    let buffer: [UInt8]
-    let packetOffset: Int
-    let caplen: Int
-    let packetWallNanos: UInt64
-}
-
 private func readGatewayBPFRecords<Result>(
     context: GatewayBPFReadLoopContext,
     makeFailure: (String) -> Result,
-    match: (GatewayBPFRecord) -> Result?
+    match: (BPFReadBufferRecord) -> Result?
 ) -> Result {
     let started = DispatchTime.now().uptimeNanoseconds
     let timeoutNanos = UInt64(max(context.timeout, 0.001) * 1_000_000_000)
@@ -339,42 +332,8 @@ private func readGatewayBPFRecords<Result>(
         guard bytesRead > 0 else {
             return makeFailure("\(context.readFailurePrefix): \(posixErrorString())")
         }
-        if let result = scanGatewayBPFReadBuffer(readBuffer, bytesRead: bytesRead, match: match) {
+        if let result = scanBPFReadBuffer(readBuffer, bytesRead: bytesRead, match: match) {
             return result
         }
     }
-}
-
-private func scanGatewayBPFReadBuffer<Result>(
-    _ readBuffer: [UInt8],
-    bytesRead: Int,
-    match: (GatewayBPFRecord) -> Result?
-) -> Result? {
-    var offset = 0
-    while offset + 20 <= bytesRead {
-        let caplen = Int(readLittleUInt32(readBuffer, offset: offset + bpfHeaderCaplenOffset))
-        let headerLength = Int(readLittleUInt16(readBuffer, offset: offset + bpfHeaderHeaderLengthOffset))
-        guard headerLength > 0, caplen > 0 else {
-            break
-        }
-
-        let packetOffset = offset + headerLength
-        if packetOffset + caplen <= bytesRead {
-            let record = GatewayBPFRecord(
-                buffer: readBuffer,
-                packetOffset: packetOffset,
-                caplen: caplen,
-                packetWallNanos: bpfTimestampNanos(buffer: readBuffer, offset: offset) ?? wallClockNanos()
-            )
-            if let result = match(record) {
-                return result
-            }
-        }
-        let advance = bpfWordAlign(headerLength + caplen)
-        guard advance > 0 else {
-            break
-        }
-        offset += advance
-    }
-    return nil
 }
