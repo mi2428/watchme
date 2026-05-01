@@ -1,11 +1,9 @@
 # WatchMe
 
-WatchMe is a macOS OpenTelemetry agent.
-It observes host resources, the WatchMe process itself, and Wi-Fi connection behavior, then exports metrics and traces through OTLP/HTTP.
+A macOS OpenTelemetry agent that observes host resources and Wi-Fi connection behavior, exporting metrics and traces via OTLP/HTTP.
+It collects data from macOS APIs, BPF-based packet timestamping, and dedicated Wi-Fi probes, enabling downstream dashboards and alerting systems to interpret the results.
 
-The goal is to keep primary evidence about what happened on a macOS client: resource usage, Wi-Fi association state, reachability, address acquisition, gateway behavior, and packet timing.
-WatchMe avoids local quality scores where possible.
-It reports values from macOS APIs, packet timestamps, and explicit Wi-Fi-bound probes so dashboards and alert rules can interpret them downstream.
+[![](https://github.com/mi2428/watchme/blob/main/screenshot.png?raw=true)](https://github.com/mi2428/watchme/blob/main/screenshot.png)
 
 ## Getting Started
 
@@ -17,7 +15,7 @@ It reports values from macOS APIs, packet timestamps, and explicit Wi-Fi-bound p
 - macOS Location permission when SSID/BSSID labels are required
 - Permission to open `/dev/bpf*` when Wi-Fi passive packet timing is enabled
 
-### Build And Authorize
+### Build and Authorize
 
 Build `WatchMe.app` locally, then put the repository's `scripts` directory on `PATH`.
 The `watchme` wrapper launches the app bundle through LaunchServices, which is required for Location-gated Wi-Fi identity fields such as SSID and BSSID.
@@ -43,38 +41,81 @@ Do not run `.build/watchme-app/WatchMe.app/Contents/MacOS/watchme` directly when
 
 ### Run
 
-Start all collectors:
+```console
+$ watchme --help
+
+WatchMe Agent - macOS observability
+
+Usage:
+  watchme <command> [options]
+  watchme <command> --help
+  watchme --version
+
+Commands:
+      agent      Run one or more observability collectors.
+```
+
+```console
+$ watchme agent --help
+
+WatchMe Agent - macOS observability
+
+Usage:
+  watchme agent [options]
+  watchme agent once [options]
+  watchme agent authorize-location
+  watchme agent --help
+
+Collectors:
+  --collector.system                    Collect host CPU, memory, disk, network, filesystem, and uptime metrics.
+  --collector.self                      Collect WatchMe process self metrics.
+  --collector.wifi                      Collect Wi-Fi metrics and traces.
+
+Common Options:
+  --otlp.url URL                        OTLP/HTTP collector endpoint. Default: http://127.0.0.1:4318
+  --log.level level                     debug, info, warn, or error. Default: debug
+
+System Options:
+  --system.metrics.interval seconds     System metric collection interval. Default: 5
+
+Self Options:
+  --self.metrics.interval seconds       Self metric collection interval. Default: 5
+
+Wi-Fi Options:
+  --wifi.metrics.interval seconds       Wi-Fi metric collection interval. Default: 5
+  --wifi.traces.interval seconds        Connectivity trace interval. Default: 60
+  --wifi.traces.cooldown seconds        Minimum seconds between event traces. Default: 2
+  --wifi.probe.bpf.enabled bool         Enable passive BPF probe for DHCP/RS/RA/NDP. Default: true
+  --wifi.probe.bpf.span-max-age sec     Passive probe packet span lookback window. Default: 180
+  --wifi.probe.gateway.count n          Gateway ICMP probes per burst. Default: 4
+  --wifi.probe.gateway.interval sec     Delay between gateway burst probes. Default: 0.05
+  --wifi.probe.internet.target host     Internet probe host. Can be repeated. Default: www.wide.ad.jp, www.cloudflare.com
+  --wifi.probe.internet.family value    ipv4, ipv6, or dual. Default: dual
+  --wifi.probe.internet.timeout sec     Internet probe timeout. Default: 5
+  --wifi.probe.internet.dns bool        Enable internet DNS probe. Default: true
+  --wifi.probe.internet.icmp bool       Enable internet ICMP probe. Default: true
+  --wifi.probe.internet.tcp bool        Enable internet TCP connect probe. Default: true
+  --wifi.probe.internet.http bool       Enable internet plain HTTP probe. Default: true
+
+Defaults:
+  `watchme agent` starts WatchMe Agent with all collectors: `--collector.system`, `--collector.self`, `--collector.wifi`.
+  Pass one or more `--collector.*` options to run only those collectors.
+```
+
+Start all collectors with OpenTelemetry backend:
 
 ```console
 $ docker compose up -d
 $ watchme agent --otlp.url http://127.0.0.1:4318
 ```
 
-Run all collectors once and exit:
-
-```console
-$ watchme agent once
-```
-
-Run a single collector:
-
-```console
-$ watchme agent --collector.self
-$ watchme agent --collector.system
-$ watchme agent --collector.wifi
-```
-
-Common options:
-
-```console
-$ watchme agent --log.level info
-$ watchme agent --system.metrics.interval 5
-$ watchme agent --self.metrics.interval 5
-$ watchme agent --wifi.metrics.interval 5
-$ watchme agent --wifi.traces.interval 60
-$ watchme agent --wifi.probe.bpf.enabled false
-$ watchme agent --wifi.probe.internet.target www.cloudflare.com
-```
+>[!NOTE]
+> **OTLP Delivery:**
+> When a retryable export fails, WatchMe stores the exact OTLP HTTP payload under `~/.watchme/otlp-spool`.
+> The next export replays pending payloads oldest-first and removes a payload only after the collector returns a 2xx response.
+> 
+> The spool is bounded by default to 1000 files, 100 MiB, seven days of age, and 100 replayed files per export.
+> Set `WATCHME_OTLP_SPOOL_DIR` to override the spool directory.
 
 ## Observability
 
@@ -187,17 +228,6 @@ Main traces and spans:
 If SSID/BSSID labels are `unknown`, grant Location permission to `WatchMe.app` and run through the `watchme` wrapper.
 If BPF is unavailable in your environment, disable passive packet timing with `--wifi.probe.bpf.enabled false`.
 
-### OTLP Delivery
-
-WatchMe exports metrics and traces through OTLP/HTTP.
-The default base URL is `http://127.0.0.1:4318`.
-
-When a retryable export fails, WatchMe stores the exact OTLP HTTP payload under `~/.watchme/otlp-spool`.
-The next export replays pending payloads oldest-first and removes a payload only after the collector returns a 2xx response.
-
-The spool is bounded by default to 1000 files, 100 MiB, seven days of age, and 100 replayed files per export.
-Set `WATCHME_OTLP_SPOOL_DIR` to override the spool directory.
-
 ## Development
 
 Use `make help` to list quality, build, app-bundle, documentation, and release targets.
@@ -270,3 +300,10 @@ $ swift package --disable-sandbox preview-documentation --target WatchmeWiFi
 ```
 
 Replace `WatchmeWiFi` with `WatchmeSelf`, `WatchmeSystem`, or `WatchmeAgent` to build or preview another target.
+
+## License
+
+MIT License.
+See [LICENSE](LICENSE) for details.
+
+WatchMe is inspired by: https://www.goodreads.com/en/book/show/7326876-harmony
