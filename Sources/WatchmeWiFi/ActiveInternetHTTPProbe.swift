@@ -49,44 +49,6 @@ private struct HTTPFailureContext {
     let startWallNanos: UInt64
 }
 
-private final class PlainHTTPExchangeState {
-    let semaphore = DispatchSemaphore(value: 0)
-    private let lock = NSLock()
-    private var completed = false
-    var requestWallNanos: UInt64?
-    var responseWallNanos: UInt64?
-    var completedWallNanos: UInt64?
-    var statusCode: Int?
-    var outcome = "unknown"
-    var errorMessage: String?
-
-    func complete(outcome newOutcome: String, error: String? = nil) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !completed else {
-            return
-        }
-        outcome = newOutcome
-        errorMessage = error
-        completedWallNanos = completedWallNanos ?? responseWallNanos ?? wallClockNanos()
-        completed = true
-        semaphore.signal()
-    }
-
-    func exchange() -> PlainHTTPExchangeResult {
-        lock.lock()
-        defer { lock.unlock() }
-        return PlainHTTPExchangeResult(
-            statusCode: statusCode,
-            outcome: outcome,
-            error: errorMessage,
-            requestWallNanos: requestWallNanos,
-            responseWallNanos: responseWallNanos,
-            completedWallNanos: completedWallNanos ?? wallClockNanos()
-        )
-    }
-}
-
 func runInternetHTTPProbe(
     target: String,
     family: InternetAddressFamily,
@@ -189,58 +151,131 @@ private func performPlainHTTPHeadExchange(
         using: parameters
     )
     let queue = DispatchQueue(label: "watchme.internet_http.\(randomHex(bytes: 4))")
-    let state = PlainHTTPExchangeState()
+    // HTTP response timing has two boundaries: request write and first response
+    // byte. The completion is first-writer-wins; the request timestamp gets a
+    // tiny lock because timeout can read it while the ready callback writes it.
+    let completion = SynchronousCompletion<PlainHTTPExchangeResult>()
+    let requestStartLock = NSLock()
+    var requestWallNanos: UInt64?
+
+    func setRequestWallNanos(_ value: UInt64) {
+        requestStartLock.lock()
+        requestWallNanos = value
+        requestStartLock.unlock()
+    }
+
+    func currentRequestWallNanos() -> UInt64? {
+        requestStartLock.lock()
+        defer {
+            requestStartLock.unlock()
+        }
+        return requestWallNanos
+    }
 
     connection.stateUpdateHandler = { connectionState in
         switch connectionState {
         case .ready:
-            state.requestWallNanos = wallClockNanos()
+            let requestStarted = wallClockNanos()
+            setRequestWallNanos(requestStarted)
             connection.send(
                 content: httpHeadRequestBytes(path: "/", host: host),
                 completion: .contentProcessed { error in
                     if let error {
-                        state.complete(outcome: "send_failed", error: error.localizedDescription)
+                        completion.complete(plainHTTPExchangeResult(
+                            outcome: "send_failed",
+                            error: error.localizedDescription,
+                            requestWallNanos: requestStarted
+                        ))
                         return
                     }
-                    receivePlainHTTPResponse(connection: connection, state: state)
+                    receivePlainHTTPResponse(
+                        connection: connection,
+                        completion: completion,
+                        requestWallNanos: requestStarted
+                    )
                 }
             )
         case let .failed(error):
-            state.complete(outcome: isConnectionRefused(error) ? "refused" : "failed", error: error.localizedDescription)
+            completion.complete(plainHTTPExchangeResult(
+                outcome: isConnectionRefused(error) ? "refused" : "failed",
+                error: error.localizedDescription,
+                requestWallNanos: currentRequestWallNanos()
+            ))
         case .cancelled:
-            state.complete(outcome: "cancelled", error: "connection cancelled")
+            completion.complete(plainHTTPExchangeResult(
+                outcome: "cancelled",
+                error: "connection cancelled",
+                requestWallNanos: currentRequestWallNanos()
+            ))
         default:
             break
         }
     }
     connection.start(queue: queue)
 
-    if state.semaphore.wait(timeout: .now() + timeout) == .timedOut {
-        state.complete(outcome: "timeout", error: "HTTP probe timed out")
-    }
+    let result = completion.wait(
+        timeout: timeout,
+        timeoutValue: plainHTTPExchangeResult(
+            outcome: "timeout",
+            error: "HTTP probe timed out",
+            requestWallNanos: currentRequestWallNanos()
+        )
+    )
     connection.cancel()
-
-    return state.exchange()
+    return result
 }
 
-private func receivePlainHTTPResponse(connection: NWConnection, state: PlainHTTPExchangeState) {
+private func receivePlainHTTPResponse(
+    connection: NWConnection,
+    completion: SynchronousCompletion<PlainHTTPExchangeResult>,
+    requestWallNanos: UInt64
+) {
     connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { data, _, isComplete, error in
         if let error {
-            state.complete(outcome: "receive_failed", error: error.localizedDescription)
+            completion.complete(plainHTTPExchangeResult(
+                outcome: "receive_failed",
+                error: error.localizedDescription,
+                requestWallNanos: requestWallNanos
+            ))
             return
         }
         if let data, !data.isEmpty {
-            state.responseWallNanos = wallClockNanos()
-            state.statusCode = parseHTTPStatusCode(data)
-            state.complete(outcome: "response")
+            let responseWallNanos = wallClockNanos()
+            completion.complete(plainHTTPExchangeResult(
+                statusCode: parseHTTPStatusCode(data),
+                outcome: "response",
+                requestWallNanos: requestWallNanos,
+                responseWallNanos: responseWallNanos
+            ))
             return
         }
         if isComplete {
-            state.complete(outcome: "closed", error: "connection closed before response bytes")
+            completion.complete(plainHTTPExchangeResult(
+                outcome: "closed",
+                error: "connection closed before response bytes",
+                requestWallNanos: requestWallNanos
+            ))
             return
         }
-        receivePlainHTTPResponse(connection: connection, state: state)
+        receivePlainHTTPResponse(connection: connection, completion: completion, requestWallNanos: requestWallNanos)
     }
+}
+
+private func plainHTTPExchangeResult(
+    statusCode: Int? = nil,
+    outcome: String,
+    error: String? = nil,
+    requestWallNanos: UInt64?,
+    responseWallNanos: UInt64? = nil
+) -> PlainHTTPExchangeResult {
+    PlainHTTPExchangeResult(
+        statusCode: statusCode,
+        outcome: outcome,
+        error: error,
+        requestWallNanos: requestWallNanos,
+        responseWallNanos: responseWallNanos,
+        completedWallNanos: responseWallNanos ?? wallClockNanos()
+    )
 }
 
 func httpHeadRequestBytes(path: String, host: String) -> Data {

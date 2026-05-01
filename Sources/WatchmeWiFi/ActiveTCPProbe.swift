@@ -41,42 +41,6 @@ private struct TCPProbeFailureContext {
     let startWallNanos: UInt64
 }
 
-private final class TCPConnectState {
-    let semaphore = DispatchSemaphore(value: 0)
-    private let lock = NSLock()
-    private var completed = false
-    var outcome = "unknown"
-    var errorMessage: String?
-    var completedWallNanos: UInt64?
-
-    func complete(outcome newOutcome: String, error: String? = nil) {
-        lock.lock()
-        defer {
-            lock.unlock()
-        }
-        guard !completed else {
-            return
-        }
-        outcome = newOutcome
-        errorMessage = error
-        completedWallNanos = completedWallNanos ?? wallClockNanos()
-        completed = true
-        semaphore.signal()
-    }
-
-    func result() -> TCPConnectResult {
-        lock.lock()
-        defer {
-            lock.unlock()
-        }
-        return TCPConnectResult(
-            outcome: outcome,
-            error: errorMessage,
-            completedWallNanos: completedWallNanos ?? wallClockNanos()
-        )
-    }
-}
-
 private struct TCPConnectResult {
     let outcome: String
     let error: String?
@@ -190,26 +154,41 @@ private func performTCPConnect(
         using: parameters
     )
     let queue = DispatchQueue(label: "watchme.internet_tcp.\(randomHex(bytes: 4))")
-    let state = TCPConnectState()
+    // TCP callbacks can race with the explicit timeout and the cancel below.
+    // Keep first-completion-wins semantics so late callbacks cannot change the
+    // outcome or completed timestamp used for BPF fallback timing.
+    let completion = SynchronousCompletion<TCPConnectResult>()
 
     connection.stateUpdateHandler = { connectionState in
         switch connectionState {
         case .ready:
-            state.complete(outcome: "connected")
+            completion.complete(TCPConnectResult(outcome: "connected", error: nil, completedWallNanos: wallClockNanos()))
         case let .failed(error):
-            state.complete(outcome: isConnectionRefused(error) ? "refused" : "failed", error: error.localizedDescription)
+            completion.complete(TCPConnectResult(
+                outcome: isConnectionRefused(error) ? "refused" : "failed",
+                error: error.localizedDescription,
+                completedWallNanos: wallClockNanos()
+            ))
         case .cancelled:
-            state.complete(outcome: "cancelled", error: "connection cancelled")
+            completion.complete(TCPConnectResult(
+                outcome: "cancelled",
+                error: "connection cancelled",
+                completedWallNanos: wallClockNanos()
+            ))
         default:
             break
         }
     }
     connection.start(queue: queue)
 
-    if state.semaphore.wait(timeout: .now() + timeout) == .timedOut {
-        state.complete(outcome: "timeout", error: "TCP connect probe timed out")
-    }
+    let result = completion.wait(
+        timeout: timeout,
+        timeoutValue: TCPConnectResult(
+            outcome: "timeout",
+            error: "TCP connect probe timed out",
+            completedWallNanos: wallClockNanos()
+        )
+    )
     connection.cancel()
-
-    return state.result()
+    return result
 }

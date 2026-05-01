@@ -439,28 +439,28 @@ final class BlockingHTTPClient: HTTPClient, OTLPHTTPTransport, OTLPTraceHTTPClie
         if let directSendOverride {
             return directSendOverride(request)
         }
-        let semaphore = DispatchSemaphore(value: 0)
-        var output: Result<HTTPURLResponse, Error>?
+        let completion = SynchronousCompletion<Result<HTTPURLResponse, Error>>()
         let task = session.dataTask(with: request) { _, response, error in
             if let error {
-                output = .failure(error)
+                completion.complete(.failure(error))
             } else if let http = response as? HTTPURLResponse {
                 if (200 ..< 300).contains(http.statusCode) {
-                    output = .success(http)
+                    completion.complete(.success(http))
                 } else {
-                    output = .failure(OTLPHTTPError.statusCode(http.statusCode))
+                    completion.complete(.failure(OTLPHTTPError.statusCode(http.statusCode)))
                 }
             } else {
-                output = .failure(OTLPHTTPError.missingHTTPResponse)
+                completion.complete(.failure(OTLPHTTPError.missingHTTPResponse))
             }
-            semaphore.signal()
         }
         task.resume()
-        if semaphore.wait(timeout: .now() + timeout) == .timedOut {
-            task.cancel()
-            output = .failure(OTLPHTTPError.timedOut)
+        let result = completion.wait(timeout: timeout, timeoutValue: .failure(OTLPHTTPError.timedOut))
+        if case let .failure(error) = result, let otlpError = error as? OTLPHTTPError {
+            if case .timedOut = otlpError {
+                task.cancel()
+            }
         }
-        return output ?? .failure(OTLPHTTPError.missingHTTPResponse)
+        return result
     }
 }
 

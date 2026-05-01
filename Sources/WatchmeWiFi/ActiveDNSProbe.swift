@@ -155,27 +155,19 @@ private func performDNSUDPExchange(
     parameters.requiredInterface = selectedInterface
     let connection = NWConnection(host: NWEndpoint.Host(resolver), port: NWEndpoint.Port(rawValue: 53)!, using: parameters)
     let queue = DispatchQueue(label: "watchme.dns_probe.\(randomHex(bytes: 4))")
-    let semaphore = DispatchSemaphore(value: 0)
-    let completionLock = NSLock()
-    var completed = false
-    var rcode: Int?
-    var answerCount: Int?
-    var addresses: [String] = []
-    var errorMessage: String?
-    var completedWallNanos: UInt64?
+    // The probe runner is synchronous, while Network.framework is callback
+    // based. Store exactly one result so timeout/cancel races cannot overwrite
+    // a packet-timing boundary recorded by an earlier callback.
+    let completion = SynchronousCompletion<DNSExchangeResult>()
 
-    func complete(_ error: String? = nil) {
-        completionLock.lock()
-        defer { completionLock.unlock() }
-        guard !completed else {
-            return
-        }
-        if let error {
-            errorMessage = error
-        }
-        completedWallNanos = completedWallNanos ?? wallClockNanos()
-        completed = true
-        semaphore.signal()
+    func complete(rcode: Int? = nil, answerCount: Int? = nil, addresses: [String] = [], error: String? = nil) {
+        completion.complete(DNSExchangeResult(
+            rcode: rcode,
+            answerCount: answerCount,
+            addresses: addresses,
+            error: error,
+            completedWallNanos: wallClockNanos()
+        ))
     }
 
     connection.stateUpdateHandler = { state in
@@ -183,16 +175,16 @@ private func performDNSUDPExchange(
         case .ready:
             connection.send(content: query.data, completion: .contentProcessed { error in
                 if let error {
-                    complete(error.localizedDescription)
+                    complete(error: error.localizedDescription)
                     return
                 }
                 connection.receiveMessage { data, _, _, error in
                     if let error {
-                        complete(error.localizedDescription)
+                        complete(error: error.localizedDescription)
                         return
                     }
                     guard let data else {
-                        complete("DNS response was empty")
+                        complete(error: "DNS response was empty")
                         return
                     }
                     guard let response = parseDNSResponseMetadata(
@@ -200,37 +192,34 @@ private func performDNSUDPExchange(
                         expectedID: query.id,
                         recordType: query.recordType
                     ) else {
-                        complete("DNS response could not be parsed")
+                        complete(error: "DNS response could not be parsed")
                         return
                     }
-                    rcode = response.rcode
-                    answerCount = response.answerCount
-                    addresses = response.addresses
-                    complete()
+                    complete(rcode: response.rcode, answerCount: response.answerCount, addresses: response.addresses)
                 }
             })
         case let .failed(error):
-            complete(error.localizedDescription)
+            complete(error: error.localizedDescription)
         case .cancelled:
-            complete("connection cancelled")
+            complete(error: "connection cancelled")
         default:
             break
         }
     }
     connection.start(queue: queue)
 
-    if semaphore.wait(timeout: .now() + timeout) == .timedOut {
-        complete("DNS probe timed out")
-    }
-    connection.cancel()
-
-    return DNSExchangeResult(
-        rcode: rcode,
-        answerCount: answerCount,
-        addresses: addresses,
-        error: errorMessage,
-        completedWallNanos: completedWallNanos ?? wallClockNanos()
+    let result = completion.wait(
+        timeout: timeout,
+        timeoutValue: DNSExchangeResult(
+            rcode: nil,
+            answerCount: nil,
+            addresses: [],
+            error: "DNS probe timed out",
+            completedWallNanos: wallClockNanos()
+        )
     )
+    connection.cancel()
+    return result
 }
 
 struct DNSQueryPacket {
