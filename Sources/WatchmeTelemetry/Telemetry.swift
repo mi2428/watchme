@@ -299,15 +299,38 @@ public final class TraceRecorder {
     }
 }
 
+protocol OTLPTraceHTTPClient {
+    func send(request: URLRequest, completion: @escaping (Result<HTTPURLResponse, Error>) -> Void)
+}
+
+private final class OTelHTTPClientAdapter: HTTPClient {
+    private let client: OTLPTraceHTTPClient
+
+    init(client: OTLPTraceHTTPClient) {
+        self.client = client
+    }
+
+    func send(request: URLRequest, completion: @escaping (Result<HTTPURLResponse, Error>) -> Void) {
+        client.send(request: request, completion: completion)
+    }
+}
+
 final class OTelTraceExporter {
     private let endpoint: URL
     private let exporter: OtlpHttpTraceExporter
     private let provider: TracerProviderSdk
     private let tracer: Tracer
+    private let httpClient: OTelHTTPClientAdapter
 
-    init(serviceName: String, endpoint: URL) {
+    convenience init(serviceName: String, endpoint: URL) {
+        self.init(serviceName: serviceName, endpoint: endpoint, httpClient: BlockingHTTPClient(timeout: 10))
+    }
+
+    init(serviceName: String, endpoint: URL, httpClient: OTLPTraceHTTPClient) {
         self.endpoint = endpoint
-        exporter = OtlpHttpTraceExporter(endpoint: endpoint, httpClient: BlockingHTTPClient(timeout: 10))
+        let adapter = OTelHTTPClientAdapter(client: httpClient)
+        self.httpClient = adapter
+        exporter = OtlpHttpTraceExporter(endpoint: endpoint, httpClient: adapter)
         let resource = Resource(attributes: [
             "service.name": AttributeValue.string(serviceName),
             "os.type": AttributeValue.string("macOS"),
@@ -360,12 +383,17 @@ final class OTelTraceExporter {
     }
 }
 
-final class BlockingHTTPClient: HTTPClient, OTLPHTTPTransport {
+final class BlockingHTTPClient: HTTPClient, OTLPHTTPTransport, OTLPTraceHTTPClient {
     private let session: URLSession
     private let timeout: TimeInterval
     private let spool: OTLPSpool
+    private let directSendOverride: ((URLRequest) -> Result<HTTPURLResponse, Error>)?
 
-    init(timeout: TimeInterval, spool: OTLPSpool = .shared) {
+    init(
+        timeout: TimeInterval,
+        spool: OTLPSpool = .shared,
+        directSend: ((URLRequest) -> Result<HTTPURLResponse, Error>)? = nil
+    ) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = timeout
         configuration.timeoutIntervalForResource = timeout
@@ -373,6 +401,7 @@ final class BlockingHTTPClient: HTTPClient, OTLPHTTPTransport {
         session = URLSession(configuration: configuration)
         self.timeout = timeout
         self.spool = spool
+        directSendOverride = directSend
     }
 
     func send(request: URLRequest, completion: @escaping (Result<HTTPURLResponse, Error>) -> Void) {
@@ -407,6 +436,9 @@ final class BlockingHTTPClient: HTTPClient, OTLPHTTPTransport {
     }
 
     private func sendDirect(request: URLRequest) -> Result<HTTPURLResponse, Error> {
+        if let directSendOverride {
+            return directSendOverride(request)
+        }
         let semaphore = DispatchSemaphore(value: 0)
         var output: Result<HTTPURLResponse, Error>?
         let task = session.dataTask(with: request) { _, response, error in
