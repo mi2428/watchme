@@ -24,6 +24,7 @@ final class WiFiAgent: WatchmeCollector {
     var lastAssociationTraceCompletedEpochNanos: UInt64?
     var lastAssociationTraceWindowFloorEpochNanos: UInt64?
     var lastDisconnectionEpochNanos: UInt64?
+    var disconnectTraceEmittedForCurrentOutage = false
     var packetWindowSuppressedUntil = Date.distantPast
     var lastIdentityStatusLogSignature: String?
     var metricState = WiFiMetricState()
@@ -302,6 +303,7 @@ final class WiFiAgent: WatchmeCollector {
         let previous = lastSnapshot
         let current = WiFiSnapshot.capture()
         metricState.recordSnapshotChanges(from: previous, to: current)
+        resetDisconnectTraceDedupeIfRecovered(snapshot: current)
         lastSnapshot = current
         return current
     }

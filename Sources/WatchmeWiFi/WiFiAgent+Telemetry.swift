@@ -45,6 +45,16 @@ extension WiFiAgent {
                 )
                 return
             }
+            guard self.markDisconnectTraceAcceptedIfNeeded(reason: reason) else {
+                logEvent(
+                    .debug, "trace_trigger_suppressed",
+                    fields: [
+                        "reason": reason,
+                        "suppression_reason": "disconnect_trace_already_emitted_for_current_outage",
+                    ]
+                )
+                return
+            }
             self.lastTrigger = now
             logEvent(.info, "trace_trigger_accepted", fields: ["reason": reason, "force": force ? "true" : "false"])
             self.emitTrace(
@@ -54,6 +64,23 @@ extension WiFiAgent {
                 includeConnectivityCheck: includeConnectivityCheck,
                 connectivityReadinessTimeout: connectivityReadinessTimeout
             )
+        }
+    }
+
+    func markDisconnectTraceAcceptedIfNeeded(reason: String) -> Bool {
+        guard reason == "wifi.disconnect" else {
+            return true
+        }
+        guard !disconnectTraceEmittedForCurrentOutage else {
+            return false
+        }
+        disconnectTraceEmittedForCurrentOutage = true
+        return true
+    }
+
+    func resetDisconnectTraceDedupeIfRecovered(snapshot: WiFiSnapshot) {
+        if snapshot.isAssociated {
+            disconnectTraceEmittedForCurrentOutage = false
         }
     }
 

@@ -122,6 +122,18 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(capture.internetResults.tcp.count, 1)
     }
 
+    func testDisconnectTraceDedupeAllowsOneTraceUntilAssociationRecovers() {
+        let agent = makeAgent()
+
+        XCTAssertTrue(agent.markDisconnectTraceAcceptedIfNeeded(reason: "wifi.disconnect"))
+        XCTAssertFalse(agent.markDisconnectTraceAcceptedIfNeeded(reason: "wifi.disconnect"))
+        XCTAssertTrue(agent.markDisconnectTraceAcceptedIfNeeded(reason: "wifi.link.changed"))
+
+        agent.resetDisconnectTraceDedupeIfRecovered(snapshot: makeSnapshot())
+
+        XCTAssertTrue(agent.markDisconnectTraceAcceptedIfNeeded(reason: "wifi.disconnect"))
+    }
+
     func testAssociationTraceReplaysConsumedNetworkAttachmentPacketSpans() {
         let packetNames = [
             "packet.dhcp.request_to_ack",
