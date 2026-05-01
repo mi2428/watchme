@@ -56,6 +56,9 @@ public struct AgentCommand: WatchmeCommand {
             collector.start()
         }
 
+        let shutdown = DispatchSemaphore(value: 0)
+        let stopLock = NSLock()
+        var stopped = false
         let signalQueue = DispatchQueue(label: "watchme.agent.signals")
         let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: signalQueue)
         let sigterm = DispatchSource.makeSignalSource(signal: SIGTERM, queue: signalQueue)
@@ -63,18 +66,25 @@ public struct AgentCommand: WatchmeCommand {
         signal(SIGTERM, SIG_IGN)
 
         let stop: (String) -> Void = { signalName in
+            stopLock.lock()
+            if stopped {
+                stopLock.unlock()
+                return
+            }
+            stopped = true
+            stopLock.unlock()
             logEvent(.info, "agent_stopping", fields: ["signal": signalName])
             for collector in collectors.reversed() {
                 collector.stop()
             }
-            exit(0)
+            shutdown.signal()
         }
         sigint.setEventHandler { stop("SIGINT") }
         sigterm.setEventHandler { stop("SIGTERM") }
         sigint.resume()
         sigterm.resume()
 
-        RunLoop.current.run()
+        shutdown.wait()
         return 0
     }
 
