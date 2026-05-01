@@ -115,9 +115,9 @@ enum WiFiTracePolicy {
         config: WiFiConfig
     ) -> Bool {
         let families = Set(config.probeInternetFamily.concreteFamilies)
-        if families.contains(.ipv4),
-           snapshot.ipv4Addresses.isEmpty || networkState.routerIPv4 == nil
-        {
+        let needsIPv4State = families.contains(.ipv4)
+            && (snapshot.ipv4Addresses.isEmpty || networkState.routerIPv4 == nil)
+        if needsIPv4State {
             return true
         }
         if families.contains(.ipv6), networkState.routerIPv6 == nil {

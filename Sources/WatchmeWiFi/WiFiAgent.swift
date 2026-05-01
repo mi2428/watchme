@@ -235,9 +235,8 @@ final class WiFiAgent: WatchmeCollector {
             eventTags["previous_local_ip"] = previous.primaryIPv4 ?? ""
             eventTags["current_local_ip"] = current.primaryIPv4 ?? ""
 
-            if previous.isAssociated, !current.isAssociated,
-               let receivedEpoch = UInt64(tags["network.event_received_epoch_ns"] ?? "")
-            {
+            let isDisconnectTransition = previous.isAssociated && !current.isAssociated
+            if isDisconnectTransition, let receivedEpoch = UInt64(tags["network.event_received_epoch_ns"] ?? "") {
                 self.lastDisconnectionEpochNanos = receivedEpoch
             }
 
