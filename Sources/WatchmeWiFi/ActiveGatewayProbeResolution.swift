@@ -39,7 +39,8 @@ private struct GatewayResolutionExecution {
 func runBPFGatewayARPResolution(
     gateway: String,
     timeout: TimeInterval,
-    interfaceName: String?
+    interfaceName: String?,
+    bpfIO: GatewayBPFIO = .live
 ) -> ActiveGatewayARPResult {
     let startWallNanos = wallClockNanos()
     guard let interfaceName, !interfaceName.isEmpty else {
@@ -56,7 +57,12 @@ func runBPFGatewayARPResolution(
         )
     }
     let preflight: GatewayResolutionPreflight
-    switch gatewayARPResolutionPreflight(gateway: gateway, interfaceName: interfaceName, startWallNanos: startWallNanos) {
+    switch gatewayARPResolutionPreflight(
+        gateway: gateway,
+        interfaceName: interfaceName,
+        startWallNanos: startWallNanos,
+        interfaceStateProvider: bpfIO.interfaceState
+    ) {
     case let .success(value):
         preflight = value
     case let .failure(result):
@@ -76,14 +82,16 @@ func runBPFGatewayARPResolution(
                 targetIP: preflight.gatewayIPBytes
             ),
             startWallNanos: startWallNanos
-        )
+        ),
+        bpfIO: bpfIO
     )
 }
 
 func runBPFGatewayNDPResolution(
     gateway: String,
     timeout: TimeInterval,
-    interfaceName: String?
+    interfaceName: String?,
+    bpfIO: GatewayBPFIO = .live
 ) -> ActiveGatewayARPResult {
     let startWallNanos = wallClockNanos()
     guard let interfaceName, !interfaceName.isEmpty else {
@@ -100,7 +108,12 @@ func runBPFGatewayNDPResolution(
         )
     }
     let preflight: GatewayResolutionPreflight
-    switch gatewayNDPResolutionPreflight(gateway: gateway, interfaceName: interfaceName, startWallNanos: startWallNanos) {
+    switch gatewayNDPResolutionPreflight(
+        gateway: gateway,
+        interfaceName: interfaceName,
+        startWallNanos: startWallNanos,
+        interfaceStateProvider: bpfIO.interfaceState
+    ) {
     case let .success(value):
         preflight = value
     case let .failure(result):
@@ -120,26 +133,25 @@ func runBPFGatewayNDPResolution(
                 targetIP: preflight.gatewayIPBytes
             ),
             startWallNanos: startWallNanos
-        )
+        ),
+        bpfIO: bpfIO
     )
 }
 
-private func executeGatewayResolution(_ execution: GatewayResolutionExecution) -> ActiveGatewayARPResult {
+private func executeGatewayResolution(_ execution: GatewayResolutionExecution, bpfIO: GatewayBPFIO) -> ActiveGatewayARPResult {
     let bpf: GatewayBPFDescriptor
-    switch openConfiguredGatewayBPF(interfaceName: execution.preflight.interfaceName) {
+    switch bpfIO.openConfigured(execution.preflight.interfaceName) {
     case let .success(descriptor):
         bpf = descriptor
     case let .failure(error):
         return failedGatewayResolution(execution, outcome: "bpf_unavailable", timingSource: networkFrameworkTimingSource, error: error)
     }
     defer {
-        close(bpf.fd)
+        bpfIO.closeDescriptor(bpf)
     }
 
     let requestWriteWallNanos = wallClockNanos()
-    let sent = execution.frame.withUnsafeBytes { frameBuffer in
-        write(bpf.fd, frameBuffer.baseAddress, frameBuffer.count)
-    }
+    let sent = bpfIO.writeFrame(bpf, execution.frame)
     guard sent == execution.frame.count else {
         return failedGatewayResolution(
             execution,
@@ -149,7 +161,7 @@ private func executeGatewayResolution(_ execution: GatewayResolutionExecution) -
         )
     }
 
-    let result = readGatewayResolutionReply(execution, bpf: bpf)
+    let result = readGatewayResolutionReply(execution, bpf: bpf, bpfIO: bpfIO)
     guard result.ok,
           let replyNanos = result.replyWallNanos,
           let gatewayHardwareAddress = result.gatewayHardwareAddress
@@ -181,23 +193,24 @@ private func executeGatewayResolution(_ execution: GatewayResolutionExecution) -
 
 private func readGatewayResolutionReply(
     _ execution: GatewayResolutionExecution,
-    bpf: GatewayBPFDescriptor
+    bpf: GatewayBPFDescriptor,
+    bpfIO: GatewayBPFIO
 ) -> BPFGatewayARPReadResult {
     if execution.family == .ipv6 {
-        return readBPFGatewayNeighborAdvertisement(
-            fd: bpf.fd,
-            bufferLength: bpf.bufferLength,
-            timeout: execution.timeout,
-            localIP: execution.preflight.localIP,
-            gateway: execution.gateway
+        return bpfIO.readNeighborAdvertisement(
+            bpf.fd,
+            bpf.bufferLength,
+            execution.timeout,
+            execution.preflight.localIP,
+            execution.gateway
         )
     }
-    return readBPFGatewayARPReply(
-        fd: bpf.fd,
-        bufferLength: bpf.bufferLength,
-        timeout: execution.timeout,
-        localIP: execution.preflight.localIP,
-        gateway: execution.gateway
+    return bpfIO.readARPReply(
+        bpf.fd,
+        bpf.bufferLength,
+        execution.timeout,
+        execution.preflight.localIP,
+        execution.gateway
     )
 }
 
@@ -242,9 +255,10 @@ private func successfulGatewayResolution(_ success: GatewayResolutionSuccess) ->
 private func gatewayARPResolutionPreflight(
     gateway: String,
     interfaceName: String,
-    startWallNanos: UInt64
+    startWallNanos: UInt64,
+    interfaceStateProvider: (String) -> NativeInterfaceState
 ) -> GatewayResolutionPreflightResult {
-    let interfaceState = nativeInterfaceState(interfaceName: interfaceName)
+    let interfaceState = interfaceStateProvider(interfaceName)
     guard let localIP = interfaceState.ipv4Addresses.first else {
         return .failure(
             failedGatewayARPResolution(
@@ -294,9 +308,10 @@ private func gatewayARPResolutionPreflight(
 private func gatewayNDPResolutionPreflight(
     gateway: String,
     interfaceName: String,
-    startWallNanos: UInt64
+    startWallNanos: UInt64,
+    interfaceStateProvider: (String) -> NativeInterfaceState
 ) -> GatewayResolutionPreflightResult {
-    let interfaceState = nativeInterfaceState(interfaceName: interfaceName)
+    let interfaceState = interfaceStateProvider(interfaceName)
     guard let localIP = gatewayIPv6SourceAddress(interfaceState: interfaceState, gateway: gateway) else {
         return .failure(
             failedGatewayARPResolution(

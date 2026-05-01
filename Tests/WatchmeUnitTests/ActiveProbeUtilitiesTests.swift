@@ -174,6 +174,75 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
         XCTAssertEqual(timing.timestampSource, wallClockTimestampSource)
     }
 
+    func testGatewayARPResolutionUsesInjectedBPFIOBoundary() throws {
+        let recorder = GatewayBPFIORecorder()
+        let io = gatewayBPFIO(
+            recorder: recorder,
+            readARPReply: { fd, bufferLength, timeout, localIP, gateway in
+                XCTAssertEqual(fd, 42)
+                XCTAssertEqual(bufferLength, 8192)
+                XCTAssertEqual(timeout, 1)
+                XCTAssertEqual(localIP, "192.168.22.173")
+                XCTAssertEqual(gateway, "192.168.23.254")
+                return BPFGatewayARPReadResult(
+                    ok: true,
+                    error: nil,
+                    requestWallNanos: 1000,
+                    replyWallNanos: 5000,
+                    gatewayHardwareAddress: "aa:bb:cc:dd:ee:ff"
+                )
+            }
+        )
+
+        let result = runBPFGatewayARPResolution(gateway: "192.168.23.254", timeout: 1, interfaceName: "en0", bpfIO: io)
+
+        XCTAssertTrue(result.ok)
+        XCTAssertEqual(result.gatewayHardwareAddress, "aa:bb:cc:dd:ee:ff")
+        XCTAssertEqual(result.timing.durationNanos, 4000)
+        XCTAssertEqual(recorder.closedFDs, [42])
+        let frame = try XCTUnwrap(recorder.writes.first)
+        let packet = try XCTUnwrap(parseARPPacket(buffer: frame, offset: 14, packetEnd: frame.count))
+        XCTAssertEqual(packet.senderProtocolAddress, "192.168.22.173")
+        XCTAssertEqual(packet.targetProtocolAddress, "192.168.23.254")
+    }
+
+    func testGatewayICMPAttemptUsesInjectedBPFIOBoundary() throws {
+        let recorder = GatewayBPFIORecorder()
+        let io = gatewayBPFIO(
+            recorder: recorder,
+            readICMPReply: { request in
+                XCTAssertEqual(request.fd, 42)
+                XCTAssertEqual(request.bufferLength, 8192)
+                XCTAssertEqual(request.localIP, "192.168.22.173")
+                XCTAssertEqual(request.gateway, "192.168.23.254")
+                return BPFGatewayICMPReadResult(
+                    ok: true,
+                    error: nil,
+                    requestWallNanos: 2000,
+                    replyWallNanos: 7000
+                )
+            }
+        )
+
+        let attempt = runBPFGatewayICMPAttempt(
+            sequence: 3,
+            gateway: "192.168.23.254",
+            gatewayHardwareAddress: "aa:bb:cc:dd:ee:ff",
+            timeout: 1,
+            interfaceName: "en0",
+            bpfIO: io
+        )
+
+        XCTAssertTrue(attempt.reachable)
+        XCTAssertEqual(attempt.outcome, "reply")
+        XCTAssertEqual(attempt.timing.durationNanos, 5000)
+        XCTAssertEqual(recorder.closedFDs, [42])
+        let frame = try XCTUnwrap(recorder.writes.first)
+        let packet = try XCTUnwrap(parseBPFGatewayICMPPacket(buffer: frame, offset: 0, length: frame.count))
+        XCTAssertEqual(packet.sourceIP, "192.168.22.173")
+        XCTAssertEqual(packet.destinationIP, "192.168.23.254")
+    }
+
     func testProbeResultTimingAccessorsExposeUnderlyingTiming() {
         let result = ActiveInternetHTTPProbeResult(
             target: "example.com",
@@ -197,4 +266,55 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
         XCTAssertEqual(result.timingSource, bpfPacketTimingSource)
         XCTAssertEqual(result.timestampSource, bpfHeaderTimestampSource)
     }
+
+    private func gatewayBPFIO(
+        recorder: GatewayBPFIORecorder,
+        readARPReply: @escaping (Int32, Int, TimeInterval, String, String) -> BPFGatewayARPReadResult = { _, _, _, _, _ in
+            XCTFail("unexpected ARP read")
+            return BPFGatewayARPReadResult(ok: false, error: "unexpected", requestWallNanos: nil, replyWallNanos: nil, gatewayHardwareAddress: nil)
+        },
+        readICMPReply: @escaping (GatewayICMPReadRequest) -> BPFGatewayICMPReadResult = { _ in
+            XCTFail("unexpected ICMP read")
+            return BPFGatewayICMPReadResult(ok: false, error: "unexpected", requestWallNanos: nil, replyWallNanos: nil)
+        }
+    ) -> GatewayBPFIO {
+        GatewayBPFIO(
+            interfaceState: { _ in
+                NativeInterfaceState(
+                    isActive: true,
+                    ipv4Addresses: ["192.168.22.173"],
+                    ipv6Addresses: ["2001:db8::1"],
+                    macAddress: "00:11:22:33:44:55",
+                    ipv6LinkLocalAddresses: ["fe80::1"]
+                )
+            },
+            openConfigured: { interfaceName in
+                XCTAssertEqual(interfaceName, "en0")
+                return .success(GatewayBPFDescriptor(fd: 42, bufferLength: 8192))
+            },
+            closeDescriptor: { descriptor in
+                recorder.closedFDs.append(descriptor.fd)
+            },
+            writeFrame: { descriptor, frame in
+                XCTAssertEqual(descriptor.fd, 42)
+                recorder.writes.append(frame)
+                return frame.count
+            },
+            readARPReply: readARPReply,
+            readNeighborAdvertisement: { _, _, _, _, _ in
+                XCTFail("unexpected NDP read")
+                return BPFGatewayNDPReadResult(ok: false, error: "unexpected", requestWallNanos: nil, replyWallNanos: nil, gatewayHardwareAddress: nil)
+            },
+            readICMPReply: readICMPReply,
+            readICMPv6Reply: { _ in
+                XCTFail("unexpected ICMPv6 read")
+                return BPFGatewayICMPReadResult(ok: false, error: "unexpected", requestWallNanos: nil, replyWallNanos: nil)
+            }
+        )
+    }
+}
+
+private final class GatewayBPFIORecorder {
+    var writes: [[UInt8]] = []
+    var closedFDs: [Int32] = []
 }

@@ -82,7 +82,8 @@ func runBPFGatewayICMPAttempt(
     gateway: String,
     gatewayHardwareAddress: String,
     timeout: TimeInterval,
-    interfaceName: String?
+    interfaceName: String?,
+    bpfIO: GatewayBPFIO = .live
 ) -> ActiveGatewayProbeAttempt {
     let startWallNanos = wallClockNanos()
     let identifier = UInt16(ProcessInfo.processInfo.processIdentifier & 0xFFFF)
@@ -106,7 +107,8 @@ func runBPFGatewayICMPAttempt(
         interfaceName: interfaceName,
         gateway: gateway,
         gatewayHardwareAddress: gatewayHardwareAddress,
-        failureContext: failureContext
+        failureContext: failureContext,
+        interfaceStateProvider: bpfIO.interfaceState
     ) {
     case let .success(value):
         preflight = value
@@ -135,7 +137,8 @@ func runBPFGatewayICMPAttempt(
                     payloadSize: 56
                 )
             )
-        )
+        ),
+        bpfIO: bpfIO
     )
 }
 
@@ -144,7 +147,8 @@ func runBPFGatewayICMPv6Attempt(
     gateway: String,
     gatewayHardwareAddress: String,
     timeout: TimeInterval,
-    interfaceName: String?
+    interfaceName: String?,
+    bpfIO: GatewayBPFIO = .live
 ) -> ActiveGatewayProbeAttempt {
     let startWallNanos = wallClockNanos()
     let identifier = UInt16(ProcessInfo.processInfo.processIdentifier & 0xFFFF)
@@ -168,7 +172,8 @@ func runBPFGatewayICMPv6Attempt(
         interfaceName: interfaceName,
         gateway: gateway,
         gatewayHardwareAddress: gatewayHardwareAddress,
-        failureContext: failureContext
+        failureContext: failureContext,
+        interfaceStateProvider: bpfIO.interfaceState
     ) {
     case let .success(value):
         preflight = value
@@ -197,13 +202,14 @@ func runBPFGatewayICMPv6Attempt(
                     payloadSize: 56
                 )
             )
-        )
+        ),
+        bpfIO: bpfIO
     )
 }
 
-private func executeGatewayICMPAttempt(_ execution: GatewayAttemptExecution) -> ActiveGatewayProbeAttempt {
+private func executeGatewayICMPAttempt(_ execution: GatewayAttemptExecution, bpfIO: GatewayBPFIO) -> ActiveGatewayProbeAttempt {
     let bpf: GatewayBPFDescriptor
-    switch openConfiguredGatewayBPF(interfaceName: execution.preflight.interfaceName) {
+    switch bpfIO.openConfigured(execution.preflight.interfaceName) {
     case let .success(descriptor):
         bpf = descriptor
     case let .failure(error):
@@ -215,12 +221,10 @@ private func executeGatewayICMPAttempt(_ execution: GatewayAttemptExecution) -> 
         )
     }
     defer {
-        close(bpf.fd)
+        bpfIO.closeDescriptor(bpf)
     }
 
-    let sent = execution.frame.withUnsafeBytes { frameBuffer in
-        write(bpf.fd, frameBuffer.baseAddress, frameBuffer.count)
-    }
+    let sent = bpfIO.writeFrame(bpf, execution.frame)
     guard sent == execution.frame.count else {
         return failedGatewayAttempt(
             context: execution.failureContext,
@@ -241,8 +245,8 @@ private func executeGatewayICMPAttempt(_ execution: GatewayAttemptExecution) -> 
         startWallNanos: execution.startWallNanos
     )
     let result = execution.family == .ipv6
-        ? readBPFGatewayICMPv6Reply(request: request)
-        : readBPFGatewayICMPReply(request: request)
+        ? bpfIO.readICMPv6Reply(request)
+        : bpfIO.readICMPReply(request)
     guard result.ok, let replyNanos = result.replyWallNanos else {
         return failedGatewayAttempt(
             context: execution.failureContext,
@@ -270,9 +274,10 @@ private func gatewayIPv4AttemptPreflight(
     interfaceName: String,
     gateway: String,
     gatewayHardwareAddress: String,
-    failureContext: GatewayAttemptFailureContext
+    failureContext: GatewayAttemptFailureContext,
+    interfaceStateProvider: (String) -> NativeInterfaceState
 ) -> GatewayAttemptPreflightResult {
-    let interfaceState = nativeInterfaceState(interfaceName: interfaceName)
+    let interfaceState = interfaceStateProvider(interfaceName)
     guard let localIP = interfaceState.ipv4Addresses.first else {
         return .failure(
             failedGatewayAttempt(
@@ -314,9 +319,10 @@ private func gatewayIPv6AttemptPreflight(
     interfaceName: String,
     gateway: String,
     gatewayHardwareAddress: String,
-    failureContext: GatewayAttemptFailureContext
+    failureContext: GatewayAttemptFailureContext,
+    interfaceStateProvider: (String) -> NativeInterfaceState
 ) -> GatewayAttemptPreflightResult {
-    let interfaceState = nativeInterfaceState(interfaceName: interfaceName)
+    let interfaceState = interfaceStateProvider(interfaceName)
     guard let localIP = gatewayIPv6SourceAddress(interfaceState: interfaceState, gateway: gateway) else {
         return .failure(
             failedGatewayAttempt(
