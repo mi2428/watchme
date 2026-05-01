@@ -150,51 +150,61 @@ final class PassivePacketStoreTests: XCTestCase {
         store.appendARP(
             arp(
                 now,
-                operation: 1,
-                senderMAC: "00:e0:4c:96:80:5b",
-                senderIP: "192.168.22.206",
-                targetMAC: "00:00:00:00:00:00",
-                targetIP: "192.168.23.254"
+                packet: ARPTestPacket(
+                    operation: 1,
+                    senderMAC: "00:e0:4c:96:80:5b",
+                    senderIP: "192.168.22.206",
+                    targetMAC: "00:00:00:00:00:00",
+                    targetIP: "192.168.23.254"
+                )
             )
         )
         store.appendARP(
             arp(
                 now + 1_000_000,
-                operation: 1,
-                senderMAC: "00:e0:4c:96:80:5b",
-                senderIP: "192.168.22.206",
-                targetMAC: "00:00:00:00:00:00",
-                targetIP: "192.168.22.173"
+                packet: ARPTestPacket(
+                    operation: 1,
+                    senderMAC: "00:e0:4c:96:80:5b",
+                    senderIP: "192.168.22.206",
+                    targetMAC: "00:00:00:00:00:00",
+                    targetIP: "192.168.22.173"
+                )
             )
         )
         store.appendARP(
             arp(
                 now + 2_000_000,
-                operation: 1,
-                senderMAC: "00:e0:4c:96:80:5b",
-                senderIP: "192.168.22.206",
-                targetMAC: "00:00:00:00:00:00",
-                targetIP: "192.168.22.173"
+                packet: ARPTestPacket(
+                    operation: 1,
+                    senderMAC: "00:e0:4c:96:80:5b",
+                    senderIP: "192.168.22.206",
+                    targetMAC: "00:00:00:00:00:00",
+                    targetIP: "192.168.22.173"
+                )
             )
         )
         store.appendARP(
             arp(
                 now + 3_000_000,
-                operation: 1,
-                senderMAC: "50:f2:65:f2:4a:63",
-                senderIP: "192.168.22.173",
-                targetMAC: "00:00:00:00:00:00",
-                targetIP: "192.168.23.254"
+                packet: ARPTestPacket(
+                    operation: 1,
+                    senderMAC: "50:f2:65:f2:4a:63",
+                    senderIP: "192.168.22.173",
+                    targetMAC: "00:00:00:00:00:00",
+                    targetIP: "192.168.23.254"
+                )
             )
         )
         store.appendARP(
             arp(
                 now + 4_000_000,
-                operation: 2,
-                senderMAC: "b6:99:e5:2b:f8:cc",
-                senderIP: "192.168.23.254",
-                targetMAC: "50:f2:65:f2:4a:63",
-                targetIP: "192.168.22.173"
+                packet: ARPTestPacket(
+                    operation: 2,
+                    senderMAC: "b6:99:e5:2b:f8:cc",
+                    senderIP: "192.168.23.254",
+                    targetMAC: "50:f2:65:f2:4a:63",
+                    targetIP: "192.168.22.173"
+                )
             )
         )
 
@@ -289,91 +299,5 @@ final class PassivePacketStoreTests: XCTestCase {
             "fe80::router",
             "2405:6581:3e00:a600::173",
         ])
-    }
-
-    private func dhcp(
-        _ nanos: UInt64,
-        xid: UInt32,
-        type: UInt8,
-        yiaddr: String? = nil,
-        server: String? = nil,
-        lease: UInt32? = nil
-    ) -> DHCPObservation {
-        DHCPObservation(
-            interfaceName: "en0",
-            wallNanos: nanos,
-            xid: xid,
-            messageType: type,
-            yiaddr: yiaddr,
-            serverIdentifier: server,
-            leaseTimeSeconds: lease
-        )
-    }
-
-    private func icmp(
-        _ nanos: UInt64,
-        type: UInt8,
-        source: String,
-        destination: String,
-        target: String? = nil,
-        routerLifetime: UInt16? = nil,
-        sourceLLA: String? = nil,
-        targetLLA: String? = nil
-    ) -> ICMPv6Observation {
-        ICMPv6Observation(
-            interfaceName: "en0",
-            wallNanos: nanos,
-            type: type,
-            code: 0,
-            sourceIP: source,
-            destinationIP: destination,
-            targetAddress: target,
-            routerLifetimeSeconds: routerLifetime,
-            sourceLinkLayerAddress: sourceLLA,
-            targetLinkLayerAddress: targetLLA
-        )
-    }
-
-    private func arpRequest(_ nanos: UInt64, targetIP: String) -> ARPObservation {
-        ARPObservation(
-            interfaceName: "en0",
-            wallNanos: nanos,
-            operation: 1,
-            senderHardwareAddress: "de:ad:be:ef:00:01",
-            senderProtocolAddress: "192.168.1.44",
-            targetHardwareAddress: "00:00:00:00:00:00",
-            targetProtocolAddress: targetIP
-        )
-    }
-
-    private func arpReply(_ nanos: UInt64, senderIP: String, senderMAC: String) -> ARPObservation {
-        ARPObservation(
-            interfaceName: "en0",
-            wallNanos: nanos,
-            operation: 2,
-            senderHardwareAddress: senderMAC,
-            senderProtocolAddress: senderIP,
-            targetHardwareAddress: "de:ad:be:ef:00:01",
-            targetProtocolAddress: "192.168.1.44"
-        )
-    }
-
-    private func arp(
-        _ nanos: UInt64,
-        operation: UInt16,
-        senderMAC: String,
-        senderIP: String,
-        targetMAC: String,
-        targetIP: String
-    ) -> ARPObservation {
-        ARPObservation(
-            interfaceName: "en0",
-            wallNanos: nanos,
-            operation: operation,
-            senderHardwareAddress: senderMAC,
-            senderProtocolAddress: senderIP,
-            targetHardwareAddress: targetMAC,
-            targetProtocolAddress: targetIP
-        )
     }
 }
