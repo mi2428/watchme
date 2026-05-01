@@ -97,8 +97,8 @@ extension ActiveProbeTelemetryTests {
             attempts: [
                 ActiveGatewayProbeAttempt(
                     sequence: 1,
-                    identifier: nil,
-                    icmpSequence: nil,
+                    identifier: 0xCAFE,
+                    icmpSequence: 7,
                     reachable: true,
                     outcome: "reply",
                     error: nil,
@@ -140,8 +140,8 @@ extension ActiveProbeTelemetryTests {
             attempts: [
                 ActiveGatewayProbeAttempt(
                     sequence: 1,
-                    identifier: nil,
-                    icmpSequence: nil,
+                    identifier: 0xBEEF,
+                    icmpSequence: 9,
                     reachable: true,
                     outcome: "reply",
                     error: nil,

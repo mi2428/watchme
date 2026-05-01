@@ -129,6 +129,8 @@ extension WiFiAgent {
             "probe.gateway.burst_interval_seconds": formatGatewayProbeDouble(config.probeGatewayBurstInterval),
             "probe.gateway.arp.span_count": "\(gatewayResolutionSpanCount(gatewayResults, family: .ipv4))",
             "probe.gateway.ndp.span_count": "\(gatewayResolutionSpanCount(gatewayResults, family: .ipv6))",
+            "probe.gateway.icmp.echo_span_count": "\(gatewayResults.map(\.probeCount).reduce(0, +))",
+            "probe.gateway.icmp.burst_span_count": "\(gatewayResults.count(where: { !$0.attempts.isEmpty }))",
             "probe.gateway.probe_count": "\(gatewayResults.map(\.probeCount).reduce(0, +))",
             "probe.gateway.span_count": "\(gatewayResults.count)",
         ]

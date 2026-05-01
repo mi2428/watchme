@@ -176,15 +176,27 @@ extension WiFiAgent {
             )
         }
         if !result.attempts.isEmpty {
+            let burstId = recorder.newSpanId()
             recorder.recordSpan(
-                name: "probe.gateway.icmp.echo",
-                id: recorder.newSpanId(),
+                name: "probe.gateway.icmp.burst",
+                id: burstId,
                 startWallNanos: result.attempts.map(\.startWallNanos).min() ?? result.startWallNanos,
                 durationNanos: result.burstDurationNanos,
                 parentId: pathId,
                 tags: activeGatewayTags(result: result, snapshot: snapshot),
                 statusOK: result.reachable
             )
+            for attempt in result.attempts {
+                recorder.recordSpan(
+                    name: "probe.gateway.icmp.echo",
+                    id: recorder.newSpanId(),
+                    startWallNanos: attempt.startWallNanos,
+                    durationNanos: attempt.durationNanos,
+                    parentId: burstId,
+                    tags: activeGatewayAttemptTags(result: result, attempt: attempt, snapshot: snapshot),
+                    statusOK: attempt.reachable
+                )
+            }
         }
         logEvent(
             result.pathOK ? .debug : .warn, "active_gateway_probe_completed",
@@ -221,7 +233,9 @@ extension WiFiAgent {
             "probe.gateway.path.status": result.pathOK ? "ok" : "error",
             "probe.gateway.arp.span_count": result.family == .ipv4 && result.arpResolution != nil ? "1" : "0",
             "probe.gateway.ndp.span_count": result.family == .ipv6 && result.arpResolution != nil ? "1" : "0",
-            "probe.gateway.icmp.span_count": result.attempts.isEmpty ? "0" : "1",
+            "probe.gateway.icmp.span_count": "\(result.attempts.count)",
+            "probe.gateway.icmp.echo_span_count": "\(result.attempts.count)",
+            "probe.gateway.icmp.burst_span_count": result.attempts.isEmpty ? "0" : "1",
             "network.family": result.family.metricValue,
             "network.wifi_gateway": result.gateway,
             "network.gateway_probe.reachable": result.reachable ? "true" : "false",
@@ -417,7 +431,10 @@ extension WiFiAgent {
             spanSource: "darwin_icmp_gateway_probe"
         )
         tags.merge([
+            "probe.target": result.gateway,
+            "probe.gateway.target": result.gateway,
             "network.family": result.family.metricValue,
+            "network.peer.address": result.gateway,
             "network.wifi_gateway": result.gateway,
             "network.gateway_probe.protocol": "icmp",
             "network.gateway_probe.outcome": result.outcome,
@@ -428,16 +445,55 @@ extension WiFiAgent {
             "network.gateway_probe.loss_ratio": formatGatewayProbeDouble(result.lossRatio),
             "network.gateway_probe.jitter_seconds": formatGatewayProbeDouble(seconds(fromDurationNanos: result.jitterNanos)),
             "network.gateway_probe.burst_interval_seconds": formatGatewayProbeDouble(result.burstIntervalSeconds),
+            "probe.gateway.icmp.span_kind": "burst",
+            "probe.gateway.icmp.echo_span_count": "\(result.attempts.count)",
+            "icmp.outcome": result.outcome,
         ]) { _, new in new }
+        if let gatewayHardwareAddress = result.gatewayHardwareAddress {
+            tags["network.wifi_gateway_hwaddr"] = gatewayHardwareAddress
+        }
+        addErrorTag(&tags, error: result.error)
+        return tags
+    }
+
+    func activeGatewayAttemptTags(
+        result: ActiveGatewayProbeResult,
+        attempt: ActiveGatewayProbeAttempt,
+        snapshot: WiFiSnapshot
+    ) -> [String: String] {
+        var tags = activeProbeBaseTags(
+            snapshot: snapshot,
+            timingSource: attempt.timingSource,
+            timestampSource: attempt.timestampSource,
+            spanSource: "darwin_icmp_gateway_probe"
+        )
+        tags.merge([
+            "probe.target": result.gateway,
+            "probe.gateway.target": result.gateway,
+            "network.family": result.family.metricValue,
+            "network.peer.address": result.gateway,
+            "network.wifi_gateway": result.gateway,
+            "network.gateway_probe.protocol": "icmp",
+            "network.gateway_probe.outcome": attempt.outcome,
+            "network.gateway_probe.reachable": attempt.reachable ? "true" : "false",
+            "network.gateway_probe.attempt_sequence": "\(attempt.sequence)",
+            "icmp.outcome": attempt.outcome,
+        ]) { _, new in new }
+        if let identifier = attempt.identifier {
+            tags["icmp.identifier"] = String(format: "0x%04x", identifier)
+        }
+        if let sequence = attempt.icmpSequence {
+            tags["icmp.sequence"] = "\(sequence)"
+        }
         if let gatewayHardwareAddress = result.gatewayHardwareAddress {
             tags["network.wifi_gateway_hwaddr"] = gatewayHardwareAddress
         }
         addPacketTimingTags(
             &tags,
-            timingSource: result.icmpTimingSource,
+            timingSource: attempt.timingSource,
             event: result.family == .ipv6 ? "icmpv6_echo_request_to_reply" : "icmp_echo_request_to_reply"
         )
-        addErrorTag(&tags, error: result.error)
+        addErrorTag(&tags, error: attempt.error)
         return tags
     }
 

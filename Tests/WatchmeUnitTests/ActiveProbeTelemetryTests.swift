@@ -65,10 +65,13 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(tags["packet.timestamp_source"], bpfHeaderTimestampSource)
     }
 
-    func testGatewayTagsExposeFirstHopOutcomeAndPacketTimingFields() {
+    func testGatewayTagsExposeBurstOutcomeFields() {
         let tags = makeAgent().activeGatewayTags(result: gatewayResult(), snapshot: makeSnapshot())
 
         XCTAssertEqual(tags["span.source"], "darwin_icmp_gateway_probe")
+        XCTAssertEqual(tags["probe.target"], "192.168.23.254")
+        XCTAssertEqual(tags["probe.gateway.target"], "192.168.23.254")
+        XCTAssertEqual(tags["network.peer.address"], "192.168.23.254")
         XCTAssertEqual(tags["network.wifi_gateway"], "192.168.23.254")
         XCTAssertEqual(tags["network.family"], "ipv4")
         XCTAssertEqual(tags["network.gateway_probe.protocol"], "icmp")
@@ -80,6 +83,27 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(tags["network.gateway_probe.loss_ratio"], "0.000000")
         XCTAssertEqual(tags["network.gateway_probe.jitter_seconds"], "0.000000")
         XCTAssertEqual(tags["network.wifi_gateway_hwaddr"], "aa:bb:cc:dd:ee:ff")
+        XCTAssertEqual(tags["probe.gateway.icmp.span_kind"], "burst")
+        XCTAssertNil(tags["packet.event"])
+    }
+
+    func testGatewayAttemptTagsExposeEchoCorrelationFields() throws {
+        let result = gatewayResult()
+        let attempt = try XCTUnwrap(result.attempts.first)
+        let tags = makeAgent().activeGatewayAttemptTags(result: result, attempt: attempt, snapshot: makeSnapshot())
+
+        XCTAssertEqual(tags["span.source"], "darwin_icmp_gateway_probe")
+        XCTAssertEqual(tags["probe.target"], "192.168.23.254")
+        XCTAssertEqual(tags["probe.gateway.target"], "192.168.23.254")
+        XCTAssertEqual(tags["network.family"], "ipv4")
+        XCTAssertEqual(tags["network.peer.address"], "192.168.23.254")
+        XCTAssertEqual(tags["network.gateway_probe.protocol"], "icmp")
+        XCTAssertEqual(tags["network.gateway_probe.outcome"], "reply")
+        XCTAssertEqual(tags["network.gateway_probe.reachable"], "true")
+        XCTAssertEqual(tags["network.gateway_probe.attempt_sequence"], "1")
+        XCTAssertEqual(tags["icmp.outcome"], "reply")
+        XCTAssertEqual(tags["icmp.identifier"], "0xcafe")
+        XCTAssertEqual(tags["icmp.sequence"], "7")
         XCTAssertEqual(tags["packet.event"], "icmp_echo_request_to_reply")
         XCTAssertEqual(tags["packet.timestamp_source"], bpfHeaderTimestampSource)
     }
@@ -110,17 +134,22 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
         let path = spans.first { $0.name == "probe.gateway.path.ipv6" }
         let ndp = spans.first { $0.name == "probe.gateway.ndp.neighbor_solicitation_to_advertisement" }
+        let burst = spans.first { $0.name == "probe.gateway.icmp.burst" }
         let echo = spans.first { $0.name == "probe.gateway.icmp.echo" }
 
         XCTAssertEqual(path?.tags["network.family"], "ipv6")
         XCTAssertEqual(path?.tags["probe.gateway.arp.span_count"], "0")
         XCTAssertEqual(path?.tags["probe.gateway.ndp.span_count"], "1")
+        XCTAssertEqual(path?.tags["probe.gateway.icmp.echo_span_count"], "1")
+        XCTAssertEqual(path?.tags["probe.gateway.icmp.burst_span_count"], "1")
         XCTAssertEqual(ndp?.parentId, path?.id)
         XCTAssertEqual(ndp?.tags["span.source"], "darwin_bpf_gateway_ndp_probe")
         XCTAssertEqual(ndp?.tags["network.gateway_probe.protocol"], "ndp")
         XCTAssertEqual(ndp?.tags["network.gateway_ndp.outcome"], "reply")
         XCTAssertEqual(ndp?.tags["icmpv6.nd.target_address"], "fe80::b499:e5ff:fe2b:f8cc")
-        XCTAssertEqual(echo?.parentId, path?.id)
+        XCTAssertEqual(burst?.parentId, path?.id)
+        XCTAssertEqual(burst?.tags["probe.gateway.icmp.span_kind"], "burst")
+        XCTAssertEqual(echo?.parentId, burst?.id)
         XCTAssertEqual(echo?.tags["network.family"], "ipv6")
         XCTAssertEqual(echo?.tags["packet.event"], "icmpv6_echo_request_to_reply")
     }
@@ -134,15 +163,19 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
         let path = spans.first { $0.name == "probe.gateway.path.ipv4" }
         let arp = spans.first { $0.name == "probe.gateway.arp.request_to_reply" }
+        let burst = spans.first { $0.name == "probe.gateway.icmp.burst" }
         let echo = spans.first { $0.name == "probe.gateway.icmp.echo" }
 
         XCTAssertEqual(path?.parentId, phaseId)
         XCTAssertEqual(arp?.parentId, path?.id)
-        XCTAssertEqual(echo?.parentId, path?.id)
+        XCTAssertEqual(burst?.parentId, path?.id)
+        XCTAssertEqual(echo?.parentId, burst?.id)
         XCTAssertLessThan(arp?.startWallNanos ?? 0, echo?.startWallNanos ?? 0)
         XCTAssertEqual(path?.tags["probe.gateway.path.status"], "ok")
         XCTAssertEqual(path?.tags["probe.gateway.arp.span_count"], "1")
         XCTAssertEqual(path?.tags["probe.gateway.icmp.span_count"], "1")
+        XCTAssertEqual(path?.tags["probe.gateway.icmp.echo_span_count"], "1")
+        XCTAssertEqual(path?.tags["probe.gateway.icmp.burst_span_count"], "1")
         XCTAssertEqual(path?.tags["network.wifi_gateway_hwaddr"], "aa:bb:cc:dd:ee:ff")
     }
 
@@ -157,10 +190,13 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         let arp = spans.first { $0.name == "probe.gateway.arp.request_to_reply" }
 
         XCTAssertNotNil(arp)
+        XCTAssertNil(spans.first { $0.name == "probe.gateway.icmp.burst" })
         XCTAssertNil(spans.first { $0.name == "probe.gateway.icmp.echo" })
         XCTAssertEqual(path?.tags["probe.gateway.path.status"], "error")
         XCTAssertEqual(path?.tags["probe.gateway.arp.span_count"], "1")
         XCTAssertEqual(path?.tags["probe.gateway.icmp.span_count"], "0")
+        XCTAssertEqual(path?.tags["probe.gateway.icmp.echo_span_count"], "0")
+        XCTAssertEqual(path?.tags["probe.gateway.icmp.burst_span_count"], "0")
         XCTAssertEqual(path?.tags["network.gateway_probe.outcome"], "arp_timeout")
     }
 
