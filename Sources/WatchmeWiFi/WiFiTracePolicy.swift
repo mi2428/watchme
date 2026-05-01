@@ -96,6 +96,23 @@ enum WiFiTracePolicy {
         return .ready
     }
 
+    static func shouldContinueWaitingForAssociationNetworkState(
+        snapshot: WiFiSnapshot,
+        networkState: WiFiServiceNetworkState,
+        config: WiFiConfig
+    ) -> Bool {
+        let families = Set(config.probeInternetFamily.concreteFamilies)
+        if families.contains(.ipv4),
+           snapshot.ipv4Addresses.isEmpty || networkState.routerIPv4 == nil
+        {
+            return true
+        }
+        if families.contains(.ipv6), networkState.routerIPv6 == nil {
+            return true
+        }
+        return false
+    }
+
     private static func requiresWiFiDNS(config: WiFiConfig) -> Bool {
         config.probeInternetDNS || config.probeInternetICMP || config.probeInternetTCP || config.probeInternetHTTP
     }

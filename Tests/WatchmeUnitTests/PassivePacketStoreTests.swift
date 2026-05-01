@@ -144,6 +144,153 @@ final class PassivePacketStoreTests: XCTestCase {
         XCTAssertEqual(resolution?.tags["arp.sender_mac"], "aa:bb:cc:dd:ee:ff")
     }
 
+    func testRecentPacketSpansFiltersARPToLocalWiFiAttachment() {
+        let store = PassivePacketStore()
+        let now = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
+        store.appendARP(
+            arp(
+                now,
+                operation: 1,
+                senderMAC: "00:e0:4c:96:80:5b",
+                senderIP: "192.168.22.206",
+                targetMAC: "00:00:00:00:00:00",
+                targetIP: "192.168.23.254"
+            )
+        )
+        store.appendARP(
+            arp(
+                now + 1_000_000,
+                operation: 1,
+                senderMAC: "00:e0:4c:96:80:5b",
+                senderIP: "192.168.22.206",
+                targetMAC: "00:00:00:00:00:00",
+                targetIP: "192.168.22.173"
+            )
+        )
+        store.appendARP(
+            arp(
+                now + 2_000_000,
+                operation: 1,
+                senderMAC: "00:e0:4c:96:80:5b",
+                senderIP: "192.168.22.206",
+                targetMAC: "00:00:00:00:00:00",
+                targetIP: "192.168.22.173"
+            )
+        )
+        store.appendARP(
+            arp(
+                now + 3_000_000,
+                operation: 1,
+                senderMAC: "50:f2:65:f2:4a:63",
+                senderIP: "192.168.22.173",
+                targetMAC: "00:00:00:00:00:00",
+                targetIP: "192.168.23.254"
+            )
+        )
+        store.appendARP(
+            arp(
+                now + 4_000_000,
+                operation: 2,
+                senderMAC: "b6:99:e5:2b:f8:cc",
+                senderIP: "192.168.23.254",
+                targetMAC: "50:f2:65:f2:4a:63",
+                targetIP: "192.168.22.173"
+            )
+        )
+
+        let spans = store.recentPacketSpans(
+            interfaceName: "en0",
+            ipv4Gateway: "192.168.23.254",
+            maxAge: 60,
+            consume: false,
+            localHardwareAddress: "50:f2:65:f2:4a:63",
+            localIPv4Addresses: ["192.168.22.173"]
+        )
+
+        XCTAssertEqual(spans.map(\.name), ["packet.arp.request_to_reply"])
+        XCTAssertEqual(spans.first?.tags["arp.sender_ip"], "192.168.23.254")
+    }
+
+    func testRecentPacketSpansFiltersNeighborDiscoveryToLocalOrRouterTargets() {
+        let store = PassivePacketStore()
+        let now = UInt64(Date().timeIntervalSince1970 * 1_000_000_000)
+        store.appendICMPv6(icmp(now, type: 135, source: "fe80::peer", destination: "ff02::1:ff00:1", target: "fe80::other"))
+        store.appendICMPv6(
+            icmp(
+                now + 1_000_000,
+                type: 136,
+                source: "fe80::other",
+                destination: "fe80::peer",
+                target: "fe80::other",
+                targetLLA: "aa:aa:aa:aa:aa:aa"
+            )
+        )
+        store.appendICMPv6(icmp(
+            now + 1_500_000,
+            type: 135,
+            source: "fe80::local",
+            destination: "ff02::1:ff00:2",
+            target: "fe80::peer-target",
+            sourceLLA: "50:f2:65:f2:4a:63"
+        ))
+        store.appendICMPv6(
+            icmp(
+                now + 1_600_000,
+                type: 136,
+                source: "fe80::peer-target",
+                destination: "fe80::local",
+                target: "fe80::peer-target",
+                targetLLA: "aa:bb:cc:dd:ee:ff"
+            )
+        )
+        store.appendICMPv6(icmp(now + 2_000_000, type: 135, source: "fe80::local", destination: "ff02::1:ffcc", target: "fe80::router"))
+        store.appendICMPv6(
+            icmp(
+                now + 3_000_000,
+                type: 136,
+                source: "fe80::router",
+                destination: "fe80::local",
+                target: "fe80::router",
+                targetLLA: "b6:99:e5:2b:f8:cc"
+            )
+        )
+        store.appendICMPv6(icmp(
+            now + 4_000_000,
+            type: 135,
+            source: "::",
+            destination: "ff02::1:ff00:173",
+            target: "2405:6581:3e00:a600::173"
+        ))
+        store.appendICMPv6(
+            icmp(
+                now + 5_000_000,
+                type: 136,
+                source: "2405:6581:3e00:a600::173",
+                destination: "fe80::local",
+                target: "2405:6581:3e00:a600::173",
+                targetLLA: "50:f2:65:f2:4a:63"
+            )
+        )
+
+        let spans = store.recentPacketSpans(
+            interfaceName: "en0",
+            ipv4Gateway: nil,
+            maxAge: 60,
+            consume: false,
+            localIPv6Addresses: ["fe80::local", "2405:6581:3e00:a600::173"],
+            ipv6Gateway: "fe80::router"
+        )
+
+        XCTAssertEqual(spans.map(\.name), [
+            "packet.icmpv6.neighbor_solicitation_to_advertisement",
+            "packet.icmpv6.neighbor_solicitation_to_advertisement",
+        ])
+        XCTAssertEqual(Set(spans.compactMap { $0.tags["icmpv6.nd.target_address"] }), [
+            "fe80::router",
+            "2405:6581:3e00:a600::173",
+        ])
+    }
+
     private func dhcp(
         _ nanos: UInt64,
         xid: UInt32,
@@ -208,6 +355,25 @@ final class PassivePacketStoreTests: XCTestCase {
             senderProtocolAddress: senderIP,
             targetHardwareAddress: "de:ad:be:ef:00:01",
             targetProtocolAddress: "192.168.1.44"
+        )
+    }
+
+    private func arp(
+        _ nanos: UInt64,
+        operation: UInt16,
+        senderMAC: String,
+        senderIP: String,
+        targetMAC: String,
+        targetIP: String
+    ) -> ARPObservation {
+        ARPObservation(
+            interfaceName: "en0",
+            wallNanos: nanos,
+            operation: operation,
+            senderHardwareAddress: senderMAC,
+            senderProtocolAddress: senderIP,
+            targetHardwareAddress: targetMAC,
+            targetProtocolAddress: targetIP
         )
     }
 }

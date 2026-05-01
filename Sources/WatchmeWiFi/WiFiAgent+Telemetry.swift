@@ -269,6 +269,7 @@ extension WiFiAgent {
     ) {
         let traceStarted = wallClockNanos()
         let context = traceCaptureContext(
+            reason: reason,
             includeConnectivityCheck: includeConnectivityCheck,
             connectivityReadinessTimeout: connectivityReadinessTimeout
         )
@@ -323,6 +324,7 @@ extension WiFiAgent {
             rootTags["bpf.packets_received"] = "\(bpfStats.packetsReceived)"
             rootTags["bpf.packets_dropped"] = "\(bpfStats.packetsDropped)"
         }
+        let interfaceState = snapshot.interfaceName.map(nativeInterfaceState(interfaceName:))
 
         let packetSpanWindowStart = passivePacketSpanWindowStart(
             reason: reason,
@@ -345,7 +347,12 @@ extension WiFiAgent {
                     consume: consumePacketSpans,
                     includeConsumed: {
                         shouldReplayConsumedNetworkAttachmentSpan(reason: reason, span: $0, replayStart: packetSpanWindowStart)
-                    }
+                    },
+                    localHardwareAddress: interfaceState?.macAddress,
+                    localIPv4Addresses: interfaceState?.ipv4Addresses ?? snapshot.ipv4Addresses,
+                    localIPv6Addresses: (interfaceState?.ipv6Addresses ?? snapshot.ipv6Addresses)
+                        + (interfaceState?.ipv6LinkLocalAddresses ?? []),
+                    ipv6Gateway: networkState.routerIPv6
                 )
             } else {
                 [SpanEvent]()
@@ -421,6 +428,7 @@ extension WiFiAgent {
     }
 
     private func traceCaptureContext(
+        reason: String,
         includeConnectivityCheck: Bool,
         connectivityReadinessTimeout: TimeInterval
     ) -> (
@@ -437,8 +445,19 @@ extension WiFiAgent {
             networkState: networkState,
             config: config
         )
+        let waitsForAssociationNetworkState = WiFiTracePolicy.isAssociationRecoveryReason(reason)
 
-        guard includeConnectivityCheck, connectivityReadinessTimeout > 0, !readiness.ready else {
+        guard includeConnectivityCheck, connectivityReadinessTimeout > 0 else {
+            return (snapshot, networkState, readiness, 0)
+        }
+        if readiness.ready,
+           !waitsForAssociationNetworkState
+           || !WiFiTracePolicy.shouldContinueWaitingForAssociationNetworkState(
+               snapshot: snapshot,
+               networkState: networkState,
+               config: config
+           )
+        {
             return (snapshot, networkState, readiness, 0)
         }
 
@@ -453,7 +472,14 @@ extension WiFiAgent {
                 networkState: networkState,
                 config: config
             )
-            if readiness.ready {
+            if readiness.ready,
+               !waitsForAssociationNetworkState
+               || !WiFiTracePolicy.shouldContinueWaitingForAssociationNetworkState(
+                   snapshot: snapshot,
+                   networkState: networkState,
+                   config: config
+               )
+            {
                 break
             }
         }
@@ -503,7 +529,7 @@ extension WiFiAgent {
         let phaseStart = wallClockNanos()
         let probeCapture = collectConnectivityProbeResults(
             gatewayProbe: {
-                self.runGatewayProbe(networkState: networkState, snapshot: snapshot)
+                self.runGatewayProbes(networkState: networkState, snapshot: snapshot)
             },
             internetProbes: {
                 runActiveInternetProbes(
@@ -515,7 +541,7 @@ extension WiFiAgent {
             }
         )
 
-        if let gatewayResult = probeCapture.gatewayResult {
+        for gatewayResult in probeCapture.gatewayResults {
             recordGatewayProbeResult(gatewayResult, phaseId: phaseId, recorder: recorder, snapshot: snapshot)
         }
         recordInternetProbeResults(probeCapture.internetResults, phaseId: phaseId, recorder: recorder, snapshot: snapshot)
@@ -523,7 +549,7 @@ extension WiFiAgent {
         let phaseTags: [String: String] = [
             "phase.name": "connectivity_check",
             "phase.source": "wifi_connectivity_probe",
-            "phase.check_scope": "gateway_arp,gateway_icmp,internet_dns,internet_icmp,internet_tcp,internet_http",
+            "phase.check_scope": "gateway_arp,gateway_ndp,gateway_icmp,internet_dns,internet_icmp,internet_tcp,internet_http",
             "probe.internet.targets": config.probeInternetTargets.joined(separator: ","),
             "probe.internet.family": config.probeInternetFamily.metricValue,
             "probe.internet.dns.enabled": config.probeInternetDNS ? "true" : "false",
@@ -536,12 +562,15 @@ extension WiFiAgent {
             "probe.internet.tcp.span_count": "\(probeCapture.internetResults.tcp.count)",
             "probe.internet.http.span_count": "\(probeCapture.internetResults.http.count)",
             "probe.dns_resolvers": networkState.dnsServers.joined(separator: ","),
-            "probe.gateway": networkState.routerIPv4 ?? "",
+            "probe.gateway": [networkState.routerIPv4, networkState.routerIPv6].compactMap(\.self).joined(separator: ","),
+            "probe.gateway.ipv4": networkState.routerIPv4 ?? "",
+            "probe.gateway.ipv6": networkState.routerIPv6 ?? "",
             "probe.gateway.burst_count": "\(config.probeGatewayBurstCount)",
             "probe.gateway.burst_interval_seconds": formatGatewayProbeDouble(config.probeGatewayBurstInterval),
-            "probe.gateway.arp.span_count": probeCapture.gatewayResult?.arpResolution == nil ? "0" : "1",
-            "probe.gateway.probe_count": probeCapture.gatewayResult.map { "\($0.probeCount)" } ?? "0",
-            "probe.gateway.span_count": probeCapture.gatewayResult == nil ? "0" : "1",
+            "probe.gateway.arp.span_count": "\(probeCapture.gatewayResults.count(where: { $0.family == .ipv4 && $0.arpResolution != nil }))",
+            "probe.gateway.ndp.span_count": "\(probeCapture.gatewayResults.count(where: { $0.family == .ipv6 && $0.arpResolution != nil }))",
+            "probe.gateway.probe_count": "\(probeCapture.gatewayResults.map(\.probeCount).reduce(0, +))",
+            "probe.gateway.span_count": "\(probeCapture.gatewayResults.count)",
         ]
         recorder.recordSpan(
             name: "phase.connectivity_check",
@@ -552,34 +581,50 @@ extension WiFiAgent {
         )
     }
 
-    private func runGatewayProbe(networkState: WiFiServiceNetworkState, snapshot: WiFiSnapshot) -> ActiveGatewayProbeResult? {
-        guard let gateway = networkState.routerIPv4 else {
-            return nil
+    private func runGatewayProbes(networkState: WiFiServiceNetworkState, snapshot: WiFiSnapshot) -> [ActiveGatewayProbeResult] {
+        var results: [ActiveGatewayProbeResult] = []
+        if let gateway = networkState.routerIPv4 {
+            results.append(
+                runGatewayICMPProbe(
+                    gateway: gateway,
+                    timeout: min(config.probeInternetTimeout, 2.0),
+                    interfaceName: snapshot.interfaceName,
+                    packetStore: packetStore,
+                    burstCount: config.probeGatewayBurstCount,
+                    burstInterval: config.probeGatewayBurstInterval,
+                    useDirectBPF: config.bpfEnabled
+                )
+            )
         }
-        return runGatewayICMPProbe(
-            gateway: gateway,
-            timeout: min(config.probeInternetTimeout, 2.0),
-            interfaceName: snapshot.interfaceName,
-            packetStore: packetStore,
-            burstCount: config.probeGatewayBurstCount,
-            burstInterval: config.probeGatewayBurstInterval,
-            useDirectBPF: config.bpfEnabled
-        )
+        if let gateway = networkState.routerIPv6 {
+            results.append(
+                runGatewayICMPv6Probe(
+                    gateway: gateway,
+                    timeout: min(config.probeInternetTimeout, 2.0),
+                    interfaceName: snapshot.interfaceName,
+                    packetStore: packetStore,
+                    burstCount: config.probeGatewayBurstCount,
+                    burstInterval: config.probeGatewayBurstInterval,
+                    useDirectBPF: config.bpfEnabled
+                )
+            )
+        }
+        return results
     }
 }
 
 struct ConnectivityProbeCapture {
-    let gatewayResult: ActiveGatewayProbeResult?
+    let gatewayResults: [ActiveGatewayProbeResult]
     let internetResults: ActiveInternetProbeResults
 }
 
 func collectConnectivityProbeResults(
-    gatewayProbe: () -> ActiveGatewayProbeResult?,
+    gatewayProbe: () -> [ActiveGatewayProbeResult],
     internetProbes: () -> ActiveInternetProbeResults
 ) -> ConnectivityProbeCapture {
-    let gatewayResult = gatewayProbe()
+    let gatewayResults = gatewayProbe()
     let internetResults = internetProbes()
-    return ConnectivityProbeCapture(gatewayResult: gatewayResult, internetResults: internetResults)
+    return ConnectivityProbeCapture(gatewayResults: gatewayResults, internetResults: internetResults)
 }
 
 func shouldSuppressStaleAssociationTrace(reason: String, readiness: WiFiConnectivityCheckReadiness) -> Bool {

@@ -52,7 +52,7 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
     func testGatewayICMPEchoFrameBuildsParseableEthernetPacket() throws {
         let frame = ethernetICMPEchoFrame(
             sourceMAC: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
-            destinationMAC: [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff],
+            destinationMAC: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
             sourceIP: [192, 168, 22, 173],
             destinationIP: [192, 168, 23, 254],
             identifier: 0x1234,
@@ -60,7 +60,7 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
             payloadSize: 4
         )
 
-        XCTAssertEqual(Array(frame[0 ..< 6]), [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff])
+        XCTAssertEqual(Array(frame[0 ..< 6]), [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF])
         XCTAssertEqual(Array(frame[6 ..< 12]), [0x00, 0x11, 0x22, 0x33, 0x44, 0x55])
         XCTAssertEqual(Array(frame[12 ..< 14]), [0x08, 0x00])
         XCTAssertEqual(internetChecksum(Array(frame[14 ..< 34])), 0)
@@ -75,6 +75,54 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
         XCTAssertEqual(packet.sequence, 0x5678)
     }
 
+    func testGatewayICMPv6EchoFrameBuildsParseableEthernetPacket() throws {
+        let sourceIP: [UInt8] = [0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0x04, 0x91, 0x53, 0x41, 0x80, 0x6B, 0x7B, 0x1B]
+        let gatewayIP: [UInt8] = [0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0xB4, 0x99, 0xE5, 0xFF, 0xFE, 0x2B, 0xF8, 0xCC]
+        let frame = ethernetICMPv6EchoFrame(
+            sourceMAC: [0x50, 0xF2, 0x65, 0xF2, 0x4A, 0x63],
+            destinationMAC: [0xB6, 0x99, 0xE5, 0x2B, 0xF8, 0xCC],
+            sourceIP: sourceIP,
+            destinationIP: gatewayIP,
+            identifier: 0x1234,
+            sequence: 0x5678,
+            payloadSize: 4
+        )
+
+        XCTAssertEqual(Array(frame[0 ..< 6]), [0xB6, 0x99, 0xE5, 0x2B, 0xF8, 0xCC])
+        XCTAssertEqual(Array(frame[6 ..< 12]), [0x50, 0xF2, 0x65, 0xF2, 0x4A, 0x63])
+        XCTAssertEqual(Array(frame[12 ..< 14]), [0x86, 0xDD])
+
+        let packet = try XCTUnwrap(parseBPFGatewayICMPv6Packet(buffer: frame, offset: 0, length: frame.count))
+        XCTAssertEqual(packet.family, .ipv6)
+        XCTAssertEqual(packet.type, 128)
+        XCTAssertEqual(packet.code, 0)
+        XCTAssertEqual(packet.sourceIP, "fe80::491:5341:806b:7b1b")
+        XCTAssertEqual(packet.destinationIP, "fe80::b499:e5ff:fe2b:f8cc")
+        XCTAssertEqual(packet.identifier, 0x1234)
+        XCTAssertEqual(packet.sequence, 0x5678)
+    }
+
+    func testGatewayNeighborSolicitationFrameBuildsParseableEthernetPacket() throws {
+        let sourceIP: [UInt8] = [0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0x04, 0x91, 0x53, 0x41, 0x80, 0x6B, 0x7B, 0x1B]
+        let gatewayIP: [UInt8] = [0xFE, 0x80, 0, 0, 0, 0, 0, 0, 0xB4, 0x99, 0xE5, 0xFF, 0xFE, 0x2B, 0xF8, 0xCC]
+        let frame = ethernetIPv6NeighborSolicitationFrame(
+            sourceMAC: [0x50, 0xF2, 0x65, 0xF2, 0x4A, 0x63],
+            sourceIP: sourceIP,
+            targetIP: gatewayIP
+        )
+
+        XCTAssertEqual(Array(frame[0 ..< 6]), [0x33, 0x33, 0xFF, 0x2B, 0xF8, 0xCC])
+        XCTAssertEqual(Array(frame[6 ..< 12]), [0x50, 0xF2, 0x65, 0xF2, 0x4A, 0x63])
+        XCTAssertEqual(Array(frame[12 ..< 14]), [0x86, 0xDD])
+
+        let packet = try XCTUnwrap(parseBPFGatewayNeighborPacket(buffer: frame, offset: 0, length: frame.count))
+        XCTAssertEqual(packet.type, 135)
+        XCTAssertEqual(packet.sourceIP, "fe80::491:5341:806b:7b1b")
+        XCTAssertEqual(packet.destinationIP, "ff02::1:ff2b:f8cc")
+        XCTAssertEqual(packet.targetAddress, "fe80::b499:e5ff:fe2b:f8cc")
+        XCTAssertEqual(packet.sourceLinkLayerAddress, "50:f2:65:f2:4a:63")
+    }
+
     func testGatewayARPRequestFrameBuildsParseableEthernetPacket() throws {
         let frame = ethernetARPRequestFrame(
             sourceMAC: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
@@ -82,7 +130,7 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
             targetIP: [192, 168, 23, 254]
         )
 
-        XCTAssertEqual(Array(frame[0 ..< 6]), [0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+        XCTAssertEqual(Array(frame[0 ..< 6]), [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF])
         XCTAssertEqual(Array(frame[6 ..< 12]), [0x00, 0x11, 0x22, 0x33, 0x44, 0x55])
         XCTAssertEqual(Array(frame[12 ..< 14]), [0x08, 0x06])
 
@@ -96,14 +144,14 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
 
     func testGatewayARPTimingUsesObservedRequestPacketTimestamp() {
         let timing = gatewayARPRequestToReplyTiming(
-            requestPacketWallNanos: 2_000,
-            requestWriteWallNanos: 1_000,
-            replyWallNanos: 5_000
+            requestPacketWallNanos: 2000,
+            requestWriteWallNanos: 1000,
+            replyWallNanos: 5000
         )
 
-        XCTAssertEqual(timing.startWallNanos, 2_000)
-        XCTAssertEqual(timing.finishedWallNanos, 5_000)
-        XCTAssertEqual(timing.durationNanos, 3_000)
+        XCTAssertEqual(timing.startWallNanos, 2000)
+        XCTAssertEqual(timing.finishedWallNanos, 5000)
+        XCTAssertEqual(timing.durationNanos, 3000)
         XCTAssertEqual(timing.timingSource, bpfPacketTimingSource)
         XCTAssertEqual(timing.timestampSource, bpfHeaderTimestampSource)
     }
@@ -111,13 +159,13 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
     func testGatewayARPTimingFallsBackToRequestWriteBoundary() {
         let timing = gatewayARPRequestToReplyTiming(
             requestPacketWallNanos: nil,
-            requestWriteWallNanos: 1_000,
-            replyWallNanos: 5_000
+            requestWriteWallNanos: 1000,
+            replyWallNanos: 5000
         )
 
-        XCTAssertEqual(timing.startWallNanos, 1_000)
-        XCTAssertEqual(timing.finishedWallNanos, 5_000)
-        XCTAssertEqual(timing.durationNanos, 4_000)
+        XCTAssertEqual(timing.startWallNanos, 1000)
+        XCTAssertEqual(timing.finishedWallNanos, 5000)
+        XCTAssertEqual(timing.durationNanos, 4000)
         XCTAssertEqual(timing.timingSource, wallClockPacketBoundaryTimingSource)
         XCTAssertEqual(timing.timestampSource, wallClockTimestampSource)
     }

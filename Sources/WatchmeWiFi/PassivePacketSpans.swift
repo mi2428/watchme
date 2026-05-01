@@ -115,13 +115,16 @@ func buildICMPv6Spans(_ observations: [ICMPv6Observation]) -> [SpanEvent] {
     return spans
 }
 
-func buildARPSpans(_ observations: [ARPObservation], ipv4Gateway: String?) -> [SpanEvent] {
+func buildARPSpans(_ observations: [ARPObservation], ipv4Gateway: String?, allowedTargets: Set<String>? = nil) -> [SpanEvent] {
     var spans: [SpanEvent] = []
     let requestsByTarget = Dictionary(grouping: observations.filter(\.isRequest), by: \.targetProtocolAddress)
     let repliesBySender = Dictionary(grouping: observations.filter(\.isReply), by: \.senderProtocolAddress)
 
     for (target, requests) in requestsByTarget where !target.isEmpty {
-        if let ipv4Gateway, target != ipv4Gateway {
+        if let allowedTargets, !allowedTargets.contains(target) {
+            continue
+        }
+        if allowedTargets == nil, let ipv4Gateway, target != ipv4Gateway {
             continue
         }
         let sortedRequests = requests.sorted { $0.wallNanos < $1.wallNanos }

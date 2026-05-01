@@ -157,12 +157,12 @@ extension WiFiAgent {
         )
         if let arpResolution = result.arpResolution {
             recorder.recordSpan(
-                name: "probe.gateway.arp.request_to_reply",
+                name: gatewayResolutionSpanName(result: arpResolution),
                 id: recorder.newSpanId(),
                 startWallNanos: arpResolution.startWallNanos,
                 durationNanos: arpResolution.durationNanos,
                 parentId: pathId,
-                tags: activeGatewayARPTags(result: arpResolution, snapshot: snapshot),
+                tags: activeGatewayResolutionTags(result: arpResolution, snapshot: snapshot),
                 statusOK: arpResolution.ok
             )
         }
@@ -182,9 +182,11 @@ extension WiFiAgent {
             fields: [
                 "trace_id": recorder.traceId,
                 "gateway": result.gateway,
+                "network.family": result.family.metricValue,
                 "gateway_hwaddr": result.gatewayHardwareAddress ?? "",
-                "arp_outcome": result.arpResolution?.outcome ?? "",
-                "arp_resolved": result.arpResolution.map { $0.ok ? "true" : "false" } ?? "",
+                "resolution_protocol": result.arpResolution?.protocolName ?? "",
+                "resolution_outcome": result.arpResolution?.outcome ?? "",
+                "resolution_resolved": result.arpResolution.map { $0.ok ? "true" : "false" } ?? "",
                 "outcome": result.outcome,
                 "reachable": result.reachable ? "true" : "false",
                 "probe_count": "\(result.probeCount)",
@@ -208,7 +210,8 @@ extension WiFiAgent {
         )
         tags.merge([
             "probe.gateway.path.status": result.pathOK ? "ok" : "error",
-            "probe.gateway.arp.span_count": result.arpResolution == nil ? "0" : "1",
+            "probe.gateway.arp.span_count": result.family == .ipv4 && result.arpResolution != nil ? "1" : "0",
+            "probe.gateway.ndp.span_count": result.family == .ipv6 && result.arpResolution != nil ? "1" : "0",
             "probe.gateway.icmp.span_count": result.attempts.isEmpty ? "0" : "1",
             "network.family": result.family.metricValue,
             "network.wifi_gateway": result.gateway,
@@ -221,6 +224,9 @@ extension WiFiAgent {
         ]) { _, new in new }
         if let gatewayHardwareAddress = result.gatewayHardwareAddress {
             tags["network.wifi_gateway_hwaddr"] = gatewayHardwareAddress
+        }
+        if let resolution = result.arpResolution {
+            tags["network.gateway_probe.resolution_protocol"] = resolution.protocolName
         }
         addErrorTag(&tags, error: result.error)
         return tags
@@ -417,19 +423,65 @@ extension WiFiAgent {
         if let gatewayHardwareAddress = result.gatewayHardwareAddress {
             tags["network.wifi_gateway_hwaddr"] = gatewayHardwareAddress
         }
-        addPacketTimingTags(&tags, timingSource: result.timingSource, event: "icmp_echo_request_to_reply")
+        addPacketTimingTags(
+            &tags,
+            timingSource: result.timingSource,
+            event: result.family == .ipv6 ? "icmpv6_echo_request_to_reply" : "icmp_echo_request_to_reply"
+        )
         addErrorTag(&tags, error: result.error)
         return tags
     }
 
     func activeGatewayARPTags(result: ActiveGatewayARPResult, snapshot: WiFiSnapshot) -> [String: String] {
+        activeGatewayResolutionTags(result: result, snapshot: snapshot)
+    }
+
+    func activeGatewayResolutionTags(result: ActiveGatewayARPResult, snapshot: WiFiSnapshot) -> [String: String] {
         var tags = activeProbeBaseTags(
             snapshot: snapshot,
             timingSource: result.timingSource,
             timestampSource: result.timestampSource,
-            spanSource: "darwin_bpf_gateway_arp_probe"
+            spanSource: result.family == .ipv6 ? "darwin_bpf_gateway_ndp_probe" : "darwin_bpf_gateway_arp_probe"
         )
-        tags.merge([
+        tags.merge(gatewayResolutionProtocolTags(result)) { _, new in new }
+        if result.family == .ipv4, result.gatewayHardwareAddress != nil {
+            tags["arp.sender_ip"] = result.gateway
+            setTag(&tags, "arp.sender_mac", result.gatewayHardwareAddress)
+            setTag(&tags, "arp.target_mac", result.sourceHardwareAddress)
+        }
+        setTag(&tags, "network.wifi_gateway_hwaddr", result.gatewayHardwareAddress)
+        setTag(&tags, "active_probe.source_ip", result.sourceIP)
+        addPacketTimingTags(
+            &tags,
+            timingSource: result.timingSource,
+            event: result.family == .ipv6 ? "neighbor_solicitation_to_advertisement" : "arp_request_to_reply"
+        )
+        addErrorTag(&tags, error: result.error)
+        return tags
+    }
+
+    private func gatewayResolutionSpanName(result: ActiveGatewayARPResult) -> String {
+        result.family == .ipv6
+            ? "probe.gateway.ndp.neighbor_solicitation_to_advertisement"
+            : "probe.gateway.arp.request_to_reply"
+    }
+
+    private func gatewayResolutionProtocolTags(_ result: ActiveGatewayARPResult) -> [String: String] {
+        if result.family == .ipv6 {
+            var tags: [String: String] = [
+                "network.family": InternetAddressFamily.ipv6.metricValue,
+                "network.wifi_gateway": result.gateway,
+                "network.gateway": result.gateway,
+                "network.gateway_probe.protocol": "ndp",
+                "network.gateway_ndp.outcome": result.outcome,
+                "network.gateway_ndp.resolved": result.ok ? "true" : "false",
+                "packet.protocol": "icmpv6",
+                "icmpv6.nd.target_address": result.gateway,
+            ]
+            setTag(&tags, "icmpv6.nd.target_link_layer_address", result.gatewayHardwareAddress)
+            return tags
+        }
+        return [
             "network.family": InternetAddressFamily.ipv4.metricValue,
             "network.wifi_gateway": result.gateway,
             "network.gateway": result.gateway,
@@ -439,17 +491,7 @@ extension WiFiAgent {
             "packet.protocol": "arp",
             "arp.target_ip": result.gateway,
             "arp.target_role": "gateway",
-        ]) { _, new in new }
-        if result.gatewayHardwareAddress != nil {
-            tags["arp.sender_ip"] = result.gateway
-            setTag(&tags, "arp.sender_mac", result.gatewayHardwareAddress)
-            setTag(&tags, "arp.target_mac", result.sourceHardwareAddress)
-        }
-        setTag(&tags, "network.wifi_gateway_hwaddr", result.gatewayHardwareAddress)
-        setTag(&tags, "active_probe.source_ip", result.sourceIP)
-        addPacketTimingTags(&tags, timingSource: result.timingSource, event: "arp_request_to_reply")
-        addErrorTag(&tags, error: result.error)
-        return tags
+        ]
     }
 
     private func activeProbeBaseTags(

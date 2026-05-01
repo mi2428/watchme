@@ -97,6 +97,51 @@ final class WiFiTracePolicyTests: XCTestCase {
         )
     }
 
+    func testAssociationNetworkStateWaitsForConfiguredGatewayFamilies() {
+        let dualStateWithoutIPv4 = WiFiServiceNetworkState(
+            interfaceName: "en0",
+            serviceID: "wifi-service",
+            routerIPv4: nil,
+            routerHardwareAddress: nil,
+            routerIPv6: "fe80::1",
+            routerIPv6HardwareAddress: "b6:99:e5:2b:f8:cc",
+            dnsServers: ["2606:4700:4700::1111"]
+        )
+        let dualStateWithIPv4 = WiFiServiceNetworkState(
+            interfaceName: "en0",
+            serviceID: "wifi-service",
+            routerIPv4: "192.168.23.254",
+            routerHardwareAddress: "b6:99:e5:2b:f8:cc",
+            routerIPv6: "fe80::1",
+            routerIPv6HardwareAddress: "b6:99:e5:2b:f8:cc",
+            dnsServers: ["2606:4700:4700::1111"]
+        )
+        var ipv6OnlyConfig = WiFiConfig()
+        ipv6OnlyConfig.probeInternetFamily = .ipv6
+
+        XCTAssertTrue(
+            WiFiTracePolicy.shouldContinueWaitingForAssociationNetworkState(
+                snapshot: makeSnapshot(ipv4Addresses: []),
+                networkState: dualStateWithoutIPv4,
+                config: WiFiConfig()
+            )
+        )
+        XCTAssertFalse(
+            WiFiTracePolicy.shouldContinueWaitingForAssociationNetworkState(
+                snapshot: makeSnapshot(ipv4Addresses: ["192.168.22.173"]),
+                networkState: dualStateWithIPv4,
+                config: WiFiConfig()
+            )
+        )
+        XCTAssertFalse(
+            WiFiTracePolicy.shouldContinueWaitingForAssociationNetworkState(
+                snapshot: makeSnapshot(ipv4Addresses: []),
+                networkState: dualStateWithoutIPv4,
+                config: ipv6OnlyConfig
+            )
+        )
+    }
+
     func testIPv4AddressAcquisitionSchedulesJoinRecoveryTrace() {
         XCTAssertTrue(
             WiFiTracePolicy.isAddressAcquisition(

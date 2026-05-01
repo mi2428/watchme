@@ -7,7 +7,27 @@ struct WiFiServiceNetworkState {
     let serviceID: String?
     let routerIPv4: String?
     let routerHardwareAddress: String?
+    let routerIPv6: String?
+    let routerIPv6HardwareAddress: String?
     let dnsServers: [String]
+
+    init(
+        interfaceName: String?,
+        serviceID: String?,
+        routerIPv4: String?,
+        routerHardwareAddress: String?,
+        routerIPv6: String? = nil,
+        routerIPv6HardwareAddress: String? = nil,
+        dnsServers: [String]
+    ) {
+        self.interfaceName = interfaceName
+        self.serviceID = serviceID
+        self.routerIPv4 = routerIPv4
+        self.routerHardwareAddress = routerHardwareAddress
+        self.routerIPv6 = routerIPv6.map(normalizedIPv6Scope)
+        self.routerIPv6HardwareAddress = routerIPv6HardwareAddress
+        self.dnsServers = dnsServers
+    }
 
     var traceTags: [String: String] {
         var tags: [String: String] = [
@@ -17,6 +37,8 @@ struct WiFiServiceNetworkState {
         setTag(&tags, "network.wifi_service", serviceID)
         setTag(&tags, "network.wifi_gateway", routerIPv4)
         setTag(&tags, "network.wifi_gateway_hwaddr", routerHardwareAddress)
+        setTag(&tags, "network.wifi_ipv6_gateway", routerIPv6)
+        setTag(&tags, "network.wifi_ipv6_gateway_hwaddr", routerIPv6HardwareAddress)
         return tags
     }
 }
@@ -32,7 +54,15 @@ func wifiServiceNetworkState(
     valueForKey: (String) -> [String: Any]
 ) -> WiFiServiceNetworkState {
     guard let interfaceName, !interfaceName.isEmpty else {
-        return WiFiServiceNetworkState(interfaceName: nil, serviceID: nil, routerIPv4: nil, routerHardwareAddress: nil, dnsServers: [])
+        return WiFiServiceNetworkState(
+            interfaceName: nil,
+            serviceID: nil,
+            routerIPv4: nil,
+            routerHardwareAddress: nil,
+            routerIPv6: nil,
+            routerIPv6HardwareAddress: nil,
+            dnsServers: []
+        )
     }
 
     let candidates = serviceIDs.compactMap { serviceID -> WiFiServiceNetworkState? in
@@ -55,20 +85,31 @@ func wifiServiceNetworkState(
             serviceID: serviceID,
             routerIPv4: stringValue(ipv4["Router"]),
             routerHardwareAddress: stringValue(ipv4["ARPResolvedHardwareAddress"]),
+            routerIPv6: stringValue(ipv6["Router"]).map(normalizedIPv6Scope),
+            routerIPv6HardwareAddress: routerHardwareAddress(fromNetworkSignature: stringValue(ipv6["NetworkSignature"])),
             dnsServers: stringArrayValue(dns["ServerAddresses"])
         )
     }
 
-    return candidates.first { $0.routerIPv4 != nil || !$0.dnsServers.isEmpty }
+    return candidates.first { $0.routerIPv4 != nil || $0.routerIPv6 != nil || !$0.dnsServers.isEmpty }
         ?? candidates.first
-        ?? WiFiServiceNetworkState(interfaceName: interfaceName, serviceID: nil, routerIPv4: nil, routerHardwareAddress: nil, dnsServers: [])
+        ?? WiFiServiceNetworkState(
+            interfaceName: interfaceName,
+            serviceID: nil,
+            routerIPv4: nil,
+            routerHardwareAddress: nil,
+            routerIPv6: nil,
+            routerIPv6HardwareAddress: nil,
+            dnsServers: []
+        )
 }
 
 func dynamicStoreNetworkServiceIDs() -> [String] {
-    guard let keys = SCDynamicStoreCopyKeyList(nil, "State:/Network/Service/.*/IPv4" as CFString) as? [String] else {
-        return []
-    }
-    return keys.compactMap { serviceID(fromDynamicStoreKey: $0, suffix: "IPv4") }.sorted()
+    let ipv4Keys = (SCDynamicStoreCopyKeyList(nil, "State:/Network/Service/.*/IPv4" as CFString) as? [String]) ?? []
+    let ipv6Keys = (SCDynamicStoreCopyKeyList(nil, "State:/Network/Service/.*/IPv6" as CFString) as? [String]) ?? []
+    let ids = ipv4Keys.compactMap { serviceID(fromDynamicStoreKey: $0, suffix: "IPv4") }
+        + ipv6Keys.compactMap { serviceID(fromDynamicStoreKey: $0, suffix: "IPv6") }
+    return Array(Set(ids)).sorted()
 }
 
 func serviceID(fromDynamicStoreKey key: String, suffix: String) -> String? {
@@ -91,4 +132,20 @@ func stringArrayValue(_ value: Any?) -> [String] {
     default:
         []
     }
+}
+
+func routerHardwareAddress(fromNetworkSignature signature: String?) -> String? {
+    guard let signature else {
+        return nil
+    }
+    let prefix = "IPv6.RouterHardwareAddress="
+    for component in signature.split(separator: ";") {
+        let trimmed = component.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix(prefix) else {
+            continue
+        }
+        let value = String(trimmed.dropFirst(prefix.count)).lowercased()
+        return value.isEmpty ? nil : value
+    }
+    return nil
 }

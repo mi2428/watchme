@@ -185,6 +185,9 @@ private func sendICMPEchoRequest(packet: [UInt8], family: InternetAddressFamily,
         address.sin6_len = UInt8(MemoryLayout<sockaddr_in6>.size)
         address.sin6_family = sa_family_t(AF_INET6)
         inet_pton(AF_INET6, remoteIP, &address.sin6_addr)
+        if remoteIP.hasPrefix("fe80:"), let interfaceName, !interfaceName.isEmpty {
+            address.sin6_scope_id = if_nametoindex(interfaceName)
+        }
         sent = withUnsafePointer(to: &address) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
                 sendto(fd, packet, packet.count, 0, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in6>.size))

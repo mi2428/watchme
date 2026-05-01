@@ -9,6 +9,11 @@ final class WiFiServiceNetworkStateTests: XCTestCase {
                 "Router": "192.168.23.254",
                 "ARPResolvedHardwareAddress": "b6:99:e5:2b:f8:cc",
             ],
+            "State:/Network/Service/wifi/IPv6": [
+                "InterfaceName": "en0",
+                "Router": "fe80::b499:e5ff:fe2b:f8cc%en0",
+                "NetworkSignature": "IPv6.Prefix=2405:6581:3e00:a600::/64;IPv6.RouterHardwareAddress=b6:99:e5:2b:f8:cc",
+            ],
             "State:/Network/Service/wifi/DNS": [
                 "ServerAddresses": ["192.168.23.254", "1.1.1.1"],
             ],
@@ -28,9 +33,13 @@ final class WiFiServiceNetworkStateTests: XCTestCase {
         XCTAssertEqual(state.serviceID, "wifi")
         XCTAssertEqual(state.routerIPv4, "192.168.23.254")
         XCTAssertEqual(state.routerHardwareAddress, "b6:99:e5:2b:f8:cc")
+        XCTAssertEqual(state.routerIPv6, "fe80::b499:e5ff:fe2b:f8cc")
+        XCTAssertEqual(state.routerIPv6HardwareAddress, "b6:99:e5:2b:f8:cc")
         XCTAssertEqual(state.dnsServers, ["192.168.23.254", "1.1.1.1"])
         XCTAssertEqual(state.traceTags["network.wifi_gateway"], "192.168.23.254")
         XCTAssertEqual(state.traceTags["network.wifi_gateway_hwaddr"], "b6:99:e5:2b:f8:cc")
+        XCTAssertEqual(state.traceTags["network.wifi_ipv6_gateway"], "fe80::b499:e5ff:fe2b:f8cc")
+        XCTAssertEqual(state.traceTags["network.wifi_ipv6_gateway_hwaddr"], "b6:99:e5:2b:f8:cc")
     }
 
     func testServiceIDParsingRejectsUnrelatedKeys() {

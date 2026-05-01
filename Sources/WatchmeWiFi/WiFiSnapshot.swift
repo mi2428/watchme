@@ -8,7 +8,22 @@ struct NativeInterfaceState {
     let isActive: Bool
     let ipv4Addresses: [String]
     let ipv6Addresses: [String]
+    let ipv6LinkLocalAddresses: [String]
     let macAddress: String?
+
+    init(
+        isActive: Bool,
+        ipv4Addresses: [String],
+        ipv6Addresses: [String],
+        macAddress: String?,
+        ipv6LinkLocalAddresses: [String] = []
+    ) {
+        self.isActive = isActive
+        self.ipv4Addresses = ipv4Addresses
+        self.ipv6Addresses = ipv6Addresses
+        self.ipv6LinkLocalAddresses = ipv6LinkLocalAddresses
+        self.macAddress = macAddress
+    }
 }
 
 struct WiFiSnapshot {
@@ -236,6 +251,7 @@ func nativeInterfaceState(interfaceName: String) -> NativeInterfaceState {
     var flags: UInt32 = 0
     var ipv4: [String] = []
     var ipv6: [String] = []
+    var ipv6LinkLocal: [String] = []
     var macAddress: String?
 
     var cursor: UnsafeMutablePointer<ifaddrs>? = first
@@ -287,10 +303,12 @@ func nativeInterfaceState(interfaceName: String) -> NativeInterfaceState {
         guard rc == 0 else {
             continue
         }
-        let value = String(cString: host)
+        let value = normalizedIPv6Scope(String(cString: host))
         if family == AF_INET {
             ipv4.append(value)
-        } else if !value.hasPrefix("fe80:") {
+        } else if value.hasPrefix("fe80:") {
+            ipv6LinkLocal.append(value)
+        } else {
             ipv6.append(value)
         }
     }
@@ -301,6 +319,14 @@ func nativeInterfaceState(interfaceName: String) -> NativeInterfaceState {
         isActive: sawInterface && isUp && isRunning,
         ipv4Addresses: ipv4,
         ipv6Addresses: ipv6,
-        macAddress: macAddress
+        macAddress: macAddress,
+        ipv6LinkLocalAddresses: ipv6LinkLocal
     )
+}
+
+func normalizedIPv6Scope(_ value: String) -> String {
+    guard let percent = value.firstIndex(of: "%") else {
+        return value
+    }
+    return String(value[..<percent])
 }

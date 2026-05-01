@@ -101,6 +101,30 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(tags["packet.timestamp_source"], bpfHeaderTimestampSource)
     }
 
+    func testGatewayIPv6ProbeRecordsNDPAndICMPv6Spans() {
+        let agent = makeAgent()
+        let recorder = TraceRecorder()
+        let phaseId = recorder.newSpanId()
+
+        agent.recordGatewayProbeResult(gatewayIPv6Result(), phaseId: phaseId, recorder: recorder, snapshot: makeSnapshot())
+        let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
+        let path = spans.first { $0.name == "probe.gateway.path" }
+        let ndp = spans.first { $0.name == "probe.gateway.ndp.neighbor_solicitation_to_advertisement" }
+        let echo = spans.first { $0.name == "probe.gateway.icmp.echo" }
+
+        XCTAssertEqual(path?.tags["network.family"], "ipv6")
+        XCTAssertEqual(path?.tags["probe.gateway.arp.span_count"], "0")
+        XCTAssertEqual(path?.tags["probe.gateway.ndp.span_count"], "1")
+        XCTAssertEqual(ndp?.parentId, path?.id)
+        XCTAssertEqual(ndp?.tags["span.source"], "darwin_bpf_gateway_ndp_probe")
+        XCTAssertEqual(ndp?.tags["network.gateway_probe.protocol"], "ndp")
+        XCTAssertEqual(ndp?.tags["network.gateway_ndp.outcome"], "reply")
+        XCTAssertEqual(ndp?.tags["icmpv6.nd.target_address"], "fe80::b499:e5ff:fe2b:f8cc")
+        XCTAssertEqual(echo?.parentId, path?.id)
+        XCTAssertEqual(echo?.tags["network.family"], "ipv6")
+        XCTAssertEqual(echo?.tags["packet.event"], "icmpv6_echo_request_to_reply")
+    }
+
     func testGatewayProbeRecordsPathParentForICMPEcho() {
         let agent = makeAgent()
         let recorder = TraceRecorder()
@@ -147,7 +171,7 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         let capture = collectConnectivityProbeResults(
             gatewayProbe: {
                 order.append("gateway")
-                return self.gatewayLossResult()
+                return [self.gatewayLossResult()]
             },
             internetProbes: {
                 order.append("internet")
@@ -158,7 +182,7 @@ final class ActiveProbeTelemetryTests: XCTestCase {
 
         XCTAssertEqual(order, ["gateway", "internet"])
         XCTAssertTrue(internetProbeRan)
-        XCTAssertEqual(capture.gatewayResult?.reachable, false)
+        XCTAssertEqual(capture.gatewayResults.first?.reachable, false)
         XCTAssertEqual(capture.internetResults.lanes.count, 1)
         XCTAssertEqual(capture.internetResults.tcp.count, 1)
     }
@@ -218,16 +242,16 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         let start = associationPacketSpanWindowStart(
             reason: "wifi.join",
             eventTags: ["wifi.event_received_epoch_ns": "10_000".replacingOccurrences(of: "_", with: "")],
-            traceStarted: 20_000,
+            traceStarted: 20000,
             lookback: 0.000002
         )
 
-        XCTAssertEqual(start, 8_000)
+        XCTAssertEqual(start, 8000)
         XCTAssertNil(
             associationPacketSpanWindowStart(
                 reason: "wifi.power.changed",
                 eventTags: ["wifi.event_received_epoch_ns": "10000"],
-                traceStarted: 20_000,
+                traceStarted: 20000,
                 lookback: 0.000002
             )
         )
@@ -241,10 +265,10 @@ final class ActiveProbeTelemetryTests: XCTestCase {
                     "network.event_received_epoch_ns": "20000",
                     "association.window_floor_epoch_ns": "15000",
                 ],
-                traceStarted: 21_000,
+                traceStarted: 21000,
                 lookback: 0.000010
             ),
-            15_000
+            15000
         )
 
         XCTAssertEqual(
@@ -254,10 +278,10 @@ final class ActiveProbeTelemetryTests: XCTestCase {
                     "network.event_received_epoch_ns": "20000",
                     "association.window_floor_epoch_ns": "25000",
                 ],
-                traceStarted: 21_000,
+                traceStarted: 21000,
                 lookback: 0.000010
             ),
-            10_000
+            10000
         )
     }
 
@@ -275,17 +299,17 @@ final class ActiveProbeTelemetryTests: XCTestCase {
             passivePacketSpanWindowStart(
                 reason: "wifi.network.attachment",
                 eventTags: ["packet.timestamp_epoch_ns": "20000"],
-                traceStarted: 30_000,
+                traceStarted: 30000,
                 associationLookback: 0.000002,
                 attachmentLookback: 0.000003
             ),
-            17_000
+            17000
         )
         XCTAssertNil(
             passivePacketSpanWindowStart(
                 reason: "wifi.disconnect",
                 eventTags: ["wifi.event_received_epoch_ns": "20_000"],
-                traceStarted: 30_000,
+                traceStarted: 30000,
                 associationLookback: 0.000002,
                 attachmentLookback: 0.000003
             )
@@ -504,6 +528,47 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         )
     }
 
+    private func gatewayIPv6Result() -> ActiveGatewayProbeResult {
+        ActiveGatewayProbeResult(
+            gateway: "fe80::b499:e5ff:fe2b:f8cc",
+            family: .ipv6,
+            attempts: [
+                ActiveGatewayProbeAttempt(
+                    sequence: 1,
+                    identifier: nil,
+                    icmpSequence: nil,
+                    reachable: true,
+                    outcome: "reply",
+                    error: nil,
+                    timing: ActiveProbeTiming(
+                        startWallNanos: 4_100_000_000,
+                        finishedWallNanos: 4_106_000_000,
+                        timingSource: bpfPacketTimingSource,
+                        timestampSource: bpfHeaderTimestampSource
+                    )
+                ),
+            ],
+            burstIntervalSeconds: 0,
+            arpResolution: ActiveGatewayARPResult(
+                gateway: "fe80::b499:e5ff:fe2b:f8cc",
+                family: .ipv6,
+                protocolName: "ndp",
+                sourceIP: "fe80::1",
+                sourceHardwareAddress: "00:11:22:33:44:55",
+                gatewayHardwareAddress: "aa:bb:cc:dd:ee:ff",
+                ok: true,
+                outcome: "reply",
+                error: nil,
+                timing: ActiveProbeTiming(
+                    startWallNanos: 4_090_000_000,
+                    finishedWallNanos: 4_095_000_000,
+                    timingSource: bpfPacketTimingSource,
+                    timestampSource: bpfHeaderTimestampSource
+                )
+            )
+        )
+    }
+
     private func gatewayARPFailureResult() -> ActiveGatewayProbeResult {
         ActiveGatewayProbeResult(
             gateway: "192.168.23.254",
@@ -567,7 +632,7 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         SpanEvent(
             name: name,
             startWallNanos: startWallNanos,
-            durationNanos: 1_000,
+            durationNanos: 1000,
             tags: [:],
             statusOK: true
         )
