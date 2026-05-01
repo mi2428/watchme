@@ -64,34 +64,40 @@ extension WiFiAgent {
     }
 
     func runGatewayProbes(networkState: WiFiServiceNetworkState, snapshot: WiFiSnapshot) -> [ActiveGatewayProbeResult] {
-        var results: [ActiveGatewayProbeResult] = []
+        let timeout = min(config.probeInternetTimeout, 2.0)
+        let interfaceName = snapshot.interfaceName
+        let burstCount = config.probeGatewayBurstCount
+        let burstInterval = config.probeGatewayBurstInterval
+        let useDirectBPF = config.bpfEnabled
+
+        var tasks: [GatewayProbeTask] = []
         if let gateway = networkState.routerIPv4 {
-            results.append(
+            tasks.append(GatewayProbeTask {
                 runGatewayICMPProbe(
                     gateway: gateway,
-                    timeout: min(config.probeInternetTimeout, 2.0),
-                    interfaceName: snapshot.interfaceName,
-                    packetStore: packetStore,
-                    burstCount: config.probeGatewayBurstCount,
-                    burstInterval: config.probeGatewayBurstInterval,
-                    useDirectBPF: config.bpfEnabled
+                    timeout: timeout,
+                    interfaceName: interfaceName,
+                    packetStore: self.packetStore,
+                    burstCount: burstCount,
+                    burstInterval: burstInterval,
+                    useDirectBPF: useDirectBPF
                 )
-            )
+            })
         }
         if let gateway = networkState.routerIPv6 {
-            results.append(
+            tasks.append(GatewayProbeTask {
                 runGatewayICMPv6Probe(
                     gateway: gateway,
-                    timeout: min(config.probeInternetTimeout, 2.0),
-                    interfaceName: snapshot.interfaceName,
-                    packetStore: packetStore,
-                    burstCount: config.probeGatewayBurstCount,
-                    burstInterval: config.probeGatewayBurstInterval,
-                    useDirectBPF: config.bpfEnabled
+                    timeout: timeout,
+                    interfaceName: interfaceName,
+                    packetStore: self.packetStore,
+                    burstCount: burstCount,
+                    burstInterval: burstInterval,
+                    useDirectBPF: useDirectBPF
                 )
-            )
+            })
         }
-        return results
+        return runGatewayProbeTasks(tasks)
     }
 
     private func connectivityCheckPhaseTags(
@@ -131,4 +137,32 @@ extension WiFiAgent {
 
 private func gatewayResolutionSpanCount(_ results: [ActiveGatewayProbeResult], family: InternetAddressFamily) -> Int {
     results.count(where: { $0.family == family && $0.arpResolution != nil })
+}
+
+struct GatewayProbeTask {
+    let run: () -> ActiveGatewayProbeResult
+}
+
+func runGatewayProbeTasks(_ tasks: [GatewayProbeTask]) -> [ActiveGatewayProbeResult] {
+    guard tasks.count > 1 else {
+        return tasks.map { $0.run() }
+    }
+
+    let queue = DispatchQueue(label: "watchme.gateway-probes", qos: .utility, attributes: .concurrent)
+    let group = DispatchGroup()
+    let lock = NSLock()
+    var results = [ActiveGatewayProbeResult?](repeating: nil, count: tasks.count)
+
+    for (index, task) in tasks.enumerated() {
+        group.enter()
+        queue.async {
+            let result = task.run()
+            lock.lock()
+            results[index] = result
+            lock.unlock()
+            group.leave()
+        }
+    }
+    group.wait()
+    return results.compactMap(\.self)
 }

@@ -187,6 +187,49 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(capture.internetResults.tcp.count, 1)
     }
 
+    func testGatewayProbeTasksRunIPv4AndIPv6Concurrently() {
+        let bothStarted = DispatchSemaphore(value: 0)
+        let releaseTasks = DispatchSemaphore(value: 0)
+        let finishGroup = DispatchGroup()
+        let startedLock = NSLock()
+        var startedFamilies: [InternetAddressFamily] = []
+        var results: [ActiveGatewayProbeResult] = []
+
+        func markStarted(_ family: InternetAddressFamily) {
+            startedLock.lock()
+            startedFamilies.append(family)
+            if startedFamilies.count == 2 {
+                bothStarted.signal()
+            }
+            startedLock.unlock()
+        }
+
+        let tasks = [
+            GatewayProbeTask {
+                markStarted(.ipv4)
+                _ = releaseTasks.wait(timeout: .now() + 2)
+                return self.gatewayResult()
+            },
+            GatewayProbeTask {
+                markStarted(.ipv6)
+                _ = releaseTasks.wait(timeout: .now() + 2)
+                return self.gatewayIPv6Result()
+            },
+        ]
+
+        finishGroup.enter()
+        DispatchQueue.global(qos: .utility).async {
+            results = runGatewayProbeTasks(tasks)
+            finishGroup.leave()
+        }
+
+        XCTAssertEqual(bothStarted.wait(timeout: .now() + 1), .success)
+        releaseTasks.signal()
+        releaseTasks.signal()
+        XCTAssertEqual(finishGroup.wait(timeout: .now() + 1), .success)
+        XCTAssertEqual(results.map(\.family), [.ipv4, .ipv6])
+    }
+
     func testDisconnectTraceDedupeAllowsOneTraceUntilAssociationRecovers() {
         let agent = makeAgent()
 
