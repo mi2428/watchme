@@ -39,5 +39,6 @@ Set `WATCHME_VERSION`, `WATCHME_GIT_DESCRIBE`, `WATCHME_GIT_COMMIT`, `WATCHME_GI
 WatchMe exports through OTLP/HTTP.
 When a retryable OTLP request fails because the collector or network is unavailable, WatchMe stores the exact OTLP HTTP payload under `~/.watchme/otlp-spool`.
 The next export first replays pending payloads oldest-first and removes each file only after the collector returns a 2xx response.
+The spool is bounded to 1000 pending files, 100 MiB, seven days of age, and 100 replayed files per export; oldest or expired payloads are dropped first.
 
 Set `WATCHME_OTLP_SPOOL_DIR` to override the spool directory.

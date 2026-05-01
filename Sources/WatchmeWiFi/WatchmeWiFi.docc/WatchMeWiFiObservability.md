@@ -155,6 +155,8 @@ Delivery behavior:
 - A spooled payload is removed only after the collector returns a 2xx HTTP response.
 - Retryable failures, such as connection failures, timeouts, HTTP 408, HTTP 429, or HTTP 5xx, leave the payload on disk.
 - Non-retryable HTTP status responses, such as most HTTP 4xx responses, drop that payload so a bad request does not permanently block newer signals.
+- The local spool is bounded to 1000 pending files, 100 MiB, and seven days by default; oldest or expired payloads are dropped first.
+- A single export attempts to replay at most 100 pending files before sending the current payload.
 - In long-running mode, recovery is attempted on the next metrics interval, connectivity trace, or event-triggered export.
 - In one-shot mode, pending payloads can be flushed by a later `watchme agent once --collector.wifi`, `watchme agent once --collector.system`, or long-running WatchMe Agent execution that can reach the collector.
 

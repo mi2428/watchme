@@ -4,6 +4,32 @@ import WatchmeCore
 
 private let otlpSpoolEnvironmentKey = "WATCHME_OTLP_SPOOL_DIR"
 
+struct OTLPSpoolPolicy {
+    let maxPendingFiles: Int
+    let maxPendingBytes: UInt64
+    let maxRecordAge: TimeInterval
+    let maxFlushBatchSize: Int
+
+    static let `default` = OTLPSpoolPolicy(
+        maxPendingFiles: 1000,
+        maxPendingBytes: 100 * 1024 * 1024,
+        maxRecordAge: 7 * 24 * 60 * 60,
+        maxFlushBatchSize: 100
+    )
+
+    init(
+        maxPendingFiles: Int,
+        maxPendingBytes: UInt64,
+        maxRecordAge: TimeInterval,
+        maxFlushBatchSize: Int
+    ) {
+        self.maxPendingFiles = max(maxPendingFiles, 1)
+        self.maxPendingBytes = max(maxPendingBytes, 1)
+        self.maxRecordAge = max(maxRecordAge, 1)
+        self.maxFlushBatchSize = max(maxFlushBatchSize, 1)
+    }
+}
+
 struct OTLPSpoolFlushResult {
     let flushed: Int
     let dropped: Int
@@ -39,10 +65,12 @@ final class OTLPSpool {
     private let fileManager: FileManager
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
+    private let policy: OTLPSpoolPolicy
 
-    init(directory: URL, fileManager: FileManager = .default) {
+    init(directory: URL, fileManager: FileManager = .default, policy: OTLPSpoolPolicy = .default) {
         self.directory = directory
         self.fileManager = fileManager
+        self.policy = policy
     }
 
     var path: String {
@@ -66,13 +94,15 @@ final class OTLPSpool {
                 try ensureDirectory()
                 let url = directory.appendingPathComponent("\(record.id).json")
                 try encoder.encode(record).write(to: url, options: .atomic)
+                let retained = enforceRetentionLocked()
                 logEvent(
                     .warn, "otlp_spool_enqueued",
                     fields: [
                         "reason": reason,
                         "endpoint_url": record.url,
                         "spool_path": directory.path,
-                        "spool_pending": "\(pendingFiles().count)",
+                        "spool_pending": "\(retained.pending)",
+                        "spool_retention_dropped": "\(retained.dropped)",
                     ]
                 )
             } catch {
@@ -91,10 +121,14 @@ final class OTLPSpool {
 
     func flushPending(send: (URLRequest) -> Result<HTTPURLResponse, Error>) -> OTLPSpoolFlushResult {
         withFileLock {
+            // The spool is intentionally bounded. Collector outages should keep
+            // the most recent evidence without letting a long-running agent grow
+            // disk usage or spend an unbounded interval replaying old payloads.
+            var retained = enforceRetentionLocked()
             var flushed = 0
-            var dropped = 0
+            var dropped = retained.dropped
 
-            for file in pendingFiles() {
+            for file in pendingFiles().prefix(policy.maxFlushBatchSize) {
                 let record: OTLPSpoolRecord
                 do {
                     let data = try Data(contentsOf: file)
@@ -161,6 +195,8 @@ final class OTLPSpool {
                 }
             }
 
+            retained = enforceRetentionLocked()
+            dropped += retained.dropped
             let remaining = pendingFiles().count
             if flushed > 0 || dropped > 0 {
                 logEvent(
@@ -202,12 +238,73 @@ final class OTLPSpool {
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }
 
-    private func remove(_ file: URL) {
+    private func enforceRetentionLocked() -> (dropped: Int, pending: Int) {
+        var dropped = 0
+        let now = wallClockNanos()
+        let maxAgeNanos = UInt64(policy.maxRecordAge * 1_000_000_000)
+
+        for file in pendingFiles() {
+            guard let record = try? decoder.decode(OTLPSpoolRecord.self, from: Data(contentsOf: file)) else {
+                continue
+            }
+            if record.createdWallNanos + maxAgeNanos < now {
+                if remove(file, reason: "retention_max_age") {
+                    dropped += 1
+                }
+            }
+        }
+
+        var files = pendingFiles()
+        while files.count > policy.maxPendingFiles, let file = files.first {
+            if remove(file, reason: "retention_max_files") {
+                dropped += 1
+            }
+            files = pendingFiles()
+        }
+
+        while totalBytes(files) > policy.maxPendingBytes, let file = files.first {
+            if remove(file, reason: "retention_max_bytes") {
+                dropped += 1
+            }
+            files = pendingFiles()
+        }
+
+        return (dropped: dropped, pending: pendingFiles().count)
+    }
+
+    private func totalBytes(_ files: [URL]) -> UInt64 {
+        files.reduce(UInt64(0)) { total, file in
+            total + fileSize(file)
+        }
+    }
+
+    private func fileSize(_ file: URL) -> UInt64 {
+        guard
+            let attributes = try? fileManager.attributesOfItem(atPath: file.path),
+            let size = attributes[.size] as? NSNumber
+        else {
+            return 0
+        }
+        return size.uint64Value
+    }
+
+    @discardableResult
+    private func remove(_ file: URL) -> Bool {
         do {
             try fileManager.removeItem(at: file)
+            return true
         } catch {
             logEvent(.warn, "otlp_spool_remove_failed", fields: ["spool_file": file.lastPathComponent, "error": "\(error)"])
+            return false
         }
+    }
+
+    private func remove(_ file: URL, reason: String) -> Bool {
+        if remove(file) {
+            logEvent(.warn, "otlp_spool_dropped", fields: ["spool_file": file.lastPathComponent, "reason": reason])
+            return true
+        }
+        return false
     }
 
     private func withFileLock<T>(_ body: () -> T) -> T {

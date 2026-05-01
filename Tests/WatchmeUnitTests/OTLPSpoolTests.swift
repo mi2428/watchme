@@ -90,6 +90,46 @@ final class OTLPSpoolTests: XCTestCase {
         XCTAssertEqual(spool.pendingCount(), 0)
     }
 
+    func testRetentionDropsOldestFilesAndFlushesInBoundedBatches() {
+        let spool = OTLPSpool(
+            directory: directory,
+            policy: OTLPSpoolPolicy(
+                maxPendingFiles: 2,
+                maxPendingBytes: 1_000_000,
+                maxRecordAge: 60,
+                maxFlushBatchSize: 1
+            )
+        )
+        spool.enqueue(makeRequest(path: "/v1/old"), reason: "unit")
+        Thread.sleep(forTimeInterval: 0.001)
+        spool.enqueue(makeRequest(path: "/v1/middle"), reason: "unit")
+        Thread.sleep(forTimeInterval: 0.001)
+        spool.enqueue(makeRequest(path: "/v1/new"), reason: "unit")
+
+        XCTAssertEqual(spool.pendingCount(), 2)
+
+        var replayedPaths: [String] = []
+        let first = spool.flushPending { replayed in
+            replayedPaths.append(replayed.url?.path ?? "")
+            return .success(httpResponse(for: replayed))
+        }
+
+        XCTAssertTrue(first.ok)
+        XCTAssertEqual(first.flushed, 1)
+        XCTAssertEqual(first.remaining, 1)
+        XCTAssertEqual(replayedPaths, ["/v1/middle"])
+
+        let second = spool.flushPending { replayed in
+            replayedPaths.append(replayed.url?.path ?? "")
+            return .success(httpResponse(for: replayed))
+        }
+
+        XCTAssertTrue(second.ok)
+        XCTAssertEqual(second.flushed, 1)
+        XCTAssertEqual(second.remaining, 0)
+        XCTAssertEqual(replayedPaths, ["/v1/middle", "/v1/new"])
+    }
+
     private func makeRequest(path: String, body: Data = Data([0x2A])) -> URLRequest {
         var request = URLRequest(url: URL(string: "http://collector.example\(path)")!)
         request.httpMethod = "POST"
