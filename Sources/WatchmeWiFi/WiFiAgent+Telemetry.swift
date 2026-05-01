@@ -61,6 +61,9 @@ extension WiFiAgent {
         if WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(
             eventTags: eventTags,
             lastCompletedEpochNanos: lastAssociationTraceCompletedEpochNanos
+        ) || WiFiTracePolicy.shouldSuppressCompletedAssociationWindowTrace(
+            eventTags: eventTags,
+            lastCompletedWindowFloorEpochNanos: lastAssociationTraceWindowFloorEpochNanos
         ) {
             logEvent(
                 .debug, "association_trace_suppressed",
@@ -68,6 +71,7 @@ extension WiFiAgent {
                     "reason": reason,
                     "suppression_reason": "event_already_covered_by_association_trace",
                     "last_association_trace_completed_epoch_ns": lastAssociationTraceCompletedEpochNanos.map(String.init) ?? "",
+                    "last_association_trace_window_floor_epoch_ns": lastAssociationTraceWindowFloorEpochNanos.map(String.init) ?? "",
                 ]
             )
             return
@@ -103,6 +107,7 @@ extension WiFiAgent {
                 connectivityReadinessTimeout: self.config.associationTraceReadinessTimeout
             )
             self.lastAssociationTraceCompletedEpochNanos = wallClockNanos()
+            self.lastAssociationTraceWindowFloorEpochNanos = UInt64(tags["association.window_floor_epoch_ns"] ?? "")
             self.associationTracePending = false
             self.packetWindowSuppressedUntil = Date().addingTimeInterval(self.config.packetWindowSuppressionAfterAssociation)
         }

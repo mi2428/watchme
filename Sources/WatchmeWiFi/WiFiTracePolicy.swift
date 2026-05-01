@@ -50,6 +50,19 @@ enum WiFiTracePolicy {
         return newestAnchor <= lastCompletedEpochNanos
     }
 
+    static func shouldSuppressCompletedAssociationWindowTrace(
+        eventTags: [String: String],
+        lastCompletedWindowFloorEpochNanos: UInt64?
+    ) -> Bool {
+        guard
+            let lastCompletedWindowFloorEpochNanos,
+            let windowFloor = UInt64(eventTags["association.window_floor_epoch_ns"] ?? "")
+        else {
+            return false
+        }
+        return windowFloor <= lastCompletedWindowFloorEpochNanos
+    }
+
     static func associationEventEpochNanos(_ eventTags: [String: String]) -> [UInt64] {
         [
             eventTags["wifi.event_received_epoch_ns"],
