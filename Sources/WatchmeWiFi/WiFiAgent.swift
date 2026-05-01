@@ -157,9 +157,10 @@ final class WiFiAgent: WatchmeCollector {
     }
 
     private func handleWiFiEvent(_ event: WiFiEvent) {
+        let eventSnapshot = WiFiSnapshot.capture()
         triggerQueue.async {
             let previous = self.lastEventSnapshot
-            let current = self.captureLatestSnapshot()
+            let current = self.recordSnapshot(eventSnapshot)
             self.lastEventSnapshot = current
             self.metricState.recordCoreWLANEvent(event.name)
             self.startBPFIfNeeded(interfaceName: current.interfaceName)
@@ -217,9 +218,10 @@ final class WiFiAgent: WatchmeCollector {
     }
 
     private func handleSystemNetworkEvent(reason: String, tags: [String: String]) {
+        let eventSnapshot = WiFiSnapshot.capture()
         triggerQueue.async {
             let previous = self.lastEventSnapshot
-            let current = self.captureLatestSnapshot()
+            let current = self.recordSnapshot(eventSnapshot)
             self.lastEventSnapshot = current
             self.startBPFIfNeeded(interfaceName: current.interfaceName)
             self.logIdentityStatus(current)
@@ -300,8 +302,11 @@ final class WiFiAgent: WatchmeCollector {
     }
 
     func captureLatestSnapshot() -> WiFiSnapshot {
+        recordSnapshot(WiFiSnapshot.capture())
+    }
+
+    func recordSnapshot(_ current: WiFiSnapshot) -> WiFiSnapshot {
         let previous = lastSnapshot
-        let current = WiFiSnapshot.capture()
         metricState.recordSnapshotChanges(from: previous, to: current)
         resetDisconnectTraceDedupeIfRecovered(snapshot: current)
         lastSnapshot = current
