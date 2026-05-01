@@ -108,7 +108,7 @@ final class ActiveProbeTelemetryTests: XCTestCase {
 
         agent.recordGatewayProbeResult(gatewayIPv6Result(), phaseId: phaseId, recorder: recorder, snapshot: makeSnapshot())
         let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
-        let path = spans.first { $0.name == "probe.gateway.path" }
+        let path = spans.first { $0.name == "probe.gateway.path.ipv6" }
         let ndp = spans.first { $0.name == "probe.gateway.ndp.neighbor_solicitation_to_advertisement" }
         let echo = spans.first { $0.name == "probe.gateway.icmp.echo" }
 
@@ -132,7 +132,7 @@ final class ActiveProbeTelemetryTests: XCTestCase {
 
         agent.recordGatewayProbeResult(gatewayResult(), phaseId: phaseId, recorder: recorder, snapshot: makeSnapshot())
         let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
-        let path = spans.first { $0.name == "probe.gateway.path" }
+        let path = spans.first { $0.name == "probe.gateway.path.ipv4" }
         let arp = spans.first { $0.name == "probe.gateway.arp.request_to_reply" }
         let echo = spans.first { $0.name == "probe.gateway.icmp.echo" }
 
@@ -153,7 +153,7 @@ final class ActiveProbeTelemetryTests: XCTestCase {
 
         agent.recordGatewayProbeResult(gatewayARPFailureResult(), phaseId: phaseId, recorder: recorder, snapshot: makeSnapshot())
         let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
-        let path = spans.first { $0.name == "probe.gateway.path" }
+        let path = spans.first { $0.name == "probe.gateway.path.ipv4" }
         let arp = spans.first { $0.name == "probe.gateway.arp.request_to_reply" }
 
         XCTAssertNotNil(arp)
@@ -162,6 +162,31 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         XCTAssertEqual(path?.tags["probe.gateway.arp.span_count"], "1")
         XCTAssertEqual(path?.tags["probe.gateway.icmp.span_count"], "0")
         XCTAssertEqual(path?.tags["network.gateway_probe.outcome"], "arp_timeout")
+    }
+
+    func testInternetProbeRecordsFamilySpecificPathParent() {
+        let agent = makeAgent()
+        let recorder = TraceRecorder()
+        let phaseId = recorder.newSpanId()
+
+        agent.recordInternetProbeResults(
+            ActiveInternetProbeResults(lanes: [internetLaneResult()]),
+            phaseId: phaseId,
+            recorder: recorder,
+            snapshot: makeSnapshot()
+        )
+        let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
+        let path = spans.first { $0.name == "probe.internet.path.ipv4" }
+        let dns = spans.first { $0.name == "probe.internet.dns.resolve" }
+        let tcp = spans.first { $0.name == "probe.internet.tcp.connect" }
+        let http = spans.first { $0.name == "probe.internet.http.head" }
+
+        XCTAssertEqual(path?.parentId, phaseId)
+        XCTAssertEqual(path?.tags["network.family"], "ipv4")
+        XCTAssertEqual(path?.tags["probe.internet.path.status"], "ok")
+        XCTAssertEqual(dns?.parentId, path?.id)
+        XCTAssertEqual(tcp?.parentId, path?.id)
+        XCTAssertEqual(http?.parentId, path?.id)
     }
 
     func testConnectivityProbeCaptureRunsGatewayBeforeInternetWhenGatewayICMPLosses() {

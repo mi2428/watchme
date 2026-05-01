@@ -28,7 +28,7 @@ extension ActiveProbeTelemetryTests {
         XCTAssertFalse(
             shouldReplayConsumedNetworkAttachmentSpan(
                 reason: "wifi.join",
-                span: packetSpanEvent(name: "probe.internet.path", startWallNanos: 1_000_000_000),
+                span: packetSpanEvent(name: "probe.internet.path.ipv4", startWallNanos: 1_000_000_000),
                 replayStart: 900_000_000
             )
         )

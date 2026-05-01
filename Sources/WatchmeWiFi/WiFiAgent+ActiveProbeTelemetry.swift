@@ -13,7 +13,7 @@ extension WiFiAgent {
             let laneId = recorder.newSpanId()
             let laneStart = parentSpanStart(before: lane.startWallNanos)
             recorder.recordSpan(
-                name: "probe.internet.path",
+                name: internetProbePathSpanName(family: lane.family),
                 id: laneId,
                 startWallNanos: laneStart,
                 durationNanos: lane.finishedWallNanos - laneStart,
@@ -137,6 +137,14 @@ extension WiFiAgent {
         firstChildStart > 1000 ? firstChildStart - 1000 : firstChildStart
     }
 
+    private func internetProbePathSpanName(family: InternetAddressFamily) -> String {
+        "probe.internet.path.\(family.metricValue)"
+    }
+
+    private func gatewayProbePathSpanName(family: InternetAddressFamily) -> String {
+        "probe.gateway.path.\(family.metricValue)"
+    }
+
     func recordGatewayProbeResult(
         _ result: ActiveGatewayProbeResult,
         phaseId: String,
@@ -147,7 +155,7 @@ extension WiFiAgent {
         let pathId = recorder.newSpanId()
         let pathStart = parentSpanStart(before: result.startWallNanos)
         recorder.recordSpan(
-            name: "probe.gateway.path",
+            name: gatewayProbePathSpanName(family: result.family),
             id: pathId,
             startWallNanos: pathStart,
             durationNanos: result.finishedWallNanos - pathStart,
