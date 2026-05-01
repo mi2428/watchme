@@ -94,6 +94,34 @@ final class ActiveProbeUtilitiesTests: XCTestCase {
         XCTAssertEqual(packet.targetProtocolAddress, "192.168.23.254")
     }
 
+    func testGatewayARPTimingUsesObservedRequestPacketTimestamp() {
+        let timing = gatewayARPRequestToReplyTiming(
+            requestPacketWallNanos: 2_000,
+            requestWriteWallNanos: 1_000,
+            replyWallNanos: 5_000
+        )
+
+        XCTAssertEqual(timing.startWallNanos, 2_000)
+        XCTAssertEqual(timing.finishedWallNanos, 5_000)
+        XCTAssertEqual(timing.durationNanos, 3_000)
+        XCTAssertEqual(timing.timingSource, bpfPacketTimingSource)
+        XCTAssertEqual(timing.timestampSource, bpfHeaderTimestampSource)
+    }
+
+    func testGatewayARPTimingFallsBackToRequestWriteBoundary() {
+        let timing = gatewayARPRequestToReplyTiming(
+            requestPacketWallNanos: nil,
+            requestWriteWallNanos: 1_000,
+            replyWallNanos: 5_000
+        )
+
+        XCTAssertEqual(timing.startWallNanos, 1_000)
+        XCTAssertEqual(timing.finishedWallNanos, 5_000)
+        XCTAssertEqual(timing.durationNanos, 4_000)
+        XCTAssertEqual(timing.timingSource, wallClockPacketBoundaryTimingSource)
+        XCTAssertEqual(timing.timestampSource, wallClockTimestampSource)
+    }
+
     func testProbeResultTimingAccessorsExposeUnderlyingTiming() {
         let result = ActiveInternetHTTPProbeResult(
             target: "example.com",

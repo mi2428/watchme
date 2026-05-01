@@ -157,7 +157,7 @@ extension WiFiAgent {
         )
         if let arpResolution = result.arpResolution {
             recorder.recordSpan(
-                name: "probe.gateway.arp.resolve",
+                name: "probe.gateway.arp.request_to_reply",
                 id: recorder.newSpanId(),
                 startWallNanos: arpResolution.startWallNanos,
                 durationNanos: arpResolution.durationNanos,

@@ -3,6 +3,7 @@ import Foundation
 let networkFrameworkTimingSource = "network_framework_callback"
 let bpfPacketTimingSource = "bpf_packet"
 let wallClockDeadlineTimingSource = "wall_clock_deadline"
+let wallClockPacketBoundaryTimingSource = "wall_clock_packet_boundary"
 let noAddressTimingSource = "no_address"
 let wallClockTimestampSource = "wall_clock"
 let bpfHeaderTimestampSource = "bpf_header_timeval"

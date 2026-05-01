@@ -334,6 +334,7 @@ private func runBPFGatewayARPResolution(
         sourceIP: sourceIPBytes,
         targetIP: gatewayIPBytes
     )
+    let requestWriteWallNanos = wallClockNanos()
     let sent = frame.withUnsafeBytes { frameBuffer in
         write(fd, frameBuffer.baseAddress, frameBuffer.count)
     }
@@ -354,8 +355,7 @@ private func runBPFGatewayARPResolution(
         bufferLength: Int(bpfTags["bpf.buffer_length"] ?? "4096") ?? 4096,
         timeout: timeout,
         localIP: localIP,
-        gateway: gateway,
-        startWallNanos: startWallNanos
+        gateway: gateway
     )
     guard result.ok,
           let replyNanos = result.replyWallNanos,
@@ -365,16 +365,17 @@ private func runBPFGatewayARPResolution(
             gateway: gateway,
             sourceIP: localIP,
             sourceHardwareAddress: sourceMAC,
-            startWallNanos: startWallNanos,
+            startWallNanos: result.requestWallNanos ?? requestWriteWallNanos,
             outcome: "timeout",
             timingSource: wallClockDeadlineTimingSource,
             error: result.error ?? "BPF gateway ARP reply timed out"
         )
     }
 
-    let timing = ActiveProbeTiming.bpfPacket(
-        start: result.requestWallNanos ?? startWallNanos,
-        finished: replyNanos
+    let timing = gatewayARPRequestToReplyTiming(
+        requestPacketWallNanos: result.requestWallNanos,
+        requestWriteWallNanos: requestWriteWallNanos,
+        replyWallNanos: replyNanos
     )
     return ActiveGatewayARPResult(
         gateway: gateway,
@@ -385,6 +386,22 @@ private func runBPFGatewayARPResolution(
         outcome: "reply",
         error: nil,
         timing: timing
+    )
+}
+
+func gatewayARPRequestToReplyTiming(
+    requestPacketWallNanos: UInt64?,
+    requestWriteWallNanos: UInt64,
+    replyWallNanos: UInt64
+) -> ActiveProbeTiming {
+    if let requestPacketWallNanos {
+        return .bpfPacket(start: requestPacketWallNanos, finished: replyWallNanos)
+    }
+    return ActiveProbeTiming(
+        startWallNanos: requestWriteWallNanos,
+        finishedWallNanos: replyWallNanos,
+        timingSource: wallClockPacketBoundaryTimingSource,
+        timestampSource: wallClockTimestampSource
     )
 }
 
@@ -619,8 +636,7 @@ private func readBPFGatewayARPReply(
     bufferLength: Int,
     timeout: TimeInterval,
     localIP: String,
-    gateway: String,
-    startWallNanos: UInt64
+    gateway: String
 ) -> BPFGatewayARPReadResult {
     let started = DispatchTime.now().uptimeNanoseconds
     let timeoutNanos = UInt64(max(timeout, 0.001) * 1_000_000_000)
@@ -704,7 +720,7 @@ private func readBPFGatewayARPReply(
                     return BPFGatewayARPReadResult(
                         ok: true,
                         error: nil,
-                        requestWallNanos: requestWallNanos ?? startWallNanos,
+                        requestWallNanos: requestWallNanos,
                         replyWallNanos: packetWallNanos,
                         gatewayHardwareAddress: packet.senderHardwareAddress
                     )

@@ -109,7 +109,7 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         agent.recordGatewayProbeResult(gatewayResult(), phaseId: phaseId, recorder: recorder, snapshot: makeSnapshot())
         let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
         let path = spans.first { $0.name == "probe.gateway.path" }
-        let arp = spans.first { $0.name == "probe.gateway.arp.resolve" }
+        let arp = spans.first { $0.name == "probe.gateway.arp.request_to_reply" }
         let echo = spans.first { $0.name == "probe.gateway.icmp.echo" }
 
         XCTAssertEqual(path?.parentId, phaseId)
@@ -130,7 +130,7 @@ final class ActiveProbeTelemetryTests: XCTestCase {
         agent.recordGatewayProbeResult(gatewayARPFailureResult(), phaseId: phaseId, recorder: recorder, snapshot: makeSnapshot())
         let spans = recorder.finish(rootName: "wifi.test", rootTags: [:]).spans
         let path = spans.first { $0.name == "probe.gateway.path" }
-        let arp = spans.first { $0.name == "probe.gateway.arp.resolve" }
+        let arp = spans.first { $0.name == "probe.gateway.arp.request_to_reply" }
 
         XCTAssertNotNil(arp)
         XCTAssertNil(spans.first { $0.name == "probe.gateway.icmp.echo" })
