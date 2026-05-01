@@ -80,10 +80,7 @@ private struct SelfConfigParser {
 
     private mutating func applyMetricsInterval(_ argument: String, inlineValue: String?) throws {
         let rawValue = try requireValue(argument, inlineValue: inlineValue)
-        guard let value = TimeInterval(rawValue), value > 0 else {
-            throw WatchmeError.invalidArgument("Invalid self metrics interval")
-        }
-        config.metricsInterval = value
+        config.metricsInterval = try positiveTimeIntervalValue(rawValue, name: "self metrics interval")
     }
 
     private mutating func requireValue(_ argument: String, inlineValue: String?) throws -> String {

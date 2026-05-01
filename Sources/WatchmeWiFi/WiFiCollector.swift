@@ -140,10 +140,7 @@ public enum WiFiCollectorFactory: WatchmeCollectorFactory {
                 throw WatchmeError.invalidArgument("authorize-location only accepts \(WiFiCLI.Option.internetTimeout.name)")
             }
             let rawValue = try requireOptionValue(arguments: arguments, index: &index, argument: argument, inlineValue: inlineValue)
-            guard let value = TimeInterval(rawValue), value > 0 else {
-                throw WatchmeError.invalidArgument("Invalid internet probe timeout")
-            }
-            timeout = value
+            timeout = try positiveTimeIntervalValue(rawValue, name: "internet probe timeout")
             index += 1
         }
         return timeout
@@ -228,22 +225,19 @@ private struct WiFiConfigParser {
 
     private mutating func applyTimeInterval(_ argument: String, inlineValue: String?) throws {
         let rawValue = try requireValue(argument, inlineValue: inlineValue)
-        guard let value = TimeInterval(rawValue) else {
-            throw WatchmeError.invalidArgument("Invalid value for \(argument): \(rawValue)")
-        }
         switch argument {
         case WiFiCLI.Option.metricsInterval.name:
-            config.metricsInterval = try positive(value, name: "Wi-Fi metrics interval")
+            config.metricsInterval = try positiveTimeIntervalValue(rawValue, name: "Wi-Fi metrics interval")
         case WiFiCLI.Option.traceInterval.name:
-            config.traceInterval = try positive(value, name: "Wi-Fi trace interval")
+            config.traceInterval = try positiveTimeIntervalValue(rawValue, name: "Wi-Fi trace interval")
         case WiFiCLI.Option.triggerCooldown.name:
-            config.triggerCooldown = try nonNegative(value, name: "Wi-Fi trigger cooldown")
+            config.triggerCooldown = try nonNegativeTimeIntervalValue(rawValue, name: "Wi-Fi trigger cooldown")
         case WiFiCLI.Option.internetTimeout.name:
-            config.probeInternetTimeout = try positive(value, name: "internet probe timeout")
+            config.probeInternetTimeout = try positiveTimeIntervalValue(rawValue, name: "internet probe timeout")
         case WiFiCLI.Option.gatewayInterval.name:
-            config.probeGatewayBurstInterval = try nonNegative(value, name: "gateway probe burst interval")
+            config.probeGatewayBurstInterval = try nonNegativeTimeIntervalValue(rawValue, name: "gateway probe burst interval")
         case WiFiCLI.Option.bpfSpanMaxAge.name:
-            config.bpfSpanMaxAge = try positive(value, name: "BPF span max age")
+            config.bpfSpanMaxAge = try positiveTimeIntervalValue(rawValue, name: "BPF span max age")
         default:
             break
         }
@@ -266,16 +260,7 @@ private struct WiFiConfigParser {
     }
 
     private mutating func applyBoolOption(_ argument: String, inlineValue: String?) throws {
-        let rawValue = try requireValue(argument, inlineValue: inlineValue).lowercased()
-        let value: Bool
-        switch rawValue {
-        case "1", "true", "yes", "on":
-            value = true
-        case "0", "false", "no", "off":
-            value = false
-        default:
-            throw WatchmeError.invalidArgument("Invalid boolean for \(argument): \(rawValue)")
-        }
+        let value = try booleanCLIValue(requireValue(argument, inlineValue: inlineValue), argument: argument)
         switch argument {
         case WiFiCLI.Option.internetDNS.name:
             config.probeInternetDNS = value
@@ -294,19 +279,5 @@ private struct WiFiConfigParser {
 
     private mutating func requireValue(_ argument: String, inlineValue: String?) throws -> String {
         try requireOptionValue(arguments: arguments, index: &index, argument: argument, inlineValue: inlineValue)
-    }
-
-    private func positive(_ value: TimeInterval, name: String) throws -> TimeInterval {
-        guard value > 0 else {
-            throw WatchmeError.invalidArgument("Invalid \(name)")
-        }
-        return value
-    }
-
-    private func nonNegative(_ value: TimeInterval, name: String) throws -> TimeInterval {
-        guard value >= 0 else {
-            throw WatchmeError.invalidArgument("Invalid \(name)")
-        }
-        return value
     }
 }

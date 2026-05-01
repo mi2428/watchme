@@ -81,10 +81,7 @@ private struct SystemConfigParser {
 
     private mutating func applyMetricsInterval(_ argument: String, inlineValue: String?) throws {
         let rawValue = try requireValue(argument, inlineValue: inlineValue)
-        guard let value = TimeInterval(rawValue), value > 0 else {
-            throw WatchmeError.invalidArgument("Invalid system metrics interval")
-        }
-        config.metricsInterval = value
+        config.metricsInterval = try positiveTimeIntervalValue(rawValue, name: "system metrics interval")
     }
 
     private mutating func requireValue(_ argument: String, inlineValue: String?) throws -> String {

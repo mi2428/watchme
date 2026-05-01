@@ -87,6 +87,31 @@ public func requireOptionValue(
     return arguments[index]
 }
 
+public func positiveTimeIntervalValue(_ rawValue: String, name: String) throws -> TimeInterval {
+    guard let value = TimeInterval(rawValue), value > 0 else {
+        throw WatchmeError.invalidArgument("Invalid \(name)")
+    }
+    return value
+}
+
+public func nonNegativeTimeIntervalValue(_ rawValue: String, name: String) throws -> TimeInterval {
+    guard let value = TimeInterval(rawValue), value >= 0 else {
+        throw WatchmeError.invalidArgument("Invalid \(name)")
+    }
+    return value
+}
+
+public func booleanCLIValue(_ rawValue: String, argument: String) throws -> Bool {
+    switch rawValue.lowercased() {
+    case "1", "true", "yes", "on":
+        return true
+    case "0", "false", "no", "off":
+        return false
+    default:
+        throw WatchmeError.invalidArgument("Invalid boolean for \(argument): \(rawValue)")
+    }
+}
+
 public func validatedOTLPURL(_ value: String, argument: String) throws -> URL {
     guard
         let url = URL(string: value),

@@ -6,8 +6,7 @@ import WatchmeTelemetry
 final class SystemAgent: WatchmeCollector {
     let config: SystemConfig
     let telemetry: TelemetryClient
-    let queue = DispatchQueue(label: "watchme.system.metrics")
-    var metricsTimer: DispatchSourceTimer?
+    let metricsTask = PeriodicTask(queueLabel: "watchme.system.metrics")
 
     init(config: SystemConfig, telemetry: TelemetryClient) {
         self.config = config
@@ -33,21 +32,14 @@ final class SystemAgent: WatchmeCollector {
             ]
         )
 
-        _ = exportMetrics()
-
-        let metricsTimer = DispatchSource.makeTimerSource(queue: queue)
-        metricsTimer.schedule(deadline: .now() + config.metricsInterval, repeating: config.metricsInterval)
-        metricsTimer.setEventHandler { [weak self] in
+        metricsTask.start(interval: config.metricsInterval, fireImmediately: true) { [weak self] in
             _ = self?.exportMetrics()
         }
-        metricsTimer.resume()
-        self.metricsTimer = metricsTimer
     }
 
     func stop() {
         logEvent(.info, "system_agent_stopped")
-        metricsTimer?.cancel()
-        metricsTimer = nil
+        metricsTask.stop()
     }
 
     func exportMetrics() -> Bool {
