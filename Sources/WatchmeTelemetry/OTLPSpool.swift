@@ -4,6 +4,12 @@ import WatchmeCore
 
 private let otlpSpoolEnvironmentKey = "WATCHME_OTLP_SPOOL_DIR"
 
+private struct PendingOTLPSpoolRequest {
+    let file: URL
+    let record: OTLPSpoolRecord
+    let request: URLRequest
+}
+
 struct OTLPSpoolPolicy {
     let maxPendingFiles: Int
     let maxPendingBytes: UInt64
@@ -129,69 +135,25 @@ final class OTLPSpool {
             var dropped = retained.dropped
 
             for file in pendingFiles().prefix(policy.maxFlushBatchSize) {
-                let record: OTLPSpoolRecord
-                do {
-                    let data = try Data(contentsOf: file)
-                    record = try decoder.decode(OTLPSpoolRecord.self, from: data)
-                } catch {
-                    remove(file)
-                    dropped += 1
-                    logEvent(
-                        .warn, "otlp_spool_dropped",
-                        fields: [
-                            "spool_file": file.lastPathComponent,
-                            "reason": "decode_failed",
-                            "error": "\(error)",
-                        ]
-                    )
+                guard let pending = pendingRequest(from: file, dropped: &dropped) else {
                     continue
                 }
 
-                guard let request = record.urlRequest else {
-                    remove(file)
-                    dropped += 1
-                    logEvent(
-                        .warn, "otlp_spool_dropped",
-                        fields: [
-                            "spool_file": file.lastPathComponent,
-                            "reason": "request_not_deserializable",
-                            "endpoint_url": record.url,
-                        ]
-                    )
-                    continue
-                }
-
-                switch send(request) {
+                switch send(pending.request) {
                 case .success:
                     remove(file)
                     flushed += 1
                 case let .failure(error):
-                    if isRetryableOTLPError(error) {
-                        let remaining = pendingFiles().count
-                        logEvent(
-                            .warn, "otlp_spool_flush_blocked",
-                            fields: [
-                                "endpoint_url": record.url,
-                                "spool_path": directory.path,
-                                "spool_pending": "\(remaining)",
-                                "spool_flushed": "\(flushed)",
-                                "spool_dropped": "\(dropped)",
-                                "error": "\(error)",
-                            ]
-                        )
-                        return OTLPSpoolFlushResult(flushed: flushed, dropped: dropped, remaining: remaining, error: error)
+                    if let blocked = retryableFlushBlockedResult(
+                        record: pending.record,
+                        flushed: flushed,
+                        dropped: dropped,
+                        error: error
+                    ) {
+                        return blocked
                     }
-
-                    remove(file)
+                    dropNonRetryableFailure(pending.file, record: pending.record, error: error)
                     dropped += 1
-                    logEvent(
-                        .warn, "otlp_spool_dropped",
-                        fields: [
-                            "endpoint_url": record.url,
-                            "reason": "non_retryable_export_failure",
-                            "error": "\(error)",
-                        ]
-                    )
                 }
             }
 
@@ -211,6 +173,77 @@ final class OTLPSpool {
             }
             return OTLPSpoolFlushResult(flushed: flushed, dropped: dropped, remaining: remaining, error: nil)
         }
+    }
+
+    private func pendingRequest(from file: URL, dropped: inout Int) -> PendingOTLPSpoolRequest? {
+        let record: OTLPSpoolRecord
+        do {
+            let data = try Data(contentsOf: file)
+            record = try decoder.decode(OTLPSpoolRecord.self, from: data)
+        } catch {
+            remove(file)
+            dropped += 1
+            logEvent(
+                .warn, "otlp_spool_dropped",
+                fields: [
+                    "spool_file": file.lastPathComponent,
+                    "reason": "decode_failed",
+                    "error": "\(error)",
+                ]
+            )
+            return nil
+        }
+
+        guard let request = record.urlRequest else {
+            remove(file)
+            dropped += 1
+            logEvent(
+                .warn, "otlp_spool_dropped",
+                fields: [
+                    "spool_file": file.lastPathComponent,
+                    "reason": "request_not_deserializable",
+                    "endpoint_url": record.url,
+                ]
+            )
+            return nil
+        }
+        return PendingOTLPSpoolRequest(file: file, record: record, request: request)
+    }
+
+    private func retryableFlushBlockedResult(
+        record: OTLPSpoolRecord,
+        flushed: Int,
+        dropped: Int,
+        error: Error
+    ) -> OTLPSpoolFlushResult? {
+        guard isRetryableOTLPError(error) else {
+            return nil
+        }
+        let remaining = pendingFiles().count
+        logEvent(
+            .warn, "otlp_spool_flush_blocked",
+            fields: [
+                "endpoint_url": record.url,
+                "spool_path": directory.path,
+                "spool_pending": "\(remaining)",
+                "spool_flushed": "\(flushed)",
+                "spool_dropped": "\(dropped)",
+                "error": "\(error)",
+            ]
+        )
+        return OTLPSpoolFlushResult(flushed: flushed, dropped: dropped, remaining: remaining, error: error)
+    }
+
+    private func dropNonRetryableFailure(_ file: URL, record: OTLPSpoolRecord, error: Error) {
+        remove(file)
+        logEvent(
+            .warn, "otlp_spool_dropped",
+            fields: [
+                "endpoint_url": record.url,
+                "reason": "non_retryable_export_failure",
+                "error": "\(error)",
+            ]
+        )
     }
 
     func pendingCount() -> Int {
