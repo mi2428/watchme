@@ -77,9 +77,14 @@ final class BPFUtilitiesTests: XCTestCase {
         let frame: [UInt8] = [0xDE, 0xAD, 0xBE, 0xEF]
         let buffer = bpfRecord(seconds: 0, microseconds: 1, frame: frame)
 
-        let timestamp = scanBPFReadBuffer(buffer, bytesRead: buffer.count, timestampFallback: { 42 }) { record in
-            record.packetWallNanos
-        }
+        let timestamp = scanBPFReadBuffer(
+            buffer,
+            bytesRead: buffer.count,
+            timestampFallback: { 42 },
+            match: { record in
+                record.packetWallNanos
+            }
+        )
 
         XCTAssertEqual(timestamp, 42)
     }
