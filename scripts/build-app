@@ -12,6 +12,8 @@ Environment:
   WATCHME_BUILD_CONFIG       Preferred fallback build configuration.
   WATCHME_APP_BUNDLE         Preferred fallback app bundle path.
   WATCHME_VERSION            Embedded package version.
+  WATCHME_BUNDLE_VERSION     CFBundleShortVersionString override.
+  WATCHME_BUNDLE_BUILD       CFBundleVersion override.
   WATCHME_*                  Embedded git and build metadata overrides.
 USAGE
 }
@@ -20,6 +22,8 @@ die() { printf 'build-app: %s\n' "$*" >&2; exit 2; }
 
 config="${WATCHME_BUILD_CONFIG:-${CONFIG:-debug}}"
 bundle="${WATCHME_APP_BUNDLE:-.build/watchme-app/WatchMe.app}"
+bundle_version="${WATCHME_BUNDLE_VERSION:-${WATCHME_VERSION:-}}"
+bundle_build="${WATCHME_BUNDLE_BUILD:-${BUILD_NUMBER:-}}"
 
 while (($#)); do case "$1" in
     -c | --configuration) (($# >= 2)) || die "missing value for $1"; config="$2"; shift 2 ;;
@@ -44,6 +48,12 @@ install -d -- "${bundle}/Contents/MacOS"
 install -m 755 -- "${bin_dir}/watchme" "${bundle}/Contents/MacOS/watchme"
 install -m 644 -- "${repo_root}/Sources/watchme/Info.plist" "${bundle}/Contents/Info.plist"
 printf 'APPL????' >"${bundle}/Contents/PkgInfo"
+
+if [[ -n "${bundle_version}" || -n "${bundle_build}" ]]; then
+    command -v plutil >/dev/null 2>&1 || die 'plutil is required to stamp bundle metadata'
+    [[ -z "${bundle_version}" ]] || plutil -replace CFBundleShortVersionString -string "${bundle_version}" "${bundle}/Contents/Info.plist"
+    [[ -z "${bundle_build}" ]] || plutil -replace CFBundleVersion -string "${bundle_build}" "${bundle}/Contents/Info.plist"
+fi
 
 command -v codesign >/dev/null 2>&1 && codesign --force --sign - "${bundle}" >/dev/null
 printf 'bundle=%s\n' "${bundle}"

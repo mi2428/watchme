@@ -317,7 +317,7 @@ final class OTelTraceExporter {
             .add(spanProcessor: SimpleSpanProcessor(spanExporter: exporter))
             .build()
         self.provider = provider
-        tracer = provider.get(instrumentationName: "watchme", instrumentationVersion: "0.1.0")
+        tracer = provider.get(instrumentationName: "watchme", instrumentationVersion: WatchmeVersion.current.packageVersion)
     }
 
     func export(_ batch: TraceBatch) -> TraceExportResult {

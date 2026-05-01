@@ -34,7 +34,7 @@ func cStringLiteral(_ value: String) -> String {
 
 let watchmeBuildInfoCSettings: [CSetting] = [
     .define("WATCHME_PACKAGE_NAME", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_PACKAGE_NAME", default: "watchme"))),
-    .define("WATCHME_PACKAGE_VERSION", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_VERSION", default: "0.1.0"))),
+    .define("WATCHME_PACKAGE_VERSION", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_VERSION", default: "unknown"))),
     .define("WATCHME_GIT_DESCRIBE", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_GIT_DESCRIBE", default: "unknown"))),
     .define("WATCHME_GIT_COMMIT", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_GIT_COMMIT", default: "unknown"))),
     .define("WATCHME_GIT_COMMIT_DATE", to: cStringLiteral(watchmeEnvironmentValue("WATCHME_GIT_COMMIT_DATE", default: "unknown"))),

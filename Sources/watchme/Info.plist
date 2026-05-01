@@ -14,6 +14,10 @@
     <string>WatchMe</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.0.0</string>
+    <key>CFBundleVersion</key>
+    <string>0</string>
     <key>NSLocationUsageDescription</key>
     <string>WatchMe uses location authorization to read the current Wi-Fi SSID and BSSID for observability labels.</string>
     <key>NSLocationWhenInUseUsageDescription</key>

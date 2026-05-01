@@ -5,7 +5,7 @@
 #endif
 
 #ifndef WATCHME_PACKAGE_VERSION
-#define WATCHME_PACKAGE_VERSION "0.1.0"
+#define WATCHME_PACKAGE_VERSION "unknown"
 #endif
 
 #ifndef WATCHME_GIT_DESCRIBE
