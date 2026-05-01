@@ -8,7 +8,9 @@ final class WiFiAgent: WatchmeCollector {
     let config: WiFiConfig
     let telemetry: TelemetryClient
     let packetStore = PassivePacketStore()
-    let triggerQueue = DispatchQueue(label: "watchme.wifi.trigger")
+    let triggerQueue: DispatchQueue
+    let clock: any WiFiAgentClock
+    let traceScheduler: any WiFiTraceScheduler
     var lastSnapshot = WiFiSnapshot.capture()
     var lastEventSnapshot = WiFiSnapshot.capture()
     var lastTrigger = Date.distantPast
@@ -29,10 +31,20 @@ final class WiFiAgent: WatchmeCollector {
     var packetWindowSuppressedUntil = Date.distantPast
     var lastIdentityStatusLogSignature: String?
     var metricState = WiFiMetricState()
+    var traceEmissionHandler: ((WiFiTraceEmission) -> Void)?
 
-    init(config: WiFiConfig, telemetry: TelemetryClient) {
+    init(
+        config: WiFiConfig,
+        telemetry: TelemetryClient,
+        triggerQueue: DispatchQueue = DispatchQueue(label: "watchme.wifi.trigger"),
+        clock: any WiFiAgentClock = SystemWiFiAgentClock(),
+        traceScheduler: (any WiFiTraceScheduler)? = nil
+    ) {
         self.config = config
         self.telemetry = telemetry
+        self.triggerQueue = triggerQueue
+        self.clock = clock
+        self.traceScheduler = traceScheduler ?? DispatchWiFiTraceScheduler(queue: triggerQueue)
     }
 
     var name: String {

@@ -11,7 +11,7 @@ extension WiFiAgent {
         includeConnectivityCheck: Bool,
         connectivityReadinessTimeout: TimeInterval = 0
     ) {
-        triggerQueue.async {
+        traceScheduler.async {
             if self.associationTracePending, WiFiTracePolicy.shouldSuppressEventTraceDuringAssociation(reason: reason) {
                 logEvent(
                     .debug, "trace_trigger_suppressed",
@@ -22,7 +22,7 @@ extension WiFiAgent {
                 )
                 return
             }
-            let now = Date()
+            let now = self.clock.now
             let suppressesEventAfterAssociation = !force
                 && now < self.packetWindowSuppressedUntil
                 && WiFiTracePolicy.shouldSuppressEventTraceAfterAssociation(reason: reason)
@@ -58,13 +58,13 @@ extension WiFiAgent {
             }
             self.lastTrigger = now
             logEvent(.info, "trace_trigger_accepted", fields: ["reason": reason, "force": force ? "true" : "false"])
-            self.emitTrace(
+            self.emitScheduledTrace(WiFiTraceEmission(
                 reason: reason,
                 eventTags: eventTags,
                 consumePacketSpans: true,
                 includeConnectivityCheck: includeConnectivityCheck,
                 connectivityReadinessTimeout: connectivityReadinessTimeout
-            )
+            ))
         }
     }
 
@@ -122,7 +122,7 @@ extension WiFiAgent {
         associationTraceVersion += 1
         associationTracePending = true
         pendingAssociationTraceWindowFloorEpochNanos = UInt64(eventTags["association.window_floor_epoch_ns"] ?? "")
-        packetWindowSuppressedUntil = Date().addingTimeInterval(
+        packetWindowSuppressedUntil = clock.now.addingTimeInterval(
             delay + config.associationTraceReadinessTimeout + config.packetWindowSuppressionAfterAssociation
         )
         let version = associationTraceVersion
@@ -136,30 +136,30 @@ extension WiFiAgent {
                 "readiness_timeout_seconds": String(format: "%.1f", config.associationTraceReadinessTimeout),
             ]
         )
-        triggerQueue.asyncAfter(deadline: .now() + delay) {
+        traceScheduler.asyncAfter(delay: delay) {
             guard version == self.associationTraceVersion else {
                 return
             }
             var tags = eventTags
             tags["association.source_reason"] = sourceReason
             tags["association.delay_seconds"] = String(format: "%.1f", delay)
-            self.emitTrace(
+            self.emitScheduledTrace(WiFiTraceEmission(
                 reason: reason,
                 eventTags: tags,
                 consumePacketSpans: true,
                 includeConnectivityCheck: true,
                 connectivityReadinessTimeout: self.config.associationTraceReadinessTimeout
-            )
-            self.lastAssociationTraceCompletedEpochNanos = wallClockNanos()
+            ))
+            self.lastAssociationTraceCompletedEpochNanos = self.clock.wallClockNanos()
             self.lastAssociationTraceWindowFloorEpochNanos = UInt64(tags["association.window_floor_epoch_ns"] ?? "")
             self.associationTracePending = false
             self.pendingAssociationTraceWindowFloorEpochNanos = nil
-            self.packetWindowSuppressedUntil = Date().addingTimeInterval(self.config.packetWindowSuppressionAfterAssociation)
+            self.packetWindowSuppressedUntil = self.clock.now.addingTimeInterval(self.config.packetWindowSuppressionAfterAssociation)
         }
     }
 
     func schedulePacketWindowTrace(sourceReason: String, eventTags: [String: String], delay: TimeInterval) {
-        if associationTracePending || Date() < packetWindowSuppressedUntil {
+        if associationTracePending || clock.now < packetWindowSuppressedUntil {
             logEvent(
                 .debug, "network_attachment_trace_suppressed",
                 fields: [
@@ -178,14 +178,14 @@ extension WiFiAgent {
                 "delay_seconds": String(format: "%.1f", delay),
             ]
         )
-        triggerQueue.asyncAfter(deadline: .now() + delay) {
+        traceScheduler.asyncAfter(delay: delay) {
             // DHCP and IPv6 control packets usually arrive after the CoreWLAN
             // callback. Delay briefly so the network-attachment trace contains
             // the address acquisition sequence instead of only the trigger event.
             guard version == self.packetWindowVersion else {
                 return
             }
-            guard !self.associationTracePending, Date() >= self.packetWindowSuppressedUntil else {
+            guard !self.associationTracePending, self.clock.now >= self.packetWindowSuppressedUntil else {
                 logEvent(
                     .debug, "network_attachment_trace_suppressed",
                     fields: [
@@ -199,8 +199,14 @@ extension WiFiAgent {
             var tags = eventTags
             tags["network_attachment.source_reason"] = sourceReason
             tags["network_attachment.delay_seconds"] = String(format: "%.1f", delay)
-            self.emitTrace(reason: "wifi.network.attachment", eventTags: tags, consumePacketSpans: true, includeConnectivityCheck: true)
-            self.packetWindowSuppressedUntil = Date().addingTimeInterval(self.config.packetWindowSuppressionAfterAssociation)
+            self.emitScheduledTrace(WiFiTraceEmission(
+                reason: "wifi.network.attachment",
+                eventTags: tags,
+                consumePacketSpans: true,
+                includeConnectivityCheck: true,
+                connectivityReadinessTimeout: 0
+            ))
+            self.packetWindowSuppressedUntil = self.clock.now.addingTimeInterval(self.config.packetWindowSuppressionAfterAssociation)
         }
     }
 
