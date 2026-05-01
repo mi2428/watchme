@@ -256,6 +256,7 @@ final class WiFiAgent: WatchmeCollector {
     private func snapshotTransitionTags(previous: WiFiSnapshot, current: WiFiSnapshot, observation: String) -> [String: String] {
         [
             "agent.observation": observation,
+            "metrics.snapshot_epoch_ns": "\(current.capturedWallNanos)",
             "previous_associated": previous.isAssociated ? "true" : "false",
             "current_associated": current.isAssociated ? "true" : "false",
             "previous_local_ip": previous.primaryIPv4 ?? "",

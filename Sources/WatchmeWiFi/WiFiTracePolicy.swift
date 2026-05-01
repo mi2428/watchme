@@ -54,6 +54,7 @@ enum WiFiTracePolicy {
         [
             eventTags["wifi.event_received_epoch_ns"],
             eventTags["network.event_received_epoch_ns"],
+            eventTags["metrics.snapshot_epoch_ns"],
         ].compactMap { value -> UInt64? in
             guard let value else {
                 return nil

@@ -147,6 +147,12 @@ final class WiFiTracePolicyTests: XCTestCase {
                 lastCompletedEpochNanos: 2000
             )
         )
+        XCTAssertTrue(
+            WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(
+                eventTags: ["metrics.snapshot_epoch_ns": "1500"],
+                lastCompletedEpochNanos: 2000
+            )
+        )
         XCTAssertFalse(
             WiFiTracePolicy.shouldSuppressCoveredAssociationTrace(
                 eventTags: ["wifi.event_received_epoch_ns": "3000"],
