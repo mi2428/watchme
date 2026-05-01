@@ -21,7 +21,37 @@ final class SystemMetricBuilderTests: XCTestCase {
                     readOperations: 30,
                     writeOperations: 40
                 ),
-            ]
+            ],
+            vmActivityCounters: [
+                VMActivityCounterSnapshot(event: "pagein", count: 11),
+                VMActivityCounterSnapshot(event: "swapout", count: 12),
+            ],
+            networkInterfaces: [
+                NetworkInterfaceSnapshot(
+                    interface: "en0",
+                    receiveBytes: 111,
+                    transmitBytes: 222,
+                    receivePackets: 3,
+                    transmitPackets: 4,
+                    receiveErrors: 5,
+                    transmitErrors: 6,
+                    receiveDrops: 7
+                ),
+            ],
+            filesystems: [
+                FileSystemSnapshot(
+                    mount: "/",
+                    fstype: "apfs",
+                    sizeBytes: 1_000_000,
+                    freeBytes: 200_000,
+                    availableBytes: 150_000
+                ),
+            ],
+            host: HostBasicsSnapshot(
+                uptimeSeconds: 1234.5,
+                loadAverage: LoadAverageSnapshot(oneMinute: 1.1, fiveMinutes: 0.8, fifteenMinutes: 0.5),
+                cpuCount: CPUCountSnapshot(logical: 10, physical: 8)
+            )
         )
 
         let metrics = SystemMetricBuilder.metrics(snapshot: snapshot)
@@ -34,6 +64,15 @@ final class SystemMetricBuilderTests: XCTestCase {
             "watchme_system_disk_write_bytes_total",
             "watchme_system_disk_read_ops_total",
             "watchme_system_disk_write_ops_total",
+            "watchme_system_vm_activity_total",
+            "watchme_system_network_bytes_total",
+            "watchme_system_network_packets_total",
+            "watchme_system_network_errors_total",
+            "watchme_system_network_drops_total",
+            "watchme_system_filesystem_bytes",
+            "watchme_system_uptime_seconds",
+            "watchme_system_load_average",
+            "watchme_system_cpu_count",
         ])
         XCTAssertEqual(
             metric(named: "watchme_system_cpu_time_seconds_total", labels: ["mode": "user"], in: metrics)?.value,
@@ -54,6 +93,46 @@ final class SystemMetricBuilderTests: XCTestCase {
         XCTAssertEqual(
             metric(named: "watchme_system_disk_write_ops_total", labels: ["disk": "disk0"], in: metrics)?.value,
             40
+        )
+        XCTAssertEqual(
+            metric(named: "watchme_system_vm_activity_total", labels: ["event": "swapout"], in: metrics)?.value,
+            12
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_system_network_bytes_total",
+                labels: ["interface": "en0", "direction": "receive"],
+                in: metrics
+            )?.value,
+            111
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_system_network_errors_total",
+                labels: ["interface": "en0", "direction": "transmit"],
+                in: metrics
+            )?.value,
+            6
+        )
+        XCTAssertEqual(
+            metric(
+                named: "watchme_system_filesystem_bytes",
+                labels: ["mount": "/", "fstype": "apfs", "state": "available"],
+                in: metrics
+            )?.value,
+            150_000
+        )
+        XCTAssertEqual(
+            metric(named: "watchme_system_uptime_seconds", in: metrics)?.value,
+            1234.5
+        )
+        XCTAssertEqual(
+            metric(named: "watchme_system_load_average", labels: ["window": "5m"], in: metrics)?.value,
+            0.8
+        )
+        XCTAssertEqual(
+            metric(named: "watchme_system_cpu_count", labels: ["kind": "physical"], in: metrics)?.value,
+            8
         )
     }
 

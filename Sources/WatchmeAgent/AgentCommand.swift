@@ -1,6 +1,7 @@
 import Darwin
 import Foundation
 import WatchmeCore
+import WatchmeSelf
 import WatchmeSystem
 import WatchmeWiFi
 
@@ -10,6 +11,7 @@ public struct AgentCommand: WatchmeCommand {
 
     private static let collectorFactories: [any WatchmeCollectorFactory.Type] = [
         SystemCollectorFactory.self,
+        SelfCollectorFactory.self,
         WiFiCollectorFactory.self,
     ]
 
@@ -288,6 +290,7 @@ private struct AgentConfigParser {
 public func agentUsageText() -> String {
     let factories: [any WatchmeCollectorFactory.Type] = [
         SystemCollectorFactory.self,
+        SelfCollectorFactory.self,
         WiFiCollectorFactory.self,
     ]
     let collectorRows = formatUsageRows(
@@ -299,7 +302,11 @@ public func agentUsageText() -> String {
         WatchmeCLI.Option.logLevel.usageRow,
     ], leftColumnWidth: 38)
     let systemOptions = formatUsageRows(SystemCollectorFactory.usageRows(), leftColumnWidth: 38)
+    let selfOptions = formatUsageRows(SelfCollectorFactory.usageRows(), leftColumnWidth: 38)
     let wifiOptions = formatUsageRows(WiFiCollectorFactory.usageRows(), leftColumnWidth: 38)
+    let defaultCollectors = factories
+        .map { "`\(WatchmeCLI.Collector.option($0.name))`" }
+        .joined(separator: ", ")
 
     return """
     \(WatchmeCLI.displayName) - macOS observability
@@ -319,12 +326,14 @@ public func agentUsageText() -> String {
     System Options:
     \(systemOptions)
 
+    Self Options:
+    \(selfOptions)
+
     Wi-Fi Options:
     \(wifiOptions)
 
     Defaults:
-      `\(WatchmeCLI.Command.executable) \(AgentCommand.name)` starts \(WatchmeCLI.displayName) with all collectors: `\(WatchmeCLI.Collector
-        .option(SystemCollectorFactory.name))`, `\(WatchmeCLI.Collector.option(WiFiCollectorFactory.name))`.
+      `\(WatchmeCLI.Command.executable) \(AgentCommand.name)` starts \(WatchmeCLI.displayName) with all collectors: \(defaultCollectors).
       Pass one or more `\(WatchmeCLI.Collector.wildcard)` options to run only those collectors.
     """
 }

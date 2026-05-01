@@ -1,49 +1,48 @@
-import Darwin
 import Foundation
 import WatchmeCore
 import WatchmeTelemetry
 
-enum SystemDefaults {
+enum SelfDefaults {
     static let metricsInterval: TimeInterval = 5
 }
 
-enum SystemCLI {
+enum SelfCLI {
     enum Option {
         static let metricsInterval = CLIOption(
-            "--system.metrics.interval",
+            "--self.metrics.interval",
             valueName: "seconds",
-            help: "System metric collection interval. Default: \(formatCLIDefault(SystemDefaults.metricsInterval))"
+            help: "Self metric collection interval. Default: \(formatCLIDefault(SelfDefaults.metricsInterval))"
         )
     }
 }
 
-public enum SystemCollectorFactory: WatchmeCollectorFactory {
-    public static let name = "system"
-    public static let summary = "Collect host CPU, memory, disk, network, filesystem, and uptime metrics."
+public enum SelfCollectorFactory: WatchmeCollectorFactory {
+    public static let name = "self"
+    public static let summary = "Collect WatchMe process self metrics."
 
     public static func makeCollector(arguments: [String], context: CollectorBuildContext) throws -> any WatchmeCollector {
-        let config = try SystemConfig.parse(arguments, otlpURL: context.otlpURL)
+        let config = try SelfConfig.parse(arguments, otlpURL: context.otlpURL)
         let telemetry = TelemetryClient(
             serviceName: "watchme-macos",
             tracesEndpoint: config.traceEndpointURL,
             metricsEndpoint: config.metricEndpointURL
         )
-        return SystemAgent(config: config, telemetry: telemetry)
+        return SelfAgent(config: config, telemetry: telemetry)
     }
 
     public static func usageRows() -> [(String, String)] {
         [
-            SystemCLI.Option.metricsInterval.usageRow,
+            SelfCLI.Option.metricsInterval.usageRow,
         ]
     }
 }
 
-struct SystemConfig {
+struct SelfConfig {
     var otlpURL = WatchmeDefaults.otlpURL
-    var metricsInterval = SystemDefaults.metricsInterval
+    var metricsInterval = SelfDefaults.metricsInterval
 
-    static func parse(_ arguments: [String], otlpURL: URL) throws -> SystemConfig {
-        var parser = SystemConfigParser(arguments: arguments, config: SystemConfig(otlpURL: otlpURL))
+    static func parse(_ arguments: [String], otlpURL: URL) throws -> SelfConfig {
+        var parser = SelfConfigParser(arguments: arguments, config: SelfConfig(otlpURL: otlpURL))
         return try parser.parse()
     }
 
@@ -56,12 +55,12 @@ struct SystemConfig {
     }
 }
 
-private struct SystemConfigParser {
+private struct SelfConfigParser {
     let arguments: [String]
-    var config: SystemConfig
+    var config: SelfConfig
     var index = 0
 
-    mutating func parse() throws -> SystemConfig {
+    mutating func parse() throws -> SelfConfig {
         while index < arguments.count {
             try consumeOption()
             index += 1
@@ -72,17 +71,17 @@ private struct SystemConfigParser {
     private mutating func consumeOption() throws {
         let (argument, inlineValue) = splitInlineValue(arguments[index])
         switch argument {
-        case SystemCLI.Option.metricsInterval.name:
+        case SelfCLI.Option.metricsInterval.name:
             try applyMetricsInterval(argument, inlineValue: inlineValue)
         default:
-            throw WatchmeError.invalidArgument("Unknown system collector argument: \(argument)")
+            throw WatchmeError.invalidArgument("Unknown self collector argument: \(argument)")
         }
     }
 
     private mutating func applyMetricsInterval(_ argument: String, inlineValue: String?) throws {
         let rawValue = try requireValue(argument, inlineValue: inlineValue)
         guard let value = TimeInterval(rawValue), value > 0 else {
-            throw WatchmeError.invalidArgument("Invalid system metrics interval")
+            throw WatchmeError.invalidArgument("Invalid self metrics interval")
         }
         config.metricsInterval = value
     }

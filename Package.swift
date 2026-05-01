@@ -108,9 +108,17 @@ let package = Package(
             ]
         ),
         .target(
+            name: "WatchmeSelf",
+            dependencies: [
+                "WatchmeCore",
+                "WatchmeTelemetry",
+            ]
+        ),
+        .target(
             name: "WatchmeAgent",
             dependencies: [
                 "WatchmeCore",
+                "WatchmeSelf",
                 "WatchmeSystem",
                 "WatchmeWiFi",
             ]
@@ -140,6 +148,7 @@ let package = Package(
             dependencies: [
                 "WatchmeBPF",
                 "WatchmeAgent",
+                "WatchmeSelf",
                 "WatchmeTelemetry",
                 "WatchmeSystem",
                 "WatchmeWiFi",

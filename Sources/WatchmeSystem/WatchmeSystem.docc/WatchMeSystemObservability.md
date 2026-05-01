@@ -9,7 +9,7 @@ It is meant to be checked against the source when instrumentation changes.
 
 ## Scope
 
-With `--collector.system`, WatchMe Agent turns macOS host CPU, memory, and disk counters into OpenTelemetry metrics exported through OTLP/HTTP.
+With `--collector.system`, WatchMe Agent turns macOS host CPU, memory, VM activity, disk, network interface, filesystem, and host basics into OpenTelemetry metrics exported through OTLP/HTTP.
 
 The system module emits primary observations rather than quality scores or local interpretation.
 It does not calculate CPU utilization percentages, memory pressure levels, disk saturation, energy impact, or health scores.
@@ -17,7 +17,7 @@ Those views can be built downstream from the exported counters and gauges.
 
 ## Runtime entry points
 
-- **`watchme agent --collector.system`:** Long-running WatchMe Agent execution that exports CPU, memory, and disk metrics.
+- **`watchme agent --collector.system`:** Long-running WatchMe Agent execution that exports host system metrics.
 - **`watchme agent once --collector.system`:** One-shot metrics export.
 - **`scripts/watchme-app agent ...`:** Runs the same `watchme agent` command through the app-bundle wrapper for parity with app-bundled workflows. Location authorization is not required for system metrics.
 
@@ -47,7 +47,11 @@ Delivery behavior:
 | --- | --- | --- | --- |
 | CPU time | `Sources/WatchmeSystem/SystemMetrics.swift` | `host_processor_info` with `PROCESSOR_CPU_LOAD_INFO` | Aggregate user, system, idle, and nice CPU ticks converted to seconds. |
 | Memory | `Sources/WatchmeSystem/SystemMetrics.swift` | `host_statistics64` with `HOST_VM_INFO64` | Free, active, inactive, wired, and compressed VM page counts converted to bytes. |
+| VM activity | `Sources/WatchmeSystem/SystemMetrics.swift` | `host_statistics64` with `HOST_VM_INFO64` | Page-in/out, swap, compression, fault, purge, lookup, and related VM counters. |
 | Disk I/O | `Sources/WatchmeSystem/SystemMetrics.swift` | IOKit whole-media block storage `Statistics` property | Per-disk bytes read, bytes written, read operations, and write operations. |
+| Network I/O | `Sources/WatchmeSystem/SystemMetrics.swift` | `sysctl` route interface list with `NET_RT_IFLIST2` | Per-interface 64-bit byte, packet, error, and receive-drop counters. |
+| Filesystem capacity | `Sources/WatchmeSystem/SystemMetrics.swift` | `getfsstat` | Local filesystem size, free, and available bytes. |
+| Host basics | `Sources/WatchmeSystem/SystemMetrics.swift` | `ProcessInfo`, `getloadavg`, and `sysctlbyname` | System uptime, load averages, and CPU counts. |
 
 ## Metrics
 
@@ -66,10 +70,19 @@ Metrics are exported:
 | --- | --- | --- | --- |
 | `watchme_system_cpu_time_seconds_total` | `mode` | `host_processor_info` | Aggregate CPU time in seconds for `user`, `system`, `idle`, and `nice`. |
 | `watchme_system_memory_bytes` | `state` | `host_statistics64` | Memory bytes in `free`, `active`, `inactive`, `wired`, and `compressed` VM page states. |
+| `watchme_system_vm_activity_total` | `event` | `host_statistics64` | VM activity counters such as `pagein`, `pageout`, `swapin`, `swapout`, `compression`, `decompression`, `fault`, `copy_on_write_fault`, and `purge`. |
 | `watchme_system_disk_read_bytes_total` | `disk` | IOKit block storage statistics | Bytes read from the disk since the source counter started. |
 | `watchme_system_disk_write_bytes_total` | `disk` | IOKit block storage statistics | Bytes written to the disk since the source counter started. |
 | `watchme_system_disk_read_ops_total` | `disk` | IOKit block storage statistics | Disk read operations since the source counter started. |
 | `watchme_system_disk_write_ops_total` | `disk` | IOKit block storage statistics | Disk write operations since the source counter started. |
+| `watchme_system_network_bytes_total` | `interface`, `direction` | `NET_RT_IFLIST2` interface statistics | Bytes received or transmitted by interface. |
+| `watchme_system_network_packets_total` | `interface`, `direction` | `NET_RT_IFLIST2` interface statistics | Packets received or transmitted by interface. |
+| `watchme_system_network_errors_total` | `interface`, `direction` | `NET_RT_IFLIST2` interface statistics | Receive or transmit errors by interface. |
+| `watchme_system_network_drops_total` | `interface`, `direction` | `NET_RT_IFLIST2` interface statistics | Receive drops by interface. macOS does not expose a matching transmit-drop field through this source. |
+| `watchme_system_filesystem_bytes` | `mount`, `fstype`, `state` | `getfsstat` | Local filesystem `size`, `free`, and `available` bytes. Network, synthetic, and selected system support mounts are omitted. |
+| `watchme_system_uptime_seconds` | none | `ProcessInfo.systemUptime` | System uptime in seconds. |
+| `watchme_system_load_average` | `window` | `getloadavg` | Load average for `1m`, `5m`, and `15m` windows. |
+| `watchme_system_cpu_count` | `kind` | `ProcessInfo` and `sysctlbyname` | Logical and physical CPU counts. |
 
 ## Operational checks
 

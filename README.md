@@ -8,8 +8,10 @@ WatchMe Agent exports OpenTelemetry metrics and traces from macOS.
 - `watchme agent --collector.wifi`: Wi-Fi metrics, event traces, connectivity probes, and passive packet timing.
   - `watchme agent once --collector.wifi`: one-shot Wi-Fi metrics and connectivity trace export.
   - `watchme agent authorize-location`: request Location authorization for app-bundled Wi-Fi labels.
-- `watchme agent --collector.system`: CPU, memory, and disk metrics.
-  - `watchme agent once --collector.system`: one-shot CPU, memory, and disk metrics export.
+- `watchme agent --collector.system`: host CPU, memory, VM, disk, network, filesystem, and uptime/load metrics.
+  - `watchme agent once --collector.system`: one-shot host system metrics export.
+- `watchme agent --collector.self`: WatchMe process CPU, memory, thread, and open file descriptor metrics.
+  - `watchme agent once --collector.self`: one-shot WatchMe process metrics export.
 - `watchme --version`: embedded version, git revision, and build metadata.
 
 ## App bundle wrapper
@@ -22,9 +24,10 @@ $ scripts/watchme-app agent authorize-location
 $ scripts/watchme-app agent
 $ scripts/watchme-app agent once --collector.wifi
 $ scripts/watchme-app agent once --collector.system
+$ scripts/watchme-app agent once --collector.self
 ```
 
-`scripts/watchme-app` runs `watchme agent` through the app bundle. The app bundle is required for Location-gated Wi-Fi identity labels; system metrics do not require Location authorization.
+`scripts/watchme-app` runs `watchme agent` through the app bundle. The app bundle is required for Location-gated Wi-Fi identity labels; system and self metrics do not require Location authorization.
 
 ## Build metadata
 
